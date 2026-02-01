@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./slack" },
+    { "path": "./claude" },
+    { "path": "./codex" },
+    { "path": "./opencode" }
+  ]
+}
