@@ -84,8 +84,10 @@ export interface SlackRetryOptions extends Partial<RetryOptions> {
 
 export async function withSlackRetry<T>(
   fn: () => Promise<T>,
-  options: SlackRetryOptions = {}
+  optionsOrLabel: SlackRetryOptions | string = {}
 ): Promise<T> {
+  const options = typeof optionsOrLabel === 'string' ? {} : optionsOrLabel;
+  const label = typeof optionsOrLabel === 'string' ? optionsOrLabel : undefined;
   const { onRateLimit, ...retryOptions } = options;
   let rateLimitNotified = false;
 
@@ -105,8 +107,9 @@ export async function withSlackRetry<T>(
     onRetry: (error, attempt, delayMs) => {
       const isRateLimit = isSlackRateLimitError(error);
       const errorType = isRateLimit ? 'rate limited' : 'network error';
+      const labelText = label ? ` on ${label}` : '';
       console.log(
-        `Slack API ${errorType}, retrying in ${delayMs}ms (attempt ${attempt})`
+        `Slack API ${errorType}${labelText}, retrying in ${delayMs}ms (attempt ${attempt})`
       );
 
       if (isRateLimit && !rateLimitNotified && onRateLimit) {

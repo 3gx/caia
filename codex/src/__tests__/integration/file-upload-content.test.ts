@@ -1,0 +1,130 @@
+/**
+ * Integration tests for file upload content handling.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { processSlackFiles, SlackFile, ResizeResult } from '../../file-handler.js';
+import { buildMessageContent } from '../../content-builder.js';
+import { TurnContent } from '../../codex-client.js';
+
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+const PNG_BUFFER = Buffer.from(PNG_BASE64, 'base64');
+
+describe('File upload content handling', () => {
+  it('orders files by created timestamp and preserves 1-based indices', async () => {
+    const files: SlackFile[] = [
+      { id: 'F3', name: 'third.png', mimetype: 'image/png', size: PNG_BUFFER.length, created: 3000 },
+      { id: 'F1', name: 'first.txt', mimetype: 'text/plain', size: 5, created: 1000 },
+      { id: 'F2', name: 'second.png', mimetype: 'image/png', size: PNG_BUFFER.length, created: 2000 },
+    ];
+
+    const result = await processSlackFiles(files, 'token', {
+      downloadFile: async (file) => {
+        if ((file.mimetype || '').startsWith('image/')) return PNG_BUFFER;
+        return Buffer.from('hello', 'utf-8');
+      },
+      writeTempFile: async (_buffer, filename, _extension) => `/tmp/${filename}-mock.png`,
+    });
+
+    expect(result.files[0].name).toBe('first.txt');
+    expect(result.files[1].name).toBe('second.png');
+    expect(result.files[2].name).toBe('third.png');
+    expect(result.files[0].index).toBe(1);
+    expect(result.files[1].index).toBe(2);
+    expect(result.files[2].index).toBe(3);
+  });
+
+  it('builds data URL image blocks when base64 is available', () => {
+    const processed = [{
+      index: 1,
+      name: 'image.png',
+      mimetype: 'image/png',
+      size: PNG_BUFFER.length,
+      buffer: PNG_BUFFER,
+      base64: PNG_BASE64,
+      isImage: true,
+      isText: false,
+    }];
+
+    const content = buildMessageContent('Describe the image', processed) as TurnContent[];
+    const imageBlocks = content.filter((b) => b.type === 'image');
+    expect(imageBlocks).toHaveLength(1);
+    expect(imageBlocks[0]).toMatchObject({
+      type: 'image',
+      mediaType: 'image/png',
+    });
+    expect((imageBlocks[0] as { url: string }).url.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
+  it('falls back to local path hint when base64 is unavailable', () => {
+    const processed = [{
+      index: 1,
+      name: 'big.png',
+      mimetype: 'image/png',
+      size: 5 * 1024 * 1024,
+      buffer: Buffer.alloc(0),
+      isImage: true,
+      isText: false,
+      localPath: '/tmp/cxslack-big.png',
+    }];
+
+    const content = buildMessageContent('Use the image', processed) as TurnContent[];
+    const imageBlocks = content.filter((b) => b.type === 'image');
+    expect(imageBlocks).toHaveLength(0);
+    const textBlocks = content.filter((b) => b.type === 'text') as Array<{ type: 'text'; text: string }>;
+    const combined = textBlocks.map((b) => b.text).join('\n');
+    expect(combined).toContain('/tmp/cxslack-big.png');
+  });
+
+  it('uses resized buffers for inline images when available', async () => {
+    const largeBuffer = Buffer.alloc(5 * 1024 * 1024, 1);
+    const resizedBuffer = Buffer.from(PNG_BASE64, 'base64');
+
+    const result = await processSlackFiles([{
+      id: 'F4',
+      name: 'large.png',
+      mimetype: 'image/png',
+      size: largeBuffer.length,
+      created: 4000,
+    }], 'token', {
+      downloadFile: async () => largeBuffer,
+      resizeImageIfNeeded: async (): Promise<ResizeResult> => ({
+        buffer: resizedBuffer,
+        mimetype: 'image/jpeg',
+        resized: true,
+        tooLarge: false,
+      }),
+      writeTempFile: async (_buffer, filename, _extension) => `/tmp/${filename}-resized.jpg`,
+    });
+
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0].mimetype).toBe('image/jpeg');
+    expect(result.files[0].base64).toBe(resizedBuffer.toString('base64'));
+  });
+
+  it('treats files with text extensions as text even when MIME is octet-stream', async () => {
+    const files: SlackFile[] = [
+      { id: 'F5', name: 'readme.md', mimetype: 'application/octet-stream', size: 100, created: 5000 },
+      { id: 'F6', name: 'notes.txt', mimetype: 'application/octet-stream', size: 50, created: 6000 },
+      { id: 'F7', name: 'data.json', mimetype: 'application/octet-stream', size: 75, created: 7000 },
+    ];
+
+    const result = await processSlackFiles(files, 'token', {
+      downloadFile: async (file) => Buffer.from(`content of ${file.name}`, 'utf-8'),
+      writeTempFile: async (_buffer, filename, _extension) => `/tmp/${filename}-mock`,
+    });
+
+    // All files should be processed (not skipped as binary)
+    expect(result.files).toHaveLength(3);
+    expect(result.warnings).toHaveLength(0);
+
+    // All should be marked as text
+    expect(result.files[0].isText).toBe(true);
+    expect(result.files[1].isText).toBe(true);
+    expect(result.files[2].isText).toBe(true);
+
+    // Verify content is accessible
+    expect(result.files[0].buffer.toString('utf-8')).toBe('content of readme.md');
+  });
+});
