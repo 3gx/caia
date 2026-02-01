@@ -3,7 +3,7 @@
  * Used to handle transient failures like rate limits and network errors.
  */
 
-import { isRecoverable, getRetryAfter } from '../../slack/src/errors.js';
+import { isRecoverable, getRetryAfter } from './errors.js';
 
 /**
  * Options for retry behavior.
