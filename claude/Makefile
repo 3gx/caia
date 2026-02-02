@@ -1,7 +1,7 @@
 .PHONY: dev build start
 
 dev:
-	cd .. && npx tsx claude/src/index.ts
+	npm run dev
 
 build:
 	cd .. && npm run build
