@@ -10,12 +10,9 @@ import {
   buildFileChangeApprovalBlocks,
   buildApprovalGrantedBlocks,
   buildApprovalDeniedBlocks,
-  buildPolicyStatusBlocks,
-  buildPolicySelectionBlocks,
-  buildPolicyPickerCancelledBlocks,
-  buildSandboxSelectionBlocks,
-  buildSandboxPickerCancelledBlocks,
-  buildSandboxStatusBlocks,
+  buildModeStatusBlocks,
+  buildModeSelectionBlocks,
+  buildModePickerCancelledBlocks,
   buildClearBlocks,
   buildTextBlocks,
   buildErrorBlocks,
@@ -37,7 +34,7 @@ describe('Block Kit Builders', () => {
     it('builds processing status with abort button', () => {
       const blocks = buildStatusBlocks({
         status: 'processing',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
       });
 
       expect(blocks).toHaveLength(2);
@@ -91,21 +88,21 @@ describe('Block Kit Builders', () => {
   });
 
   describe('buildHeaderBlock', () => {
-    it('includes status emoji and policy badge', () => {
+    it('includes status emoji and mode badge', () => {
       const block = buildHeaderBlock({
         status: 'processing',
-        approvalPolicy: 'on-request',
+        mode: 'ask',
       });
 
       expect(block.type).toBe('section');
       expect(block.text?.text).toContain('Processing');
-      expect(block.text?.text).toContain('on-request');
+      expect(block.text?.text).toContain('ask');
     });
 
     it('includes model when provided', () => {
       const block = buildHeaderBlock({
         status: 'complete',
-        approvalPolicy: 'never',
+        mode: 'bypass',
         model: 'gpt-4',
       });
 
@@ -115,7 +112,7 @@ describe('Block Kit Builders', () => {
     it('includes duration when complete', () => {
       const block = buildHeaderBlock({
         status: 'complete',
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         durationMs: 5500,
       });
 
@@ -125,7 +122,7 @@ describe('Block Kit Builders', () => {
     it('includes error message when error', () => {
       const block = buildHeaderBlock({
         status: 'error',
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         errorMessage: 'Test error',
       });
 
@@ -147,7 +144,8 @@ describe('Block Kit Builders', () => {
 
       expect(blocks.length).toBeGreaterThanOrEqual(2);
       expect(blocks[0].text?.text).toContain('rm -rf /tmp/test');
-      expect(blocks[1].elements?.[0].type).toBe('mrkdwn');
+      const elements = blocks[1].elements as Array<{ type: string }>;
+      expect(elements[0].type).toBe('mrkdwn');
     });
 
     it('includes approve and deny buttons', () => {
@@ -217,86 +215,54 @@ describe('Block Kit Builders', () => {
     });
   });
 
-  describe('buildPolicyStatusBlocks', () => {
-    it('shows current policy when no change', () => {
-      const blocks = buildPolicyStatusBlocks({
-        currentPolicy: 'on-request',
+  describe('buildModeStatusBlocks', () => {
+    it('shows current mode when no change', () => {
+      const blocks = buildModeStatusBlocks({
+        currentMode: 'ask',
       });
 
       expect(blocks.length).toBeGreaterThanOrEqual(1);
-      expect(blocks[0].text?.text).toContain('on-request');
-      expect(blocks[0].text?.text).toContain('Model decides');
+      expect(blocks[0].text?.text).toContain('ask');
+      expect(blocks[0].text?.text).toContain('Ask before tool use');
     });
 
-    it('shows policy change when newPolicy provided', () => {
-      const blocks = buildPolicyStatusBlocks({
-        currentPolicy: 'on-request',
-        newPolicy: 'never',
+    it('shows mode change when newMode provided', () => {
+      const blocks = buildModeStatusBlocks({
+        currentMode: 'ask',
+        newMode: 'bypass',
       });
 
       expect(blocks).toHaveLength(1);
-      expect(blocks[0].text?.text).toContain('on-request');
-      expect(blocks[0].text?.text).toContain('never');
+      expect(blocks[0].text?.text).toContain('ask');
+      expect(blocks[0].text?.text).toContain('bypass');
     });
   });
 
-  describe('buildPolicySelectionBlocks', () => {
-    it('shows selection buttons and current policy', () => {
-      const blocks = buildPolicySelectionBlocks('on-request');
+  describe('buildModeSelectionBlocks', () => {
+    it('shows selection buttons and current mode', () => {
+      const blocks = buildModeSelectionBlocks('ask');
 
-      expect(blocks[0].text?.text).toContain('Select Approval Policy');
-      expect(blocks[0].text?.text).toContain('on-request');
+      expect(blocks[0].text?.text).toContain('Select Mode');
+      expect(blocks[0].text?.text).toContain('ask');
       expect(blocks[1].type).toBe('actions');
       const actions = blocks[1].elements as Array<{ action_id: string; style?: string }>;
-      expect(actions.map((a) => a.action_id)).toContain('policy_select_on-request');
-      const current = actions.find((a) => a.action_id === 'policy_select_on-request');
+      expect(actions.map((a) => a.action_id)).toContain('mode_select_ask');
+      const current = actions.find((a) => a.action_id === 'mode_select_ask');
       expect(current?.style).toBe('primary');
     });
 
     it('includes cancel button', () => {
-      const blocks = buildPolicySelectionBlocks('on-request');
-      const cancelBlock = blocks.find((b) => b.block_id === 'policy_cancel');
+      const blocks = buildModeSelectionBlocks('ask');
+      const cancelBlock = blocks.find((b) => b.block_id === 'mode_cancel');
       expect(cancelBlock).toBeDefined();
       const elements = cancelBlock?.elements as Array<{ action_id: string }>;
-      expect(elements[0].action_id).toBe('policy_picker_cancel');
+      expect(elements[0].action_id).toBe('mode_picker_cancel');
     });
   });
 
-  describe('buildPolicyPickerCancelledBlocks', () => {
+  describe('buildModePickerCancelledBlocks', () => {
     it('shows cancellation message', () => {
-      const blocks = buildPolicyPickerCancelledBlocks();
-      expect(blocks[0].text?.text).toContain('cancelled');
-    });
-  });
-
-  describe('buildSandboxStatusBlocks', () => {
-    it('shows sandbox change when newMode provided', () => {
-      const blocks = buildSandboxStatusBlocks({ currentMode: 'read-only', newMode: 'danger-full-access' });
-      expect(blocks[0].text?.text).toContain('read-only');
-      expect(blocks[0].text?.text).toContain('danger-full-access');
-    });
-  });
-
-  describe('buildSandboxSelectionBlocks', () => {
-    it('highlights current sandbox mode', () => {
-      const blocks = buildSandboxSelectionBlocks('workspace-write');
-      const actionsBlock = blocks.find((b) => b.block_id === 'sandbox_selection') as any;
-      const button = actionsBlock.elements.find((el: any) => el.action_id === 'sandbox_select_workspace-write');
-      expect(button.style).toBe('primary');
-    });
-
-    it('includes cancel button', () => {
-      const blocks = buildSandboxSelectionBlocks('workspace-write');
-      const cancelBlock = blocks.find((b) => b.block_id === 'sandbox_cancel');
-      expect(cancelBlock).toBeDefined();
-      const elements = cancelBlock?.elements as Array<{ action_id: string }>;
-      expect(elements[0].action_id).toBe('sandbox_picker_cancel');
-    });
-  });
-
-  describe('buildSandboxPickerCancelledBlocks', () => {
-    it('shows cancellation message', () => {
-      const blocks = buildSandboxPickerCancelledBlocks();
+      const blocks = buildModePickerCancelledBlocks();
       expect(blocks[0].text?.text).toContain('cancelled');
     });
   });
@@ -507,7 +473,7 @@ describe('Block Kit Builders', () => {
   describe('buildUnifiedStatusLine', () => {
     it('formats status line with all fields', () => {
       const line = buildUnifiedStatusLine({
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         model: 'codex-mini',
         reasoningEffort: 'high',
         sandboxMode: 'workspace-write',
@@ -522,7 +488,7 @@ describe('Block Kit Builders', () => {
         durationMs: 5200,
       });
 
-      expect(line).toContain('on-request');
+      expect(line).toContain('ask');
       expect(line).toContain('codex-mini [high]');
       expect(line).toContain('workspace-write');
       expect(line).toContain('thread-123');
@@ -538,10 +504,10 @@ describe('Block Kit Builders', () => {
 
     it('uses defaults when model/reasoning not set', () => {
       const line = buildUnifiedStatusLine({
-        approvalPolicy: 'never',
+        mode: 'ask',
       });
 
-      expect(line).toContain('never');
+      expect(line).toContain('ask');
       // Default model: gpt-5.2-codex with xhigh reasoning
       expect(line).toContain('gpt-5.2-codex');
       expect(line).toContain('[xhigh]');
@@ -552,7 +518,7 @@ describe('Block Kit Builders', () => {
 
     it('formats token counts correctly', () => {
       const line = buildUnifiedStatusLine({
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         inputTokens: 0,
         outputTokens: 100,
       });
@@ -561,10 +527,10 @@ describe('Block Kit Builders', () => {
     });
 
     it('does not include activity labels in status line', () => {
-      // Status line should only show metadata (policy, model, session, ctx, tokens, cost, duration)
+      // Status line should only show metadata (mode, model, session, ctx, tokens, cost, duration)
       // Activity labels like "Generating" or "Thinking" belong in the activity list, not the status line
       const line = buildUnifiedStatusLine({
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         model: 'codex-mini',
         reasoningEffort: 'high',
         sandboxMode: 'workspace-write',
@@ -584,10 +550,10 @@ describe('Block Kit Builders', () => {
       expect(line).not.toContain(':memo:');
       expect(line).not.toContain(':brain:');
 
-      // Verify expected format: line 1 has policy|model|session, line 2 has ctx|tokens|cost|duration
+      // Verify expected format: line 1 has mode|model|session, line 2 has ctx|tokens|cost|duration
       const lines = line.split('\n');
       expect(lines.length).toBe(2);
-      expect(lines[0]).toContain('on-request');
+      expect(lines[0]).toContain('ask');
       expect(lines[0]).toContain('codex-mini [high]');
       expect(lines[0]).toContain('workspace-write');
       expect(lines[0]).toContain('thread-123');
@@ -597,9 +563,9 @@ describe('Block Kit Builders', () => {
       expect(lines[1]).toContain('10.0s');
     });
 
-    it('status line format: policy | model [reasoning] | session on line 1', () => {
+    it('status line format: mode | model [reasoning] | sandbox | session on line 1', () => {
       const line = buildUnifiedStatusLine({
-        approvalPolicy: 'auto-edit',
+        mode: 'bypass',
         model: 'gpt-5.2-codex',
         reasoningEffort: 'xhigh',
         sandboxMode: 'workspace-write',
@@ -607,13 +573,13 @@ describe('Block Kit Builders', () => {
       });
 
       const lines = line.split('\n');
-      // Line 1 should have exact format: _policy | model [reasoning] | session_
-      expect(lines[0]).toBe('_auto-edit | gpt-5.2-codex [xhigh] | workspace-write | abc123_');
+      // Line 1 should have exact format: _mode | model [reasoning] | sandbox | session_
+      expect(lines[0]).toBe('_bypass | gpt-5.2-codex [xhigh] | workspace-write | abc123_');
     });
 
     it('status line format: ctx | tokens | cost | duration on line 2 (no activity)', () => {
       const line = buildUnifiedStatusLine({
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         contextPercent: 25,
         contextTokens: 50000,
         contextWindow: 200000,
@@ -635,7 +601,7 @@ describe('Block Kit Builders', () => {
   describe('buildAbortConfirmationModalView', () => {
     it('builds modal with correct callback_id', () => {
       const modal = buildAbortConfirmationModalView({
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         channelId: 'C123',
         messageTs: '456.789',
       });
@@ -646,13 +612,13 @@ describe('Block Kit Builders', () => {
 
     it('includes private_metadata with params', () => {
       const modal = buildAbortConfirmationModalView({
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         channelId: 'C123',
         messageTs: '456.789',
       });
 
       const metadata = JSON.parse(modal.private_metadata);
-      expect(metadata.conversationKey).toBe('C123:456.789');
+      expect(metadata.conversationKey).toBe('C123_456.789');
       expect(metadata.channelId).toBe('C123');
       expect(metadata.messageTs).toBe('456.789');
     });
@@ -686,7 +652,7 @@ describe('Block Kit Builders', () => {
       sourceChannelName: 'general',
       sourceMessageTs: '123.456',
       sourceThreadTs: '789.012',
-      conversationKey: 'C123:789.012',
+      conversationKey: 'C123_789.012',
       turnId: 'turn_abc123', // Codex turn ID (NOT turnIndex)
       suggestedName: 'general-fork', // Computed by slack-bot.ts
     };
@@ -705,7 +671,7 @@ describe('Block Kit Builders', () => {
       expect(metadata.sourceChannelId).toBe('C123');
       expect(metadata.sourceChannelName).toBe('general');
       expect(metadata.turnId).toBe('turn_abc123'); // turnId, NOT turnIndex
-      expect(metadata.conversationKey).toBe('C123:789.012');
+      expect(metadata.conversationKey).toBe('C123_789.012');
       expect(metadata.suggestedName).toBe('general-fork');
     });
 
@@ -732,7 +698,7 @@ describe('Block Kit Builders', () => {
       // Modal no longer shows turn number - actual index is queried from Codex at fork time
       const modal = buildForkToChannelModalView(baseParams);
 
-      const sectionBlock = modal.blocks.find((b) => b.type === 'section');
+      const sectionBlock = modal.blocks.find((b) => b.type === 'section') as { text?: { text: string } };
       expect(sectionBlock?.text?.text).toContain('Fork conversation from this point');
       expect(sectionBlock?.text?.text).not.toMatch(/turn \d+/); // No turn number
     });
@@ -747,14 +713,14 @@ describe('Block Kit Builders', () => {
     it('includes fork emoji in title/description', () => {
       const modal = buildForkToChannelModalView(baseParams);
 
-      const sectionBlock = modal.blocks.find((b) => b.type === 'section');
+      const sectionBlock = modal.blocks.find((b) => b.type === 'section') as { text?: { text: string } };
       expect(sectionBlock?.text?.text).toContain(':twisted_rightwards_arrows:');
     });
   });
 
   describe('buildActivityBlocks', () => {
     const baseParams = {
-      approvalPolicy: 'on-request' as const,
+      mode: 'ask' as const,
       model: 'codex-mini',
       sessionId: 'thread-123',
     };
@@ -763,7 +729,7 @@ describe('Block Kit Builders', () => {
       const blocks = buildActivityBlocks({
         activityText: ':gear: Processing...',
         status: 'running',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 5000,
         ...baseParams,
       });
@@ -773,11 +739,13 @@ describe('Block Kit Builders', () => {
       expect(blocks[0].type).toBe('section');
       expect(blocks[0].text?.text).toContain('Processing');
       expect(blocks[1].type).toBe('context');
-      expect(blocks[1].elements?.[0].text).toContain('[');
+      const spinnerElements = blocks[1].elements as Array<{ text: string }>;
+      expect(spinnerElements[0].text).toContain('[');
       expect(blocks[2].type).toBe('context');
-      expect(blocks[2].elements?.[0].text).toContain('on-request');
-      expect(blocks[2].elements?.[0].text).toContain('codex-mini');
-      expect(blocks[1].elements?.[0].text).toContain('5.0s');
+      const statusElements = blocks[2].elements as Array<{ text: string }>;
+      expect(statusElements[0].text).toContain('ask');
+      expect(statusElements[0].text).toContain('codex-mini');
+      expect(spinnerElements[0].text).toContain('5.0s');
       expect(blocks[3].type).toBe('actions');
     });
 
@@ -785,7 +753,7 @@ describe('Block Kit Builders', () => {
       const blocks = buildActivityBlocks({
         activityText: ':white_check_mark: Done',
         status: 'completed',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 3500,
         ...baseParams,
       });
@@ -794,43 +762,46 @@ describe('Block Kit Builders', () => {
       expect(blocks).toHaveLength(2);
       expect(blocks[0].type).toBe('section');
       expect(blocks[1].type).toBe('context');
-      expect(blocks[1].elements?.[0].text).toContain('on-request');
-      expect(blocks[1].elements?.[0].text).toContain('3.5s');
+      const statusElements = blocks[1].elements as Array<{ text: string }>;
+      expect(statusElements[0].text).toContain('ask');
+      expect(statusElements[0].text).toContain('3.5s');
     });
 
     it('builds activity blocks with interrupted status', () => {
       const blocks = buildActivityBlocks({
         activityText: ':octagonal_sign: Stopped',
         status: 'interrupted',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 2000,
         ...baseParams,
       });
 
       expect(blocks).toHaveLength(2);
       expect(blocks[0].text?.text).toContain('Stopped');
-      expect(blocks[1].elements?.[0].text).toContain('on-request');
+      const statusElements = blocks[1].elements as Array<{ text: string }>;
+      expect(statusElements[0].text).toContain('ask');
     });
 
     it('builds activity blocks with failed status', () => {
       const blocks = buildActivityBlocks({
         activityText: ':x: Error occurred',
         status: 'failed',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 1000,
         ...baseParams,
       });
 
       expect(blocks).toHaveLength(2);
       expect(blocks[0].text?.text).toContain('Error occurred');
-      expect(blocks[1].elements?.[0].text).toContain('on-request');
+      const statusElements = blocks[1].elements as Array<{ text: string }>;
+      expect(statusElements[0].text).toContain('ask');
     });
 
     it('uses default text when activityText is empty', () => {
       const blocks = buildActivityBlocks({
         activityText: '',
         status: 'running',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 0,
         ...baseParams,
       });
@@ -846,7 +817,8 @@ describe('Block Kit Builders', () => {
         elapsedMs: 1234,
         ...baseParams,
       });
-      expect(blocks1[1].elements?.[0].text).toContain('1.2s');
+      const statusElements1 = blocks1[1].elements as Array<{ text: string }>;
+      expect(statusElements1[0].text).toContain('1.2s');
 
       const blocks2 = buildActivityBlocks({
         activityText: 'Test',
@@ -855,24 +827,25 @@ describe('Block Kit Builders', () => {
         elapsedMs: 10567,
         ...baseParams,
       });
-      expect(blocks2[1].elements?.[0].text).toContain('10.6s');
+      const statusElements2 = blocks2[1].elements as Array<{ text: string }>;
+      expect(statusElements2[0].text).toContain('10.6s');
     });
 
     it('includes abort button with correct action_id during running', () => {
       const blocks = buildActivityBlocks({
         activityText: 'Test',
         status: 'running',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 0,
         ...baseParams,
       });
 
       const actionsBlock = blocks.find((b) => b.type === 'actions');
       expect(actionsBlock).toBeDefined();
-      expect(actionsBlock?.block_id).toBe('status_panel_C123:456.789');
+      expect(actionsBlock?.block_id).toBe('status_panel_C123_456.789');
 
       const button = actionsBlock?.elements?.[0] as { action_id: string; text: { text: string }; style: string };
-      expect(button.action_id).toBe('abort_C123:456.789');
+      expect(button.action_id).toBe('abort_C123_456.789');
       expect(button.text.text).toBe('Abort');
       expect(button.style).toBe('danger');
     });
@@ -881,7 +854,7 @@ describe('Block Kit Builders', () => {
       const blocks = buildActivityBlocks({
         activityText: 'Done',
         status: 'completed',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 2000,
         forkTurnId: 'turn_xyz789', // Codex turn ID (NOT turnIndex)
         forkSlackTs: '999.000',
@@ -891,7 +864,7 @@ describe('Block Kit Builders', () => {
       const forkBlock = blocks.find((b) => b.type === 'actions' && (b.block_id || '').startsWith('fork_')) as any;
       expect(forkBlock).toBeDefined();
       const forkBtn = forkBlock.elements?.[0];
-      expect(forkBtn?.action_id).toBe('fork_C123:456.789_turn_xyz789');
+      expect(forkBtn?.action_id).toBe('fork_C123_456.789_turn_xyz789');
       // Button text should match ccslack format with emoji
       expect(forkBtn?.text?.text).toBe(':twisted_rightwards_arrows: Fork here');
       expect(forkBtn?.text?.emoji).toBe(true);
@@ -902,7 +875,7 @@ describe('Block Kit Builders', () => {
       const blocks = buildActivityBlocks({
         activityText: 'Working...',
         status: 'running',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 1000,
         forkTurnId: 'turn_xyz789',
         forkSlackTs: '999.000',
@@ -923,7 +896,7 @@ describe('Block Kit Builders', () => {
       const blocks = buildActivityBlocks({
         activityText: 'Done',
         status: 'completed',
-        conversationKey: 'C123:456.789',
+        conversationKey: 'C123_456.789',
         elapsedMs: 5000,
         forkTurnId: 'turn_def456',
         forkSlackTs: '888.000',
@@ -956,7 +929,8 @@ describe('Block Kit Builders', () => {
 
       // Third block is status line (context) after spinner
       expect(blocks[2].type).toBe('context');
-      expect(blocks[2].elements?.[0].text).toContain('on-request');
+      const statusElements = blocks[2].elements as Array<{ text: string }>;
+      expect(statusElements[0].text).toContain('ask');
     });
 
     describe('expand property', () => {
@@ -964,7 +938,7 @@ describe('Block Kit Builders', () => {
         const blocks = buildActivityBlocks({
           activityText: ':gear: Test activity',
           status: 'running',
-          conversationKey: 'C123:456.789',
+          conversationKey: 'C123_456.789',
           elapsedMs: 1000,
           ...baseParams,
         });
@@ -979,7 +953,7 @@ describe('Block Kit Builders', () => {
         const blocks = buildActivityBlocks({
           activityText: 'A'.repeat(500), // Long text
           status: 'completed',
-          conversationKey: 'C123:456.789',
+          conversationKey: 'C123_456.789',
           elapsedMs: 5000,
           ...baseParams,
         });

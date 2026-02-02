@@ -300,7 +300,7 @@ describe('StreamingManager clearTimer', () => {
 
   it('clearTimer stops the update interval', () => {
     const callback = vi.fn();
-    let timer: ReturnType<typeof setInterval> | null = setInterval(callback, 500);
+    let timer: ReturnType<typeof setInterval> | null = setInterval(callback, 500) as unknown as ReturnType<typeof setInterval>;
 
     vi.advanceTimersByTime(1000);
     expect(callback).toHaveBeenCalledTimes(2);
@@ -316,7 +316,7 @@ describe('StreamingManager clearTimer', () => {
   });
 
   it('clearTimer is idempotent', () => {
-    let timer: ReturnType<typeof setInterval> | null = setInterval(() => {}, 500);
+    let timer: ReturnType<typeof setInterval> | null = setInterval(() => {}, 500) as unknown as ReturnType<typeof setInterval>;
 
     // Clear multiple times should not throw
     if (timer) {
@@ -352,10 +352,10 @@ describe('StreamingManager State Cleanup on Overwrite', () => {
     const states = new Map<string, { updateTimer: ReturnType<typeof setInterval> | null }>();
     const callback1 = vi.fn();
     const callback2 = vi.fn();
-    const key = 'C123:456.789';
+    const key = 'C123_456.789';
 
     // First streaming starts
-    states.set(key, { updateTimer: setInterval(callback1, 500) });
+    states.set(key, { updateTimer: setInterval(callback1, 500) as unknown as ReturnType<typeof setInterval> });
 
     vi.advanceTimersByTime(1000);
     expect(callback1).toHaveBeenCalledTimes(2);
@@ -365,7 +365,7 @@ describe('StreamingManager State Cleanup on Overwrite', () => {
     if (existingState?.updateTimer) {
       clearInterval(existingState.updateTimer);
     }
-    states.set(key, { updateTimer: setInterval(callback2, 500) });
+    states.set(key, { updateTimer: setInterval(callback2, 500) as unknown as ReturnType<typeof setInterval> });
 
     vi.advanceTimersByTime(1000);
     // callback1 should NOT have been called again (timer was cleared)
@@ -384,10 +384,10 @@ describe('StreamingManager State Cleanup on Overwrite', () => {
     const states = new Map<string, { updateTimer: ReturnType<typeof setInterval> | null }>();
     const callback1 = vi.fn();
     const callback2 = vi.fn();
-    const key = 'C123:456.789';
+    const key = 'C123_456.789';
 
     // First streaming starts
-    const timer1 = setInterval(callback1, 500);
+    const timer1 = setInterval(callback1, 500) as unknown as ReturnType<typeof setInterval>;
     states.set(key, { updateTimer: timer1 });
 
     vi.advanceTimersByTime(1000);
@@ -395,7 +395,7 @@ describe('StreamingManager State Cleanup on Overwrite', () => {
 
     // BUG: Second streaming starts WITHOUT cleaning up old timer
     // This is the bug we fixed - the old timer keeps running!
-    states.set(key, { updateTimer: setInterval(callback2, 500) });
+    states.set(key, { updateTimer: setInterval(callback2, 500) as unknown as ReturnType<typeof setInterval> });
 
     vi.advanceTimersByTime(1000);
     // BOTH callbacks get called - this is the bug!
@@ -418,7 +418,7 @@ describe('StreamingManager State Cleanup on Overwrite', () => {
     }
 
     const contexts = new Map<string, TestContext>();
-    const key = 'C123:456.789';
+    const key = 'C123_456.789';
 
     // First query - originalTs points to first user message
     contexts.set(key, {
@@ -462,7 +462,7 @@ describe('StreamingManager State Cleanup on Overwrite', () => {
     const contexts = new Map<string, TestContext>();
     const states = new Map<string, { updateTimer: ReturnType<typeof setInterval> | null }>();
     const removedEmojis: string[] = [];
-    const key = 'C123:456.789';
+    const key = 'C123_456.789';
 
     // Mock emoji removal
     const removeProcessingEmoji = async (channelId: string, ts: string) => {

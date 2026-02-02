@@ -103,7 +103,7 @@ describe('flushActivityBatchToThread', () => {
   });
 
   it('posts batched tool entries', async () => {
-    const key = 'C123:456.789';
+    const key = 'C123_456.789';
     manager.addEntry(key, {
       type: 'tool_complete',
       timestamp: Date.now(),
@@ -125,7 +125,7 @@ describe('flushActivityBatchToThread', () => {
   });
 
   it('does nothing when batch empty', async () => {
-    const key = 'C123:empty';
+    const key = 'C123_empty';
     // Don't add any entries
 
     await flushActivityBatchToThread(manager, key, mockClient, 'C123', '456.789');
@@ -135,7 +135,7 @@ describe('flushActivityBatchToThread', () => {
   });
 
   it('force=true posts even when rate limited', async () => {
-    const key = 'C123:456.789';
+    const key = 'C123_456.789';
     manager.addEntry(key, {
       type: 'starting',
       timestamp: Date.now(),
@@ -166,7 +166,7 @@ describe('flushActivityBatchToThread', () => {
   });
 
   it('updates tool_start message in-place when tool_complete arrives', async () => {
-    const key = 'C123:inplace';
+    const key = 'C123_inplace';
     const toolUseId = 'tool-update-test';
 
     // Mock postMessage to return consistent ts
@@ -226,7 +226,7 @@ describe('flushActivityBatchToThread', () => {
   });
 
   it('posts new message for tool_complete if tool_start was not tracked', async () => {
-    const key = 'C123:nostart';
+    const key = 'C123_nostart';
     const toolUseId = 'tool-no-start';
 
     // Add tool_complete without prior tool_start (edge case)
@@ -246,7 +246,7 @@ describe('flushActivityBatchToThread', () => {
   });
 
   it('skips tool_start if tool_complete exists in entries (race condition fix)', async () => {
-    const key = 'C123:race';
+    const key = 'C123_race';
     const toolUseId = 'tool-race-test';
 
     // Simulate race condition: both tool_start and tool_complete added before flush
@@ -325,9 +325,9 @@ describe('postResponseToThread', () => {
 
   it('posts short response inline', async () => {
     const content = 'Here is the answer';
-    const ts = await postResponseToThread(mockClient, 'C123', '456.789', content, 2000);
+    const result = await postResponseToThread(mockClient, 'C123', '456.789', content, 2000);
 
-    expect(ts).toBe('posted-ts-123');
+    expect(result?.ts).toBe('posted-ts-123');
     expect(mockClient.chat.postMessage).toHaveBeenCalledWith({
       channel: 'C123',
       thread_ts: '456.789',

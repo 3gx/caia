@@ -3,3 +3,4 @@ export * from './errors.js';
 export * from './retry.js';
 export * from './markdown-png.js';
 export * from './file-handler.js';
+export * from './session/index.js';

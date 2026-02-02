@@ -2,7 +2,7 @@
  * Slash command handlers for the Codex Slack bot.
  *
  * Available commands:
- * - /policy - View/set approval policy
+ * - /mode - View/set mode (plan/ask/bypass)
  * - /clear - Clear session (start fresh)
  * - /model - View/set model
  * - /reasoning - View/set reasoning effort
@@ -10,36 +10,33 @@
  * - /cwd - Set working directory
  * - /update-rate - Set message update rate
  * - /message-size - Set message size limit
- * - /sandbox - Set sandbox mode
  * - /help - Show help
  */
 
 import type { WebClient } from '@slack/web-api';
-import type { CodexClient, ApprovalPolicy, ReasoningEffort, SandboxMode } from './codex-client.js';
+import type { CodexClient, ReasoningEffort } from './codex-client.js';
+import type { UnifiedMode } from '../../slack/src/session/types.js';
 import {
   getSession,
   saveSession,
   getThreadSession,
   saveThreadSession,
-  saveApprovalPolicy,
+  saveMode,
   saveThreadCharLimit,
   clearSession,
-  getEffectiveApprovalPolicy,
+  getEffectiveMode,
   getEffectiveWorkingDir,
-  APPROVAL_POLICIES,
   LastUsage,
 } from './session-manager.js';
 import {
-  buildPolicyStatusBlocks,
-  buildPolicySelectionBlocks,
+  buildModeStatusBlocks,
+  buildModeSelectionBlocks,
   buildClearBlocks,
   buildModelSelectionBlocks,
   buildReasoningStatusBlocks,
   buildTextBlocks,
   buildErrorBlocks,
   buildResumeConfirmationBlocks,
-  buildSandboxSelectionBlocks,
-  buildSandboxStatusBlocks,
   Block,
   ModelInfo,
 } from './blocks.js';
@@ -87,9 +84,7 @@ export interface CommandResult {
   text: string; // Fallback text
   ephemeral?: boolean; // Whether to send as ephemeral message
   showModelSelection?: boolean; // Flag to trigger model picker with emoji tracking
-  showPolicySelection?: boolean; // Flag to trigger policy picker with emoji tracking
-  showSandboxSelection?: boolean; // Flag to trigger sandbox picker with emoji tracking
-  sandboxModeChange?: SandboxMode; // Flag to restart app-server with new sandbox mode
+  showModeSelection?: boolean; // Flag to trigger mode picker with emoji tracking
 }
 
 /**
@@ -133,47 +128,42 @@ export function parseCommand(text: string): { command: string; args: string } | 
 /**
  * Handle /policy command.
  */
-export async function handlePolicyCommand(
-  context: CommandContext,
-  codex: CodexClient
+export async function handleModeCommand(
+  context: CommandContext
 ): Promise<CommandResult> {
   const { channelId, threadTs, text: args } = context;
 
-  const currentPolicy = getEffectiveApprovalPolicy(channelId, threadTs);
+  const currentMode = getEffectiveMode(channelId, threadTs);
 
   if (!args) {
-    // Show policy selection prompt
     return {
-      blocks: buildPolicySelectionBlocks(currentPolicy),
-      text: `Select approval policy (current: ${currentPolicy})`,
-      showPolicySelection: true,
+      blocks: buildModeSelectionBlocks(currentMode),
+      text: `Select mode (current: ${currentMode})`,
+      showModeSelection: true,
     };
   }
 
-  // Parse new policy
-  let newPolicy: ApprovalPolicy;
   const normalizedArg = args.toLowerCase().trim();
-
-  // Handle aliases
-  if (normalizedArg === 'default') {
-    newPolicy = 'never';
-  } else if (APPROVAL_POLICIES.includes(normalizedArg as ApprovalPolicy)) {
-    newPolicy = normalizedArg as ApprovalPolicy;
-  } else {
+  if (normalizedArg === 'plan') {
     return {
-      blocks: buildErrorBlocks(
-        `Invalid policy: "${args}"\nValid policies: ${APPROVAL_POLICIES.join(', ')}, default`
-      ),
-      text: `Invalid policy: ${args}`,
+      blocks: buildErrorBlocks('Plan mode is not supported for Codex.'),
+      text: 'Plan mode is not supported for Codex.',
     };
   }
 
-  // Update session (channel + thread for inheritance)
-  await saveApprovalPolicy(channelId, threadTs, newPolicy);
+  if (normalizedArg !== 'ask' && normalizedArg !== 'bypass') {
+    return {
+      blocks: buildErrorBlocks(`Invalid mode: "${args}"\nValid modes: ask, bypass`),
+      text: `Invalid mode: ${args}`,
+    };
+  }
+
+  const newMode = normalizedArg as UnifiedMode;
+  await saveMode(channelId, threadTs, newMode);
 
   return {
-    blocks: buildPolicyStatusBlocks({ currentPolicy, newPolicy }),
-    text: `Approval policy changed: ${currentPolicy} → ${newPolicy}`,
+    blocks: buildModeStatusBlocks({ currentMode, newMode }),
+    text: `Mode changed: ${currentMode} → ${newMode}`,
   };
 }
 
@@ -387,7 +377,7 @@ export async function handleStatusCommand(
     : getSession(channelId);
 
   const workingDir = getEffectiveWorkingDir(channelId, threadTs);
-  const policy = getEffectiveApprovalPolicy(channelId, threadTs);
+  const mode = getEffectiveMode(channelId, threadTs);
 
   // Get account info
   let accountInfo = 'Unknown';
@@ -426,15 +416,12 @@ export async function handleStatusCommand(
   const reasoning = session?.reasoningEffort || DEFAULT_REASONING;
   const messageSize = session?.threadCharLimit ?? MESSAGE_SIZE_DEFAULT;
   const messageSizeSuffix = session?.threadCharLimit === undefined ? ' (default)' : '';
-  const sandboxMode = codex.getSandboxMode();
-
   const lines: string[] = [
     ':information_source: *Codex Session Status*',
     '',
     `*Model:* ${modelName} (reasoning ${reasoning})`,
     `*Directory:* \`${workingDir}\``,
-    `*Approval:* ${policy}`,
-    `*Sandbox:* ${sandboxMode ?? 'default'}`,
+    `*Mode:* ${mode}`,
     `*Message size:* ${messageSize}${messageSizeSuffix}`,
     `*Account:* ${accountInfo}`,
     `*Session:* \`${effectiveThreadId || 'none'}\``,
@@ -608,44 +595,6 @@ export async function handleUpdateRateCommand(
   return {
     blocks: buildTextBlocks(`:clock1: Message update rate changed: ${currentRate}s → ${newRate}s`),
     text: `Update rate changed to ${newRate} seconds`,
-  };
-}
-
-/**
- * Handle /sandbox command.
- */
-export async function handleSandboxCommand(
-  context: CommandContext,
-  codex: CodexClient
-): Promise<CommandResult> {
-  const { text: args } = context;
-
-  const currentMode = codex.getSandboxMode();
-
-  if (!args) {
-    return {
-      blocks: buildSandboxSelectionBlocks(currentMode),
-      text: `Select sandbox mode (current: ${currentMode ?? 'default'})`,
-      showSandboxSelection: true,
-    };
-  }
-
-  const normalized = args.trim().toLowerCase();
-  const allowed: SandboxMode[] = ['read-only', 'workspace-write', 'danger-full-access'];
-  if (!allowed.includes(normalized as SandboxMode)) {
-    return {
-      blocks: buildErrorBlocks(
-        `Invalid sandbox mode: "${args}"\nValid modes: ${allowed.join(', ')}`
-      ),
-      text: `Invalid sandbox mode: ${args}`,
-    };
-  }
-
-  const newMode = normalized as SandboxMode;
-  return {
-    blocks: buildSandboxStatusBlocks({ currentMode, newMode }),
-    text: `Sandbox mode changed: ${currentMode ?? 'default'} → ${newMode}`,
-    sandboxModeChange: newMode,
   };
 }
 
@@ -976,14 +925,12 @@ export function handleHelpCommand(): CommandResult {
 \`/cwd [path]\` - View/set and lock working directory
 
 *Configuration:*
-\`/policy [policy]\` - View/set approval policy
-  _Policies: never (default), on-request, on-failure, untrusted_
+\`/mode [ask|bypass]\` - View/set mode
 \`/model [model]\` - View/set model
 \`/reasoning [level]\` - View/set reasoning effort
   _Levels: minimal, low, medium, high, xhigh_
 \`/update-rate [1-10]\` - Set message update rate in seconds
 \`/message-size [n]\` - Set message size limit before truncation (100-36000, default=500)
-\`/sandbox [mode]\` - Set sandbox mode (read-only, workspace-write, danger-full-access)
 \`/resume <thread-id>\` - Resume an existing Codex thread
 
 *Help:*
@@ -994,11 +941,9 @@ export function handleHelpCommand(): CommandResult {
 2. \`/cd <path>\` - Navigate to target directory
 3. \`/set-current-path\` - Lock directory permanently
 
-*Approval Policies:*
-• \`never\` - Auto-approve all actions (default)
-• \`on-request\` - Model decides when to ask
-• \`on-failure\` - Auto-run in sandbox, prompt on failure
-• \`untrusted\` - Prompt for everything except safe reads
+*Modes:*
+• \`ask\` - Ask before tool use (default)
+• \`bypass\` - Run tools without approval
 `.trim();
 
   return {
@@ -1023,8 +968,8 @@ export async function handleCommand(
   const contextWithArgs = { ...context, text: args };
 
   switch (command) {
-    case 'policy':
-      return handlePolicyCommand(contextWithArgs, codex);
+    case 'mode':
+      return handleModeCommand(contextWithArgs);
     case 'clear':
       return handleClearCommand(contextWithArgs);
     case 'model':
@@ -1046,8 +991,6 @@ export async function handleCommand(
       return handleUpdateRateCommand(contextWithArgs);
     case 'message-size':
       return handleMessageSizeCommand(contextWithArgs);
-    case 'sandbox':
-      return handleSandboxCommand(contextWithArgs, codex);
     case 'resume':
       return handleResumeCommand(contextWithArgs, codex);
     case 'help':

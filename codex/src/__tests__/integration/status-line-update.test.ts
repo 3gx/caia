@@ -32,6 +32,7 @@ describe('Streaming status line', () => {
       threadId: 'thread-abc',
       turnId: 'turn-1',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'high',
       sandboxMode: 'workspace-write',
       updateRateMs: 1000,
@@ -55,7 +56,7 @@ describe('Streaming status line', () => {
     const blocks = call.blocks as Array<{ type: string; elements?: Array<{ text: string }> }>;
 
     expect(blocks[1].elements?.[0].text).toContain('['); // spinner line
-    expect(blocks[2].elements?.[0].text).toContain('on-request');
+    expect(blocks[2].elements?.[0].text).toContain('ask');
     expect(blocks[2].elements?.[0].text).toContain('codex-mini [high]');
     expect(blocks[2].elements?.[0].text).toContain('thread-abc');
 
@@ -76,6 +77,7 @@ describe('Streaming status line', () => {
       threadId: 'thread-abc',
       turnId: 'turn-1',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'high',
       updateRateMs: 1000,
       model: 'codex-mini',
@@ -114,8 +116,8 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':memo:');
     expect(statusLineText).not.toContain(':brain:');
 
-    // Status line SHOULD include policy/model/session/stats
-    expect(statusLineText).toContain('on-request');
+    // Status line SHOULD include mode/model/session/stats
+    expect(statusLineText).toContain('ask');
     expect(statusLineText).toContain('codex-mini [high]');
     expect(statusLineText).toContain('danger-full-access');
     expect(statusLineText).toContain('thread-abc');
@@ -136,7 +138,8 @@ describe('Streaming status line', () => {
       userId: 'U123',
       threadId: 'thread-xyz',
       turnId: 'turn-2',
-      approvalPolicy: 'auto-edit',
+      approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'xhigh',
       sandboxMode: 'workspace-write',
       updateRateMs: 1000,

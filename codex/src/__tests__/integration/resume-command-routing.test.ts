@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 import type { CodexClient } from '../../codex-client.js';
 import { handleCommand, type CommandContext } from '../../commands.js';
 
@@ -16,11 +17,11 @@ vi.mock('../../session-manager.js', () => {
     getThreadSession: vi.fn(() => null),
     saveSession,
     saveThreadSession,
+    saveMode: vi.fn(),
     saveThreadCharLimit: vi.fn(),
     clearSession: vi.fn(),
-    getEffectiveApprovalPolicy: vi.fn(() => 'on-request'),
+    getEffectiveMode: vi.fn(() => 'ask'),
     getEffectiveWorkingDir: vi.fn(() => '/tmp'),
-    APPROVAL_POLICIES: ['never', 'on-request', 'on-failure', 'untrusted'],
   };
 });
 
@@ -55,10 +56,10 @@ describe('/resume command routing', () => {
     expect(codex.resumeThread).toHaveBeenCalledWith('thread-xyz');
 
     const { saveSession, saveThreadSession } = await import('../../session-manager.js');
-    expect(saveSession as unknown as vi.Mock).toHaveBeenCalled();
-    expect(saveThreadSession as unknown as vi.Mock).toHaveBeenCalled();
+    expect(saveSession as unknown as Mock).toHaveBeenCalled();
+    expect(saveThreadSession as unknown as Mock).toHaveBeenCalled();
 
-    const channelArgs = (saveSession as unknown as vi.Mock).mock.calls[0][1];
+    const channelArgs = (saveSession as unknown as Mock).mock.calls[0][1];
     expect(channelArgs.threadId).toBe('thread-xyz');
     expect(channelArgs.configuredPath).toBe('/project');
   });

@@ -33,6 +33,7 @@ function createContext(): StreamingContext {
     threadId: 'thread-abc',
     turnId: 'turn-1',
     approvalPolicy: 'on-request',
+    mode: 'ask',
     reasoningEffort: 'high',
     updateRateMs: 1000,
     model: 'codex-mini',

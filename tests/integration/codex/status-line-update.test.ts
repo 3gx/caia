@@ -32,6 +32,7 @@ describe('Streaming status line', () => {
       threadId: 'thread-abc',
       turnId: 'turn-1',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'high',
       sandboxMode: 'workspace-write',
       updateRateMs: 1000,
@@ -55,7 +56,7 @@ describe('Streaming status line', () => {
     const blocks = call.blocks as Array<{ type: string; elements?: Array<{ text: string }> }>;
 
     expect(blocks[1].elements?.[0].text).toContain('['); // spinner line
-    expect(blocks[2].elements?.[0].text).toContain('on-request');
+    expect(blocks[2].elements?.[0].text).toContain('ask');
     expect(blocks[2].elements?.[0].text).toContain('codex-mini [high]');
     expect(blocks[2].elements?.[0].text).toContain('thread-abc');
 
@@ -76,6 +77,7 @@ describe('Streaming status line', () => {
       threadId: 'thread-abc',
       turnId: 'turn-1',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'high',
       updateRateMs: 1000,
       model: 'codex-mini',
@@ -136,7 +138,8 @@ describe('Streaming status line', () => {
       userId: 'U123',
       threadId: 'thread-xyz',
       turnId: 'turn-2',
-      approvalPolicy: 'auto-edit',
+      approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'xhigh',
       sandboxMode: 'workspace-write',
       updateRateMs: 1000,
@@ -164,7 +167,7 @@ describe('Streaming status line', () => {
     const call = (slack.chat.update as any).mock.calls[0][0];
     const blocks = call.blocks as Array<{ type: string; elements?: Array<{ text: string }> }>;
     // Find the status line block (context section with policy/model info)
-    const statusLineBlock = blocks.find(b => b.elements?.[0]?.text?.includes('auto-edit'));
+    const statusLineBlock = blocks.find(b => b.elements?.[0]?.text?.includes('ask'));
     const statusLineText = statusLineBlock?.elements?.[0]?.text || '';
 
     // After completion, status line must NOT show "Generating"
@@ -174,7 +177,7 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':brain:');
 
     // Should show expected metadata
-    expect(statusLineText).toContain('auto-edit');
+    expect(statusLineText).toContain('ask');
     expect(statusLineText).toContain('gpt-5.2-codex [xhigh]');
     expect(statusLineText).toContain('workspace-write');
     expect(statusLineText).toContain('thread-xyz');

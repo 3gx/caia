@@ -43,7 +43,7 @@ describe('updateSourceMessageWithForkLink', () => {
     };
 
     await updateSourceMessageWithForkLink(client, 'C_SOURCE', '111.222', 'C_FORK', {
-      conversationKey: 'C_SOURCE:111.222',
+      conversationKey: 'C_SOURCE_111.222',
       turnId: 'turn_1',
     });
 
@@ -92,7 +92,7 @@ describe('updateSourceMessageWithForkLink', () => {
 
     await updateSourceMessageWithForkLink(client, 'C_THREAD', replyTs, 'C_FORK', {
       threadTs: parentTs,
-      conversationKey: 'C_THREAD:222.000',
+      conversationKey: 'C_THREAD_222.000',
       turnId: 'turn_thread_1',
     });
 
@@ -154,7 +154,7 @@ describe('updateSourceMessageWithForkLink', () => {
     await restoreForkHereButton(client, {
       sourceChannelId: 'C_SOURCE',
       sourceMessageTs,
-      conversationKey: 'C_SOURCE:333.444',
+      conversationKey: 'C_SOURCE_333.444',
       turnId: 'turn_restore_1',
     });
 

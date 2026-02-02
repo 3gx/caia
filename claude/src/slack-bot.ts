@@ -2,6 +2,7 @@ import { App } from '@slack/bolt';
 import { WebClient } from '@slack/web-api';
 import { Mutex } from 'async-mutex';
 import { startClaudeQuery, ClaudeQuery, PermissionResult } from './claude-client.js';
+import { ConversationTracker, type ActiveContext } from '../../slack/src/session/conversation-tracker.js';
 import {
   getSession,
   saveSession,
@@ -332,9 +333,14 @@ interface PendingMessage {
 }
 const pendingMessages = new Map<string, PendingMessage>();
 
-// Track busy conversations (processing a request)
+interface BusyContext extends ActiveContext {
+  channelId: string;
+  threadTs?: string;
+}
+
+// Track busy sessions (processing a request)
 // Exported for testing
-export const busyConversations = new Set<string>();
+export const conversationTracker = new ConversationTracker<BusyContext>();
 
 // Track active queries for abort capability
 interface ActiveQuery {
@@ -666,10 +672,10 @@ async function checkBusyAndRespond(
   client: any,
   channelId: string,
   threadTs: string | undefined,
-  conversationKey: string,
+  sessionId: string | null,
   originalTs?: string
 ): Promise<boolean> {
-  if (busyConversations.has(conversationKey)) {
+  if (sessionId && conversationTracker.isBusy(sessionId)) {
     await client.chat.postMessage({
       channel: channelId,
       thread_ts: threadTs,
@@ -692,6 +698,20 @@ async function checkBusyAndRespond(
     return true; // Was busy
   }
   return false; // Not busy
+}
+
+function startSessionProcessing(sessionId: string | null, context: BusyContext): boolean {
+  if (!sessionId) {
+    return true;
+  }
+  return conversationTracker.startProcessing(sessionId, context);
+}
+
+function stopSessionProcessing(sessionId: string | null): void {
+  if (!sessionId) {
+    return;
+  }
+  conversationTracker.stopProcessing(sessionId);
 }
 
 /**
@@ -848,7 +868,15 @@ async function runCompactSession(
   });
 
   // Track busy state and register for abort capability
-  busyConversations.add(conversationKey);
+  startSessionProcessing(session.sessionId ?? null, {
+    conversationKey,
+    sessionId: session.sessionId ?? '',
+    statusMsgTs,
+    originalTs: originalTs ?? statusMsgTs,
+    startTime,
+    channelId,
+    threadTs,
+  });
   activeQueries.set(conversationKey, {
     query: claudeQuery,
     statusMsgTs,
@@ -937,7 +965,7 @@ async function runCompactSession(
     if (spinnerTimer) clearTimeout(spinnerTimer);
     activeQueries.delete(conversationKey);
     clearAborted(conversationKey);
-    busyConversations.delete(conversationKey);
+    stopSessionProcessing(session.sessionId ?? null);
     cleanupMutex(conversationKey);
   }
 
@@ -1323,9 +1351,16 @@ async function handleFastForwardSync(
     return;
   }
 
-  // Mark conversation as busy to block queries during /ff sync
+  // Mark session as busy to block queries during /ff sync
   // This will remain set while watching - removed when stopWatching is called
-  busyConversations.add(conversationKey);
+  startSessionProcessing(sessionId ?? null, {
+    conversationKey,
+    sessionId,
+    statusMsgTs: conversationKey,
+    originalTs: conversationKey,
+    startTime: Date.now(),
+    channelId,
+  });
 
   const updateRate = session.updateRateSeconds ?? UPDATE_RATE_DEFAULT;
   const terminalCommand = `cd ${session.workingDir} && claude --dangerously-skip-permissions --resume ${sessionId}`;
@@ -1502,7 +1537,7 @@ async function handleFastForwardSync(
       const watchResult = startWatching(channelId, anchorTs, session, client, anchorTs, userId);
       if (!watchResult.success) {
         // Remove from busy state since watcher failed to start
-        busyConversations.delete(conversationKey);
+        stopSessionProcessing(sessionId ?? null);
       }
       return;
     }
@@ -1522,7 +1557,7 @@ async function handleFastForwardSync(
         })
       );
       // Remove from busy state since we're not transitioning to watching
-      busyConversations.delete(conversationKey);
+      stopSessionProcessing(sessionId ?? null);
       return;  // Don't start watching after stop
     }
 
@@ -1545,7 +1580,7 @@ async function handleFastForwardSync(
         text: `:warning: Could not start watching: ${result.error}`,
       });
       // Remove from busy state since watcher failed to start
-      busyConversations.delete(conversationKey);
+      stopSessionProcessing(sessionId ?? null);
     }
 
   } catch (error) {
@@ -1558,7 +1593,7 @@ async function handleFastForwardSync(
       })
     );
     // Remove from busy state on error
-    busyConversations.delete(conversationKey);
+    stopSessionProcessing(sessionId ?? null);
   }
 }
 
@@ -2898,7 +2933,7 @@ async function handleMessage(params: {
 
   // Handle /compact command (session compaction)
   if (commandResult.compactSession) {
-    if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, conversationKey, originalTs)) {
+    if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, session.sessionId ?? null, originalTs)) {
       return;
     }
     await runCompactSession(
@@ -2914,7 +2949,7 @@ async function handleMessage(params: {
 
   // Handle /clear command (clear session history)
   if (commandResult.clearSession) {
-    if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, conversationKey, originalTs)) {
+    if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, session.sessionId ?? null, originalTs)) {
       return;
     }
     await runClearSession(
@@ -2996,7 +3031,7 @@ async function handleMessage(params: {
 
     // Check if busy BEFORE posting /watch response - must block before anchor is posted
     if (commandResult.startTerminalWatch && session?.sessionId) {
-      if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, conversationKey, originalTs)) {
+      if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, session.sessionId ?? null, originalTs)) {
         return;
       }
     }
@@ -3019,9 +3054,17 @@ async function handleMessage(params: {
       if (commandResult.startTerminalWatch && session?.sessionId && response.ts) {
         const anchorTs = response.ts as string;
 
-        // Mark conversation as busy to block queries during /watch setup
+        // Mark session as busy to block queries during /watch setup
         // This will remain set while watching - removed when stopWatching is called
-        busyConversations.add(conversationKey);
+        startSessionProcessing(session.sessionId ?? null, {
+          conversationKey,
+          sessionId: session.sessionId ?? '',
+          statusMsgTs: anchorTs,
+          originalTs: originalTs ?? anchorTs,
+          startTime: Date.now(),
+          channelId,
+          threadTs: undefined,
+        });
 
         // Update the anchor with correct blocks that include anchorTs for stop button
         // This is needed because commands.ts doesn't know anchorTs when building blocks
@@ -3060,7 +3103,7 @@ async function handleMessage(params: {
             text: `:warning: Could not start watching: ${result.error}`,
           });
           // Remove from busy state since watcher failed to start
-          busyConversations.delete(conversationKey);
+          stopSessionProcessing(session.sessionId ?? null);
         }
       }
 
@@ -3068,8 +3111,7 @@ async function handleMessage(params: {
       // Stop terminal watcher (for /stop-watching command)
       const stopped = stopWatching(channelId, threadTs);
       // Remove from busy state when watcher stops
-      // Always use channelId only since /watch is main-channel-only
-      busyConversations.delete(channelId);
+      stopSessionProcessing(session?.sessionId ?? null);
       await client.chat.postMessage({
         channel: channelId,
         thread_ts: effectiveThreadTs,
@@ -3079,7 +3121,7 @@ async function handleMessage(params: {
       });
     } else if (commandResult.fastForward && session?.sessionId) {
       // Check if busy - /ff should be blocked like agent queries
-      if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, conversationKey, originalTs)) {
+      if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, session.sessionId ?? null, originalTs)) {
         return;
       }
       // Fast-forward: sync missed terminal messages and start watching
@@ -3249,12 +3291,11 @@ async function handleMessage(params: {
   }
 
   // Check if conversation is busy before starting query
-  if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, conversationKey, originalTs)) {
+  if (await checkBusyAndRespond(client, channelId, effectiveThreadTs, session.sessionId ?? null, originalTs)) {
     return;
   }
 
-  // Mark conversation as busy
-  busyConversations.add(conversationKey);
+  // Busy state will be set after status message is posted
 
   // Initialize processing state for real-time activity tracking
   const startTime = Date.now();
@@ -3400,6 +3441,16 @@ async function handleMessage(params: {
       processingState.threadParentTs = originalTs || null;
     }
   }
+
+  startSessionProcessing(session.sessionId ?? null, {
+    conversationKey,
+    sessionId: session.sessionId ?? '',
+    statusMsgTs: statusMsgTs ?? conversationKey,
+    originalTs: originalTs ?? statusMsgTs ?? conversationKey,
+    startTime,
+    channelId,
+    threadTs: effectiveThreadTs,
+  });
 
   // Post starting entry to thread (activity thread reply) - ONLY if NOT reusing status message
   if (processingState.threadParentTs && !existingStatusMsgTs) {
@@ -4979,7 +5030,7 @@ async function handleMessage(params: {
     }
     // Only clear busy state if NOT waiting for plan approval
     if (!pendingPlanApprovals.has(conversationKey)) {
-      busyConversations.delete(conversationKey);
+      stopSessionProcessing(processingState.sessionId ?? session.sessionId ?? null);
     }
     activeQueries.delete(conversationKey);
     clearAborted(conversationKey);
@@ -5107,7 +5158,7 @@ async function handleQueryAbort(conversationKey: string, channelId: string, clie
 
     // Clean up active query (abortedQueries cleaned up in finally block of main flow)
     activeQueries.delete(conversationKey);
-    busyConversations.delete(conversationKey);
+    stopSessionProcessing(active.processingState.sessionId ?? null);
   } else {
     console.log(`No active query found for: ${conversationKey}`);
   }
@@ -5163,6 +5214,7 @@ app.action(/^abort_query_(.+)$/, async ({ action, ack, body, client }) => {
       });
     }
   }
+
 });
 
 // Handle "Fork to New Channel" modal submission
@@ -5181,8 +5233,7 @@ app.view('fork_to_channel_modal', async ({ ack, body, view, client }) => {
   const metadata = JSON.parse(view.private_metadata || '{}');
 
   // Check if source conversation is busy - forking from active session causes SDK crash
-  const sourceConversationKey = getConversationKey(metadata.sourceChannelId, metadata.threadTs);
-  if (busyConversations.has(sourceConversationKey)) {
+  if (metadata.sessionId && conversationTracker.isBusy(metadata.sessionId)) {
     await ack({
       response_action: 'errors',
       errors: { channel_name_block: 'Cannot fork while a query is running. Please wait for it to complete.' },
@@ -5318,8 +5369,9 @@ app.action(/^model_select_(.+)$/, async ({ action, ack, body, client }) => {
 
   // Check if conversation is busy - model changes don't take effect mid-turn
   // so we block them while a query is running to avoid confusion
-  const conversationKey = getConversationKey(channelId, bodyWithChannel.message?.thread_ts);
-  if (busyConversations.has(conversationKey)) {
+  const threadTs = bodyWithChannel.message?.thread_ts;
+  const sessionForBusy = threadTs ? getThreadSession(channelId, threadTs) : getSession(channelId);
+  if (sessionForBusy?.sessionId && conversationTracker.isBusy(sessionForBusy.sessionId)) {
     // Update message to show busy error
     if (bodyWithChannel.message?.ts) {
       try {
@@ -5349,7 +5401,7 @@ app.action(/^model_select_(.+)$/, async ({ action, ack, body, client }) => {
   const displayName = modelInfo?.displayName || modelId;
 
   // Save to session (thread-aware)
-  const threadTs = bodyWithChannel.message?.thread_ts;
+  // threadTs already computed above
   if (threadTs) {
     await saveThreadSession(channelId, threadTs, { model: modelId });
   } else {
@@ -5420,7 +5472,6 @@ app.action(/^plan_clear_bypass_(.+)$/, async ({ action, ack, body, client }) => 
   const pending = pendingPlanApprovals.get(conversationKey);
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
-    busyConversations.delete(conversationKey);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5439,6 +5490,7 @@ app.action(/^plan_clear_bypass_(.+)$/, async ({ action, ack, body, client }) => 
 
   // Get plan file path before clearing (from activeQuery's processingState)
   const activeQuery = activeQueries.get(conversationKey);
+  stopSessionProcessing(activeQuery?.processingState?.sessionId ?? oldSessionId ?? null);
   let planFilePath = activeQuery?.processingState?.planFilePath;
 
   // Fallback: read from persisted session if activeQuery cleanup already happened
@@ -5507,7 +5559,8 @@ app.action(/^plan_accept_edits_(.+)$/, async ({ action, ack, body, client }) => 
   const pending = pendingPlanApprovals.get(conversationKey);
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
-    busyConversations.delete(conversationKey);
+    const activeQuery = activeQueries.get(conversationKey);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5559,7 +5612,8 @@ app.action(/^plan_bypass_(.+)$/, async ({ action, ack, body, client }) => {
   const pending = pendingPlanApprovals.get(conversationKey);
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
-    busyConversations.delete(conversationKey);
+    const activeQuery = activeQueries.get(conversationKey);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5611,7 +5665,8 @@ app.action(/^plan_manual_(.+)$/, async ({ action, ack, body, client }) => {
   const pending = pendingPlanApprovals.get(conversationKey);
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
-    busyConversations.delete(conversationKey);
+    const activeQuery = activeQueries.get(conversationKey);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5664,7 +5719,8 @@ app.action(/^plan_reject_(.+)$/, async ({ action, ack, body, client }) => {
   const pending = pendingPlanApprovals.get(conversationKey);
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
-    busyConversations.delete(conversationKey);
+    const activeQuery = activeQueries.get(conversationKey);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
     // Remove :question: emoji (answer received - user chose to change the plan)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (will be re-added when processing resumes)
@@ -6188,21 +6244,6 @@ app.action(/^fork_here_(.+)$/, async ({ action, ack, body, client }) => {
   const match = actionId.match(/^fork_here_(.+)$/);
   const conversationKey = match ? match[1] : '';
 
-  // Check if source conversation is busy - forking from active session causes SDK crash
-  if (busyConversations.has(conversationKey)) {
-    const bodyWithChannel = body as any;
-    const channelId = bodyWithChannel.channel?.id;
-    const userId = bodyWithChannel.user?.id;
-    if (channelId && userId) {
-      await (client as any).chat.postEphemeral({
-        channel: channelId,
-        user: userId,
-        text: ':warning: Cannot fork while a query is running. Please wait for it to complete or click Abort.',
-      });
-    }
-    return;
-  }
-
   // Get messageTs from the message the button is on (Slack provides this)
   const bodyWithMessage = body as any;
   const messageTs = bodyWithMessage.message?.ts;
@@ -6220,6 +6261,21 @@ app.action(/^fork_here_(.+)$/, async ({ action, ack, body, client }) => {
     forkInfo = JSON.parse(valueStr);
   } catch {
     console.error('[ForkHere] Invalid forkInfo JSON:', valueStr);
+    return;
+  }
+
+  // Check if source session is busy - forking from active session causes SDK crash
+  if (forkInfo.sessionId && conversationTracker.isBusy(forkInfo.sessionId)) {
+    const bodyWithChannel = body as any;
+    const channelId = bodyWithChannel.channel?.id;
+    const userId = bodyWithChannel.user?.id;
+    if (channelId && userId) {
+      await (client as any).chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        text: ':warning: Cannot fork while a query is running. Please wait for it to complete or click Abort.',
+      });
+    }
     return;
   }
 
@@ -6475,8 +6531,8 @@ app.action('stop_terminal_watch', async ({ ack, body, client }) => {
 
   const stopped = stopWatching(channelId, threadTs);
   // Remove from busy state when watcher stops
-  // Always use channelId only since /watch is main-channel-only
-  busyConversations.delete(channelId);
+  const watchSession = getSession(channelId);
+  stopSessionProcessing(watchSession?.sessionId ?? null);
 
   if (stopped && bodyWithMessage.message?.ts) {
     // Update the message to show stopped state

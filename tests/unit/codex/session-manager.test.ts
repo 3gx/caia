@@ -14,9 +14,9 @@ import {
   clearSession,
   deleteChannelSession,
   getEffectiveWorkingDir,
-  getEffectiveApprovalPolicy,
+  getEffectiveMode,
   getEffectiveThreadId,
-  DEFAULT_APPROVAL_POLICY,
+  DEFAULT_MODE,
 } from '../../../codex/src/session-manager.js';
 
 // Mock fs module
@@ -44,15 +44,15 @@ describe('Session Manager', () => {
     it('loads and parses valid sessions file', () => {
       const mockData = {
         channels: {
-          C123: {
-            threadId: 'thread-123',
-            workingDir: '/test',
-            approvalPolicy: 'on-request',
-            createdAt: 1000,
-            lastActiveAt: 2000,
-            pathConfigured: false,
-            configuredPath: null,
-            configuredBy: null,
+            C123: {
+              threadId: 'thread-123',
+              workingDir: '/test',
+              mode: 'ask',
+              createdAt: 1000,
+              lastActiveAt: 2000,
+              pathConfigured: false,
+              configuredPath: null,
+              configuredBy: null,
             configuredAt: null,
           },
         },
@@ -95,7 +95,7 @@ describe('Session Manager', () => {
           C123: {
             threadId: 'thread-123',
             workingDir: '/test',
-            approvalPolicy: 'on-request' as const,
+            mode: 'ask' as const,
             createdAt: 1000,
             lastActiveAt: 2000,
             pathConfigured: false,
@@ -127,7 +127,7 @@ describe('Session Manager', () => {
       const mockSession = {
         threadId: 'thread-123',
         workingDir: '/test',
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         createdAt: 1000,
         lastActiveAt: 2000,
         pathConfigured: false,
@@ -159,14 +159,14 @@ describe('Session Manager', () => {
       );
 
       expect(writtenData.channels.C123.threadId).toBe('thread-123');
-      expect(writtenData.channels.C123.approvalPolicy).toBe(DEFAULT_APPROVAL_POLICY);
+      expect(writtenData.channels.C123.mode).toBe(DEFAULT_MODE);
     });
 
     it('preserves existing session data on update', async () => {
       const existingSession = {
         threadId: 'thread-123',
         workingDir: '/original',
-        approvalPolicy: 'never',
+        mode: 'bypass',
         model: 'test-model',
         createdAt: 1000,
         lastActiveAt: 1500,
@@ -204,7 +204,7 @@ describe('Session Manager', () => {
               workingDir: '/default',
               configuredPath: '/configured',
               pathConfigured: true,
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               configuredBy: null,
@@ -227,7 +227,7 @@ describe('Session Manager', () => {
               workingDir: '/default',
               configuredPath: null,
               pathConfigured: false,
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               configuredBy: null,
@@ -252,14 +252,14 @@ describe('Session Manager', () => {
     });
   });
 
-  describe('getEffectiveApprovalPolicy', () => {
-    it('returns channel policy', () => {
+  describe('getEffectiveMode', () => {
+    it('returns channel mode', () => {
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readFileSync.mockReturnValue(
         JSON.stringify({
           channels: {
             C123: {
-              approvalPolicy: 'never',
+              mode: 'bypass',
               threadId: null,
               workingDir: '/test',
               createdAt: 1000,
@@ -273,24 +273,24 @@ describe('Session Manager', () => {
         })
       );
 
-      const policy = getEffectiveApprovalPolicy('C123');
-      expect(policy).toBe('never');
+      const mode = getEffectiveMode('C123');
+      expect(mode).toBe('bypass');
     });
 
     it('returns default for unknown channel', () => {
       mockFs.existsSync.mockReturnValue(false);
 
-      const policy = getEffectiveApprovalPolicy('C999');
-      expect(policy).toBe(DEFAULT_APPROVAL_POLICY);
+      const mode = getEffectiveMode('C999');
+      expect(mode).toBe(DEFAULT_MODE);
     });
 
-    it('returns thread policy when threadTs provided', () => {
+    it('returns thread mode when threadTs provided', () => {
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readFileSync.mockReturnValue(
         JSON.stringify({
           channels: {
             C123: {
-              approvalPolicy: 'never',
+              mode: 'bypass',
               threadId: null,
               workingDir: '/test',
               createdAt: 1000,
@@ -301,7 +301,7 @@ describe('Session Manager', () => {
               configuredAt: null,
               threads: {
                 '123.456': {
-                  approvalPolicy: 'untrusted',
+                  mode: 'ask',
                   threadId: null,
                   forkedFrom: null,
                   workingDir: '/test',
@@ -318,8 +318,8 @@ describe('Session Manager', () => {
         })
       );
 
-      const policy = getEffectiveApprovalPolicy('C123', '123.456');
-      expect(policy).toBe('untrusted');
+      const mode = getEffectiveMode('C123', '123.456');
+      expect(mode).toBe('ask');
     });
   });
 
@@ -333,7 +333,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: null,
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -364,7 +364,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: null,
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -376,7 +376,7 @@ describe('Session Manager', () => {
                   threadId: 'codex-thread-id',
                   forkedFrom: null,
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   model: 'gpt-5.2-codex',
                   reasoningEffort: 'high',
                   createdAt: 1000,
@@ -405,7 +405,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: null,
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -417,7 +417,7 @@ describe('Session Manager', () => {
                   threadId: 'codex-thread-id',
                   forkedFrom: null,
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   model: 'gpt-5.2-codex',
                   reasoningEffort: 'high',
                   createdAt: 1000,
@@ -454,7 +454,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: null,
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               model: 'channel-model',
               createdAt: 1000,
               lastActiveAt: 2000,
@@ -488,7 +488,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: null,
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -515,7 +515,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'channel-codex-thread',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -527,7 +527,7 @@ describe('Session Manager', () => {
                   threadId: null, // Thread exists but has no threadId
                   forkedFrom: null,
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: false,
@@ -554,7 +554,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'channel-codex-thread',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -580,7 +580,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'channel-codex-thread',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -592,7 +592,7 @@ describe('Session Manager', () => {
                   threadId: 'thread-specific-codex-thread',
                   forkedFrom: null,
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: false,
@@ -622,7 +622,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'shared-codex-thread', // Saved by first @bot
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -635,7 +635,7 @@ describe('Session Manager', () => {
                   threadId: 'shared-codex-thread',
                   forkedFrom: null,
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: false,
@@ -665,7 +665,7 @@ describe('Session Manager', () => {
               threadId: 'thread-123',
               previousThreadIds: ['thread-100'],
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -711,7 +711,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'thread-abc',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -744,7 +744,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'thread-main',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -756,7 +756,7 @@ describe('Session Manager', () => {
                   threadId: 'thread-fork-1',
                   forkedFrom: 'thread-main',
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: false,
@@ -768,7 +768,7 @@ describe('Session Manager', () => {
                   threadId: 'thread-fork-2',
                   forkedFrom: 'thread-main',
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: false,
@@ -818,7 +818,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: 'thread-1',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -829,7 +829,7 @@ describe('Session Manager', () => {
             C456: {
               threadId: 'thread-2',
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -864,7 +864,7 @@ describe('Session Manager', () => {
               threadId: 'thread-current',
               previousThreadIds: ['thread-old-1', 'thread-old-2'],
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -896,7 +896,7 @@ describe('Session Manager', () => {
             C123: {
               threadId: null,
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -929,7 +929,7 @@ describe('Session Manager', () => {
               threadId: 'thread-main',
               previousThreadIds: ['thread-old'],
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: false,
@@ -941,7 +941,7 @@ describe('Session Manager', () => {
                   threadId: 'thread-fork',
                   forkedFrom: 'thread-main',
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: false,
@@ -981,7 +981,7 @@ describe('Session Manager', () => {
               threadId: 'thread-current',
               previousThreadIds: ['thread-v1', 'thread-v2'],
               workingDir: '/test',
-              approvalPolicy: 'on-request',
+              mode: 'ask',
               createdAt: 1000,
               lastActiveAt: 2000,
               pathConfigured: true,
@@ -997,7 +997,7 @@ describe('Session Manager', () => {
                   threadId: 'thread-fork-1',
                   forkedFrom: 'thread-current',
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: true,
@@ -1009,7 +1009,7 @@ describe('Session Manager', () => {
                   threadId: 'thread-fork-2',
                   forkedFrom: 'thread-current',
                   workingDir: '/test',
-                  approvalPolicy: 'on-request',
+                  mode: 'ask',
                   createdAt: 1000,
                   lastActiveAt: 2000,
                   pathConfigured: true,

@@ -5,25 +5,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CodexClient } from '../../../codex/src/codex-client.js';
 import {
-  handlePolicyCommand,
+  handleModeCommand,
   handleModelCommand,
   handleResumeCommand,
   handleMessageSizeCommand,
-  handleSandboxCommand,
   MESSAGE_SIZE_DEFAULT,
   type CommandContext,
 } from '../../../codex/src/commands.js';
 
 vi.mock('../../../codex/src/session-manager.js', () => ({
-  getEffectiveApprovalPolicy: vi.fn(() => 'on-request'),
+  getEffectiveMode: vi.fn(() => 'ask'),
   getSession: vi.fn(() => ({ model: 'model-a', reasoningEffort: 'high', workingDir: '/tmp' })),
   getThreadSession: vi.fn(() => null),
   saveSession: vi.fn(),
   saveThreadSession: vi.fn(),
+  saveMode: vi.fn(),
   saveThreadCharLimit: vi.fn(),
   clearSession: vi.fn(),
   getEffectiveWorkingDir: vi.fn(() => '/tmp'),
-  APPROVAL_POLICIES: ['never', 'on-request', 'on-failure', 'untrusted'],
 }));
 
 describe('Command Handlers', () => {
@@ -38,48 +37,36 @@ describe('Command Handlers', () => {
     vi.clearAllMocks();
   });
 
-  it('shows policy selection prompt when no args', async () => {
-    const result = await handlePolicyCommand({ ...baseContext, text: '' }, {} as CodexClient);
+  it('shows mode selection prompt when no args', async () => {
+    const result = await handleModeCommand({ ...baseContext, text: '' });
 
     expect(result.blocks.length).toBeGreaterThan(0);
-    expect(result.blocks[0].text?.text).toContain('Select Approval Policy');
-    expect(result.showPolicySelection).toBe(true);
+    expect(result.blocks[0].text?.text).toContain('Select Mode');
+    expect(result.showModeSelection).toBe(true);
   });
 
-  it('returns error for invalid policy', async () => {
-    const result = await handlePolicyCommand({ ...baseContext, text: 'invalid' }, {} as CodexClient);
+  it('returns error for invalid mode', async () => {
+    const result = await handleModeCommand({ ...baseContext, text: 'invalid' });
 
-    expect(result.text).toContain('Invalid policy');
+    expect(result.text).toContain('Invalid mode');
   });
 
   it('shows model selection prompt (no args)', async () => {
-    const codex = {
-      listModels: vi.fn().mockResolvedValue(['model-a', 'model-b']),
-    } as unknown as CodexClient;
-
-    const result = await handleModelCommand({ ...baseContext, text: '' }, codex);
+    const result = await handleModelCommand({ ...baseContext, text: '' }, {} as CodexClient);
 
     expect(result.blocks.length).toBeGreaterThan(0);
     expect(result.blocks[0].text?.text).toContain('Select Model');
   });
 
   it('shows model selection prompt even with args', async () => {
-    const codex = {
-      listModels: vi.fn().mockResolvedValue(['model-a', 'model-b']),
-    } as unknown as CodexClient;
-
-    const result = await handleModelCommand({ ...baseContext, text: 'model-b' }, codex);
+    const result = await handleModelCommand({ ...baseContext, text: 'model-b' }, {} as CodexClient);
 
     expect(result.blocks.length).toBeGreaterThan(0);
     expect(result.blocks[0].text?.text).toContain('Select Model');
   });
 
-  it('falls back to bundled models when listModels returns empty', async () => {
-    const codex = {
-      listModels: vi.fn().mockResolvedValue([]),
-    } as unknown as CodexClient;
-
-    const result = await handleModelCommand({ ...baseContext, text: '' }, codex);
+  it('includes bundled models in selection', async () => {
+    const result = await handleModelCommand({ ...baseContext, text: '' }, {} as CodexClient);
 
     expect(JSON.stringify(result.blocks)).toContain('gpt-5.2-codex');
   });
@@ -96,26 +83,26 @@ describe('Command Handlers', () => {
 
     it('resumes thread, updates sessions, and includes previous hint', async () => {
       const mockResumeId = 'thread-123';
-      (codex.resumeThread as vi.Mock).mockResolvedValue({ id: mockResumeId, workingDirectory: '/proj' });
+      (codex.resumeThread as any).mockResolvedValue({ id: mockResumeId, workingDirectory: '/proj' });
 
       const { getSession, getThreadSession, saveSession, saveThreadSession } = await import('../../../codex/src/session-manager.js');
 
-      (getSession as vi.Mock).mockReturnValue({
+      (getSession as any).mockReturnValue({
         threadId: 'old-channel-thread',
         previousThreadIds: ['c-prev'],
         workingDir: '/old',
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         pathConfigured: true,
         configuredPath: '/old',
         configuredBy: 'U0',
         configuredAt: 1,
       });
 
-      (getThreadSession as vi.Mock).mockReturnValue({
+      (getThreadSession as any).mockReturnValue({
         threadId: 'old-thread-thread',
         previousThreadIds: ['t-prev'],
         workingDir: '/t-old',
-        approvalPolicy: 'on-request',
+        mode: 'ask',
         pathConfigured: true,
         configuredPath: '/t-old',
         configuredBy: 'U9',
@@ -130,13 +117,13 @@ describe('Command Handlers', () => {
       expect(codex.resumeThread).toHaveBeenCalledWith(mockResumeId);
 
       expect(saveSession).toHaveBeenCalled();
-      const channelArgs = (saveSession as vi.Mock).mock.calls[0][1];
+      const channelArgs = (saveSession as any).mock.calls[0][1];
       expect(channelArgs.threadId).toBe(mockResumeId);
       expect(channelArgs.previousThreadIds).toContain('old-channel-thread');
       expect(channelArgs.configuredPath).toBe('/proj');
 
       expect(saveThreadSession).toHaveBeenCalled();
-      const threadArgs = (saveThreadSession as vi.Mock).mock.calls[0][2];
+      const threadArgs = (saveThreadSession as any).mock.calls[0][2];
       expect(threadArgs.threadId).toBe(mockResumeId);
       expect(threadArgs.previousThreadIds).toContain('old-thread-thread');
       expect(threadArgs.configuredPath).toBe('/proj');
@@ -149,7 +136,7 @@ describe('Command Handlers', () => {
     });
 
     it('surfaces errors from Codex resumeThread', async () => {
-      (codex.resumeThread as vi.Mock).mockRejectedValue(new Error('not found'));
+      (codex.resumeThread as any).mockRejectedValue(new Error('not found'));
 
       const result = await handleResumeCommand(
         { ...baseContext, text: 'bad-id' },
@@ -161,7 +148,7 @@ describe('Command Handlers', () => {
     });
 
     it('fails when Codex resumeThread does not return a working directory', async () => {
-      (codex.resumeThread as vi.Mock).mockResolvedValue({ id: 'thread-xyz', workingDirectory: '' });
+      (codex.resumeThread as any).mockResolvedValue({ id: 'thread-xyz', workingDirectory: '' });
 
       const result = await handleResumeCommand(
         { ...baseContext, text: 'thread-xyz' },
@@ -194,27 +181,6 @@ describe('Command Handlers', () => {
       const result = await handleMessageSizeCommand({ ...baseContext, text: 'abc' });
 
       expect(result.text).toContain('Invalid');
-    });
-  });
-
-  describe('handleSandboxCommand', () => {
-    it('shows sandbox selection when no args', async () => {
-      const codex = { getSandboxMode: () => 'workspace-write' } as any;
-      const result = await handleSandboxCommand({ ...baseContext, text: '' }, codex);
-      expect(result.text).toContain('Select sandbox mode');
-      expect(result.showSandboxSelection).toBe(true);
-    });
-
-    it('returns error for invalid mode', async () => {
-      const codex = { getSandboxMode: () => 'workspace-write' } as any;
-      const result = await handleSandboxCommand({ ...baseContext, text: 'invalid' }, codex);
-      expect(result.text).toContain('Invalid sandbox mode');
-    });
-
-    it('returns sandboxModeChange for valid mode', async () => {
-      const codex = { getSandboxMode: () => 'read-only' } as any;
-      const result = await handleSandboxCommand({ ...baseContext, text: 'danger-full-access' }, codex);
-      expect(result.sandboxModeChange).toBe('danger-full-access');
     });
   });
 

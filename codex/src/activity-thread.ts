@@ -518,6 +518,13 @@ async function pollForFileShares(
  *
  * Returns timestamps for the message, or null on complete failure.
  */
+export interface UploadMarkdownResult {
+  ts?: string;
+  text?: string;
+  wasTruncated?: boolean;
+  attachmentFailed?: boolean;
+}
+
 export async function uploadMarkdownAndPngWithResponse(
   client: WebClient,
   channelId: string,
@@ -526,7 +533,7 @@ export async function uploadMarkdownAndPngWithResponse(
   threadTs?: string,
   userId?: string,
   threadCharLimit?: number
-): Promise<{ ts?: string; uploadSucceeded?: boolean } | null> {
+): Promise<UploadMarkdownResult | null> {
   const limit = threadCharLimit ?? MESSAGE_SIZE_DEFAULT;
 
   // Strip markdown code fence wrapper if present (e.g., ```markdown ... ```)
@@ -544,6 +551,7 @@ export async function uploadMarkdownAndPngWithResponse(
     const wasTruncated = cleanMarkdown.length > limit;
 
     let textTs: string | undefined;
+    let attachmentFailed = false;
 
     // Step 2: Post message - with files if truncated, just text otherwise
     if (wasTruncated) {
@@ -600,6 +608,7 @@ export async function uploadMarkdownAndPngWithResponse(
             );
           } catch (fileError) {
             console.error('[uploadMarkdownAndPng] File upload failed after text post:', fileError);
+            attachmentFailed = true;
             if (userId) {
               try {
                 await client.chat.postEphemeral({
@@ -612,39 +621,70 @@ export async function uploadMarkdownAndPngWithResponse(
               }
             }
           }
+        } else {
+          attachmentFailed = true;
         }
       } else {
-        // THREAD: Keep current bundled behavior (files + initial_comment together)
-        const fileResult = await withSlackRetry(
-          () =>
-            client.files.uploadV2({
-              channel_id: channelId,
-              thread_ts: threadTs,
-              initial_comment: textToPost,
-              file_uploads: files.map((f) => ({
-                file: typeof f.content === 'string' ? Buffer.from(f.content, 'utf-8') : f.content,
-                filename: f.filename,
-                title: f.title,
-              })),
-            } as any),
-          'thread.bundled'
-        );
+        try {
+          // THREAD: Keep current bundled behavior (files + initial_comment together)
+          const fileResult = await withSlackRetry(
+            () =>
+              client.files.uploadV2({
+                channel_id: channelId,
+                thread_ts: threadTs,
+                initial_comment: textToPost,
+                file_uploads: files.map((f) => ({
+                  file: typeof f.content === 'string' ? Buffer.from(f.content, 'utf-8') : f.content,
+                  filename: f.filename,
+                  title: f.title,
+                })),
+              } as any),
+            'thread.bundled'
+          );
 
-        // Get ts from the file message
-        const shares = (fileResult as any)?.files?.[0]?.shares;
-        textTs = shares?.public?.[channelId]?.[0]?.ts ?? shares?.private?.[channelId]?.[0]?.ts;
+          // Get ts from the file message
+          const shares = (fileResult as any)?.files?.[0]?.shares;
+          textTs = shares?.public?.[channelId]?.[0]?.ts ?? shares?.private?.[channelId]?.[0]?.ts;
 
-        // files.uploadV2 is async - shares may be empty initially
-        if (!textTs) {
-          const fileId = (fileResult as any)?.files?.[0]?.files?.[0]?.id;
-          if (fileId) {
-            console.log(`[uploadMarkdownAndPng] shares empty, polling for file ${fileId}`);
-            textTs = (await pollForFileShares(client, fileId, channelId)) ?? undefined;
+          // files.uploadV2 is async - shares may be empty initially
+          if (!textTs) {
+            const fileId = (fileResult as any)?.files?.[0]?.files?.[0]?.id;
+            if (fileId) {
+              console.log(`[uploadMarkdownAndPng] shares empty, polling for file ${fileId}`);
+              textTs = (await pollForFileShares(client, fileId, channelId)) ?? undefined;
+            }
+          }
+
+          if (!textTs) {
+            console.error('[uploadMarkdownAndPng] textTs extraction failed after polling');
+          }
+        } catch (fileError) {
+          console.error('[uploadMarkdownAndPng] Thread file upload failed:', fileError);
+          attachmentFailed = true;
+          if (userId) {
+            try {
+              await client.chat.postEphemeral({
+                channel: channelId,
+                user: userId,
+                text: `Failed to attach files: ${fileError instanceof Error ? fileError.message : 'Unknown error'}`,
+              });
+            } catch {
+              // Ignore ephemeral failure
+            }
           }
         }
 
-        if (!textTs) {
-          console.error('[uploadMarkdownAndPng] textTs extraction failed after polling');
+        if (attachmentFailed) {
+          const textResult = await withSlackRetry(
+            () =>
+              client.chat.postMessage({
+                channel: channelId,
+                thread_ts: threadTs,
+                text: textToPost,
+              }),
+            'thread.fallback'
+          );
+          textTs = (textResult as any).ts;
         }
       }
     } else {
@@ -664,7 +704,9 @@ export async function uploadMarkdownAndPngWithResponse(
 
     return {
       ts: textTs,
-      uploadSucceeded: wasTruncated && !textTs,
+      text: textToPost,
+      wasTruncated,
+      attachmentFailed,
     };
   } catch (error) {
     console.error('Failed to upload markdown/png files:', error);
@@ -1065,7 +1107,7 @@ export async function postResponseToThread(
   content: string,
   durationMs?: number,
   charLimit?: number
-): Promise<string | null> {
+): Promise<UploadMarkdownResult | null> {
   const limit = charLimit ?? MESSAGE_SIZE_DEFAULT;
 
   // Format header
@@ -1083,7 +1125,12 @@ export async function postResponseToThread(
           }),
         'response.short'
       );
-      return (result as any).ts || null;
+      return {
+        ts: (result as any).ts || undefined,
+        text: `${header}\n\n${content}`,
+        wasTruncated: false,
+        attachmentFailed: false,
+      };
     } catch (err) {
       console.error('[postResponseToThread] Failed:', err);
       return null;
@@ -1101,8 +1148,7 @@ export async function postResponseToThread(
     undefined,
     limit
   );
-
-  return result?.ts || null;
+  return result;
 }
 
 /**

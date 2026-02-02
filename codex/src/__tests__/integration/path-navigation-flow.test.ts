@@ -44,7 +44,7 @@ describe('Path Navigation Flow Integration', () => {
         C123: {
           threadId: null,
           workingDir: '/Users/test/projects',
-          approvalPolicy: 'never',
+          mode: 'bypass',
           createdAt: Date.now(),
           lastActiveAt: Date.now(),
           pathConfigured: false,
@@ -274,7 +274,7 @@ describe('Path Navigation Flow Integration', () => {
           threadId: null,
           forkedFrom: null,
           workingDir: '/Users/test/projects',
-          approvalPolicy: 'never',
+          mode: 'bypass',
           createdAt: Date.now(),
           lastActiveAt: Date.now(),
           pathConfigured: false,

@@ -35,6 +35,7 @@ function createContext(overrides: Partial<StreamingContext>): StreamingContext {
     threadId: 'thread-shared',
     turnId: '',
     approvalPolicy: 'on-request',
+    mode: 'ask',
     reasoningEffort: 'high',
     updateRateMs: 60_000, // large to avoid periodic updates in test
     model: 'codex-mini',

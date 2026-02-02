@@ -23,12 +23,12 @@ describe('Message Size Selection Flow', () => {
     const channelId = 'C_MESSAGE_SIZE';
     const threadTs = '1234567890.000002';
 
-    let sessionStore = {
+    let sessionStore: any = {
       channels: {
         [channelId]: {
           threadId: null,
           workingDir: '/test',
-          approvalPolicy: 'on-request',
+          mode: 'ask',
           createdAt: 1000,
           lastActiveAt: 2000,
           pathConfigured: false,

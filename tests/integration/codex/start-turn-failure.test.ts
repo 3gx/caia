@@ -36,6 +36,7 @@ describe('startTurn failure cleanup', () => {
       threadId: 'thread-abc',
       turnId: '',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       reasoningEffort: 'high',
       sandboxMode: 'workspace-write',
       updateRateMs: 1000,

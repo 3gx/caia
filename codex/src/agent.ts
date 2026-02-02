@@ -3,14 +3,13 @@ import type { AgentCapabilities, IAgent } from '../../slack/src/types.js';
 const capabilities: AgentCapabilities = {
   supportsModes: true,
   modes: [
-    { name: 'ask', description: 'Ask before tool use', backendSettings: { approvalPolicy: 'on-request' } },
-    { name: 'auto', description: 'Auto-run tools in sandbox', backendSettings: { approvalPolicy: 'never', sandbox: 'workspace-write' } },
-    { name: 'bypass', description: 'Run tools without approval', backendSettings: { approvalPolicy: 'never', sandbox: 'danger-full-access' } },
+    { name: 'ask', description: 'Ask before tool use', backendSettings: { mode: 'ask' } },
+    { name: 'bypass', description: 'Run tools without approval', backendSettings: { mode: 'bypass' } },
   ],
   supportsTerminalWatch: false,
   supportsThinkingTokens: false,
   supportsPlanFile: false,
-  supportsSandbox: true,
+  supportsSandbox: false,
   supportsReasoningEffort: true,
   supportsModelSelection: true,
 };

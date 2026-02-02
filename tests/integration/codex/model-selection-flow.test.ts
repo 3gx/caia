@@ -258,12 +258,12 @@ describe('Model Selection Flow Integration', () => {
       const reasoningValue = 'xhigh';
 
       // Initial state: channel exists but no thread session
-      let sessionStore = {
+      let sessionStore: any = {
         channels: {
           [channelId]: {
             threadId: null,
             workingDir: '/test',
-            approvalPolicy: 'on-request',
+            mode: 'ask',
             createdAt: 1000,
             lastActiveAt: 2000,
             pathConfigured: false,
@@ -301,12 +301,12 @@ describe('Model Selection Flow Integration', () => {
       const modelValue = 'gpt-5.2';
       const reasoningValue: ReasoningEffort = 'medium';
 
-      let sessionStore = {
+      let sessionStore: any = {
         channels: {
           [channelId]: {
             threadId: null,
             workingDir: '/test',
-            approvalPolicy: 'on-request',
+            mode: 'ask',
             createdAt: 1000,
             lastActiveAt: 2000,
             pathConfigured: false,
@@ -345,7 +345,7 @@ describe('Model Selection Flow Integration', () => {
           [channelId]: {
             threadId: null,
             workingDir: '/test',
-            approvalPolicy: 'on-request',
+            mode: 'ask',
             createdAt: 1000,
             lastActiveAt: 2000,
             pathConfigured: false,
@@ -357,7 +357,7 @@ describe('Model Selection Flow Integration', () => {
                 threadId: 'codex-thread-123',
                 forkedFrom: null,
                 workingDir: '/test',
-                approvalPolicy: 'on-request',
+                mode: 'ask',
                 model: savedModel,
                 reasoningEffort: savedReasoning,
                 createdAt: 1000,
@@ -392,7 +392,7 @@ describe('Model Selection Flow Integration', () => {
           [channelId]: {
             threadId: null,
             workingDir: '/test',
-            approvalPolicy: 'on-request',
+            mode: 'ask',
             createdAt: 1000,
             lastActiveAt: 2000,
             pathConfigured: false,
@@ -404,7 +404,7 @@ describe('Model Selection Flow Integration', () => {
                 threadId: 'codex-thread-123',
                 forkedFrom: null,
                 workingDir: '/test',
-                approvalPolicy: 'on-request',
+                mode: 'ask',
                 // model is NOT set
                 createdAt: 1000,
                 lastActiveAt: 2000,

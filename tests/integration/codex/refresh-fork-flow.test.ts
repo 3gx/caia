@@ -46,7 +46,7 @@ describe('Refresh Fork Flow', () => {
     };
 
     await updateSourceMessageWithForkLink(client, 'C_SOURCE', sourceMessageTs, 'C_FORK', {
-      conversationKey: 'C_SOURCE:555.666',
+      conversationKey: 'C_SOURCE_555.666',
       turnId: 'turn_1',
     });
 
@@ -61,7 +61,7 @@ describe('Refresh Fork Flow', () => {
     await restoreForkHereButton(client, {
       sourceChannelId: 'C_SOURCE',
       sourceMessageTs,
-      conversationKey: 'C_SOURCE:555.666',
+      conversationKey: 'C_SOURCE_555.666',
       turnId: 'turn_1',
     });
 

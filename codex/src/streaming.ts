@@ -16,6 +16,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
+import type { UnifiedMode } from '../../slack/src/session/types.js';
 import { Mutex } from 'async-mutex';
 import type {
   CodexClient,
@@ -32,7 +33,9 @@ import {
   buildActivityEntryBlocks,
   buildForkButton,
   buildAttachThinkingFileButton,
+  buildAttachResponseFileButton,
   formatThreadActivityEntry,
+  formatThreadResponseMessage,
 } from './blocks.js';
 import {
   markProcessingStart,
@@ -203,6 +206,8 @@ export interface StreamingContext {
   turnId: string;
   /** Current approval policy */
   approvalPolicy: ApprovalPolicy;
+  /** Current unified mode */
+  mode: UnifiedMode;
   /** Current reasoning effort */
   reasoningEffort?: ReasoningEffort;
   /** Current sandbox mode */
@@ -330,17 +335,20 @@ interface StreamingState {
  * Create a unique conversation key from channel and thread.
  */
 export function makeConversationKey(channelId: string, threadTs?: string): string {
-  return threadTs ? `${channelId}:${threadTs}` : channelId;
+  return threadTs ? `${channelId}_${threadTs}` : channelId;
 }
 
 /**
  * Parse a conversation key back to channel and thread.
  */
 export function parseConversationKey(key: string): { channelId: string; threadTs?: string } {
-  const parts = key.split(':');
+  const separatorIndex = key.indexOf('_');
+  if (separatorIndex === -1) {
+    return { channelId: key };
+  }
   return {
-    channelId: parts[0],
-    threadTs: parts[1],
+    channelId: key.slice(0, separatorIndex),
+    threadTs: key.slice(separatorIndex + 1),
   };
 }
 
@@ -354,6 +362,7 @@ export class StreamingManager {
   private slack: WebClient;
   private codex: CodexClient;
   private approvalCallback?: (request: ApprovalRequestWithId, context: StreamingContext) => void;
+  private turnCompletedCallback?: (context: StreamingContext, status: TurnStatus) => void;
   private activityManager = new ActivityThreadManager();
 
   constructor(slack: WebClient, codex: CodexClient) {
@@ -367,6 +376,13 @@ export class StreamingManager {
    */
   onApprovalRequest(callback: (request: ApprovalRequestWithId, context: StreamingContext) => void): void {
     this.approvalCallback = callback;
+  }
+
+  /**
+   * Set callback for turn completion.
+   */
+  onTurnCompleted(callback: (context: StreamingContext, status: TurnStatus) => void): void {
+    this.turnCompletedCallback = callback;
   }
 
   /**
@@ -1032,18 +1048,20 @@ export class StreamingManager {
 
           // Integration point 5: Post response to thread
           if (state.text && status === 'completed') {
-            const responseTs = await postResponseToThread(
+            const responseDurationMs = Date.now() - found.context.startTime;
+            const responseResult = await postResponseToThread(
               this.slack,
               channelId,
               state.threadParentTs || originalTs,
               state.text,
-              Date.now() - found.context.startTime,
+              responseDurationMs,
               threadCharLimit
             ).catch((err) => {
               console.error('[streaming] Response post failed:', err);
               return null;
             });
 
+            const responseTs = responseResult?.ts;
             if (responseTs) {
               state.responseMessageTs = responseTs;
               try {
@@ -1054,6 +1072,48 @@ export class StreamingManager {
                 );
               } catch (err) {
                 console.error('[streaming] Response permalink failed:', err);
+              }
+            }
+
+            if (responseResult?.attachmentFailed && responseTs) {
+              const threadSessionKey = found.context.threadTs || originalTs;
+              if (threadSessionKey) {
+                const fallbackText = responseResult.text
+                  ? responseResult.text.replace('Full response attached', 'Full response not attached')
+                  : `${formatThreadResponseMessage(state.text, responseDurationMs)}\n\n_Full response not attached._`;
+                await saveThreadSession(channelId, threadSessionKey, {
+                  lastResponseContent: state.text,
+                  lastResponseText: fallbackText,
+                  lastResponseCharCount: state.text.length,
+                  lastResponseDurationMs: responseDurationMs,
+                  lastResponseMessageTs: responseTs,
+                }).catch((err) => console.error('[streaming] Failed to save lastResponseContent:', err));
+
+                const text = fallbackText || ':speech_balloon: Response';
+                const blocks = [
+                  {
+                    type: 'section',
+                    text: { type: 'mrkdwn', text },
+                    expand: true,
+                  },
+                  buildAttachResponseFileButton(
+                    responseTs,
+                    threadSessionKey,
+                    channelId,
+                    state.text.length
+                  ),
+                ];
+
+                await withSlackRetry(
+                  () =>
+                    this.slack.chat.update({
+                      channel: channelId,
+                      ts: responseTs,
+                      text,
+                      blocks,
+                    }),
+                  'response.attach.retry'
+                ).catch((err) => console.error('[streaming] Response retry button update failed:', err));
               }
             }
           }
@@ -1101,6 +1161,10 @@ export class StreamingManager {
           this.contexts.delete(found.key);
           this.states.delete(found.key);
           console.log(`[streaming] Cleaned up context and state for key="${found.key}"`);
+
+          if (this.turnCompletedCallback) {
+            this.turnCompletedCallback(found.context, status);
+          }
         }
     });
 
@@ -1900,7 +1964,7 @@ export class StreamingManager {
         conversationKey,
         elapsedMs,
         entries, // Pass for todo extraction
-        approvalPolicy: context.approvalPolicy,
+        mode: context.mode,
         model: context.model,
         reasoningEffort: context.reasoningEffort,
         sandboxMode: context.sandboxMode,

@@ -1,14 +1,14 @@
 /**
- * Integration tests for policy selection persistence.
+ * Integration tests for mode selection persistence.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
-import { saveApprovalPolicy } from '../../session-manager.js';
+import { saveMode } from '../../session-manager.js';
 
 vi.mock('fs');
 
-describe('Policy Selection Flow', () => {
+describe('Mode Selection Flow', () => {
   const mockFs = vi.mocked(fs);
 
   beforeEach(() => {
@@ -19,7 +19,7 @@ describe('Policy Selection Flow', () => {
     vi.restoreAllMocks();
   });
 
-  it('persists policy to both channel and thread sessions', async () => {
+  it('persists mode to both channel and thread sessions', async () => {
     const channelId = 'C_POLICY';
     const threadTs = '1234567890.000001';
 
@@ -28,7 +28,7 @@ describe('Policy Selection Flow', () => {
         [channelId]: {
           threadId: null,
           workingDir: '/test',
-          approvalPolicy: 'on-request',
+          mode: 'ask',
           createdAt: 1000,
           lastActiveAt: 2000,
           pathConfigured: false,
@@ -46,9 +46,9 @@ describe('Policy Selection Flow', () => {
       sessionStore = JSON.parse(data as string);
     });
 
-    await saveApprovalPolicy(channelId, threadTs, 'never');
+    await saveMode(channelId, threadTs, 'bypass');
 
-    expect(sessionStore.channels[channelId].approvalPolicy).toBe('never');
-    expect(sessionStore.channels[channelId].threads[threadTs].approvalPolicy).toBe('never');
+    expect(sessionStore.channels[channelId].mode).toBe('bypass');
+    expect(sessionStore.channels[channelId].threads[threadTs].mode).toBe('bypass');
   });
 });

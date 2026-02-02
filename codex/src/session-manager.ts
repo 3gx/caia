@@ -9,30 +9,15 @@
  */
 
 import fs from 'fs';
-import { Mutex } from 'async-mutex';
+import { SessionStoreManager } from '../../slack/src/session/base-session-manager.js';
+import type { UnifiedMode } from '../../slack/src/session/types.js';
 import type { ApprovalPolicy, ReasoningEffort } from './codex-client.js';
 
-/**
- * Mutex for serializing access to sessions.json file.
- * Prevents race conditions when multiple concurrent operations
- * try to read-modify-write the file simultaneously.
- */
-const sessionsMutex = new Mutex();
 
 /**
- * Default approval policy.
+ * Default unified mode.
  */
-export const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = 'never';
-
-/**
- * All available approval policies for UI display.
- */
-export const APPROVAL_POLICIES: readonly ApprovalPolicy[] = [
-  'never',
-  'on-request',
-  'on-failure',
-  'untrusted',
-];
+export const DEFAULT_MODE: UnifiedMode = 'ask';
 
 /**
  * Usage data from the last query (for /status and /context commands).
@@ -60,8 +45,8 @@ export interface Session {
   turns?: TurnInfo[];
   /** Working directory for Codex */
   workingDir: string;
-  /** Approval policy */
-  approvalPolicy: ApprovalPolicy;
+  /** Unified mode (plan/ask/bypass) */
+  mode: UnifiedMode;
   /** Selected model ID */
   model?: string;
   /** Reasoning effort level */
@@ -99,8 +84,8 @@ export interface ThreadSession {
   forkedAtTurnIndex?: number;
   /** Working directory (inherited from channel) */
   workingDir: string;
-  /** Approval policy */
-  approvalPolicy: ApprovalPolicy;
+  /** Unified mode (inherited from channel) */
+  mode: UnifiedMode;
   /** Selected model ID (inherited from channel) */
   model?: string;
   /** Reasoning effort level (inherited from channel) */
@@ -136,6 +121,16 @@ export interface ThreadSession {
   lastThinkingDurationMs?: number;
   /** Slack ts of the thinking message to update */
   lastThinkingMessageTs?: string;
+  /** Last response content (for attach-response action) */
+  lastResponseContent?: string;
+  /** Last response text posted (for attach-response updates) */
+  lastResponseText?: string;
+  /** Last response content length (for attach-response validation) */
+  lastResponseCharCount?: number;
+  /** Last response duration in ms (for attach-response display) */
+  lastResponseDurationMs?: number;
+  /** Slack ts of the response message to update */
+  lastResponseMessageTs?: string;
   /** Turn counter for this thread (incremented per turn) */
   turnCounter?: number;
 }
@@ -169,26 +164,15 @@ interface SessionStore {
   };
 }
 
-const SESSIONS_FILE = './sessions.json';
+const storeManager = new SessionStoreManager<Session, ThreadSession>('codex');
 
 /**
  * Load sessions from disk. Handles corrupted files gracefully.
  */
 export function loadSessions(): SessionStore {
-  if (fs.existsSync(SESSIONS_FILE)) {
-    try {
-      const content = fs.readFileSync(SESSIONS_FILE, 'utf-8');
-      const parsed = JSON.parse(content);
-      // Validate basic structure
-      if (parsed && typeof parsed === 'object' && parsed.channels) {
-        return parsed;
-      }
-      console.error('sessions.json has invalid structure, resetting');
-      return { channels: {} };
-    } catch (error) {
-      console.error('Failed to parse sessions.json, resetting:', error);
-      return { channels: {} };
-    }
+  const parsed = storeManager.loadStore() as SessionStore;
+  if (parsed && typeof parsed === 'object' && parsed.channels) {
+    return parsed;
   }
   return { channels: {} };
 }
@@ -197,7 +181,7 @@ export function loadSessions(): SessionStore {
  * Save sessions to disk.
  */
 export function saveSessions(store: SessionStore): void {
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(store, null, 2));
+  storeManager.saveStore(store as SessionStore);
 }
 
 /**
@@ -212,7 +196,7 @@ export function getSession(channelId: string): Session | null {
  * Save a channel session.
  */
 export async function saveSession(channelId: string, session: Partial<Session>): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const existing = store.channels[channelId];
 
@@ -220,7 +204,7 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       threadId: existing?.threadId ?? null,
       previousThreadIds: existing?.previousThreadIds ?? [],
       workingDir: existing?.workingDir ?? process.cwd(),
-      approvalPolicy: existing?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY,
+      mode: normalizeMode(existing?.mode),
       model: existing?.model,
       reasoningEffort: existing?.reasoningEffort,
       createdAt: existing?.createdAt ?? Date.now(),
@@ -268,20 +252,20 @@ export async function saveThreadSession(
   threadTs: string,
   session: Partial<ThreadSession>
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channel = store.channels[channelId];
 
-    if (!channel) {
-      // No main session exists - create a minimal one
-      store.channels[channelId] = {
-        threadId: null,
-        workingDir: process.cwd(),
-        approvalPolicy: DEFAULT_APPROVAL_POLICY,
-        createdAt: Date.now(),
-        lastActiveAt: Date.now(),
-        pathConfigured: false,
-        configuredPath: null,
+      if (!channel) {
+        // No main session exists - create a minimal one
+        store.channels[channelId] = {
+          threadId: null,
+          workingDir: process.cwd(),
+          mode: DEFAULT_MODE,
+          createdAt: Date.now(),
+          lastActiveAt: Date.now(),
+          pathConfigured: false,
+          configuredPath: null,
         configuredBy: null,
         configuredAt: null,
         threads: {},
@@ -299,7 +283,7 @@ export async function saveThreadSession(
       threadId: existingThread?.threadId ?? null,
       forkedFrom: existingThread?.forkedFrom ?? null,
       workingDir: existingThread?.workingDir ?? mainChannel.workingDir,
-      approvalPolicy: existingThread?.approvalPolicy ?? mainChannel.approvalPolicy,
+      mode: normalizeMode(existingThread?.mode ?? mainChannel.mode),
       model: existingThread?.model ?? mainChannel.model,
       reasoningEffort: existingThread?.reasoningEffort ?? mainChannel.reasoningEffort,
       createdAt: existingThread?.createdAt ?? Date.now(),
@@ -346,14 +330,15 @@ export async function saveModelSettings(
  * Save approval policy for both channel and thread (if provided).
  * Ensures new threads inherit the latest selection.
  */
-export async function saveApprovalPolicy(
+export async function saveMode(
   channelId: string,
   threadTs: string | undefined,
-  approvalPolicy: ApprovalPolicy
+  mode: UnifiedMode
 ): Promise<void> {
-  await saveSession(channelId, { approvalPolicy });
+  const normalized = normalizeMode(mode);
+  await saveSession(channelId, { mode: normalized });
   if (threadTs) {
-    await saveThreadSession(channelId, threadTs, { approvalPolicy });
+    await saveThreadSession(channelId, threadTs, { mode: normalized });
   }
 }
 
@@ -425,7 +410,7 @@ export async function recordTurn(
   threadTs: string | null,
   turn: TurnInfo
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channel = store.channels[channelId];
 
@@ -484,7 +469,7 @@ export function getTurnBySlackTs(channelId: string, slackTs: string): TurnInfo |
  * if someone has the thread ID.
  */
 export async function deleteChannelSession(channelId: string): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -654,21 +639,48 @@ export function getEffectiveWorkingDir(
 }
 
 /**
+ * Normalize mode values (Codex doesn't support plan).
+ */
+export function normalizeMode(mode?: UnifiedMode | null): UnifiedMode {
+  if (!mode || mode === 'plan') {
+    return DEFAULT_MODE;
+  }
+  return mode;
+}
+
+/**
+ * Get effective unified mode for a session.
+ */
+export function getEffectiveMode(
+  channelId: string,
+  threadTs?: string
+): UnifiedMode {
+  if (threadTs) {
+    const threadSession = getThreadSession(channelId, threadTs);
+    if (threadSession?.mode) {
+      return normalizeMode(threadSession.mode);
+    }
+  }
+
+  const session = getSession(channelId);
+  return normalizeMode(session?.mode);
+}
+
+/**
+ * Map unified mode to Codex approval policy.
+ */
+export function mapModeToApprovalPolicy(mode: UnifiedMode): ApprovalPolicy {
+  return mode === 'bypass' ? 'never' : 'on-request';
+}
+
+/**
  * Get effective approval policy for a session.
  */
 export function getEffectiveApprovalPolicy(
   channelId: string,
   threadTs?: string
 ): ApprovalPolicy {
-  if (threadTs) {
-    const threadSession = getThreadSession(channelId, threadTs);
-    if (threadSession) {
-      return threadSession.approvalPolicy;
-    }
-  }
-
-  const session = getSession(channelId);
-  return session?.approvalPolicy ?? DEFAULT_APPROVAL_POLICY;
+  return mapModeToApprovalPolicy(getEffectiveMode(channelId, threadTs));
 }
 
 /**

@@ -2,14 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import * as crypto from 'crypto';
-import { Mutex } from 'async-mutex';
-
-/**
- * Mutex for serializing access to sessions.json file.
- * Prevents race conditions when multiple concurrent operations
- * try to read-modify-write the file simultaneously.
- */
-const sessionsMutex = new Mutex();
+import { SessionStoreManager } from '../../slack/src/session/base-session-manager.js';
 
 /**
  * SDK Permission Mode type - matches @anthropic-ai/claude-agent-sdk.
@@ -198,69 +191,58 @@ interface SessionStore {
   };
 }
 
-const SESSIONS_FILE = './sessions.json';
+const storeManager = new SessionStoreManager<Session, ThreadSession>('claude');
 
 /**
  * Load sessions from disk. Handles corrupted files gracefully.
  */
 export function loadSessions(): SessionStore {
-  if (fs.existsSync(SESSIONS_FILE)) {
-    try {
-      const content = fs.readFileSync(SESSIONS_FILE, 'utf-8');
-      const parsed = JSON.parse(content);
-      // Validate basic structure
-      if (parsed && typeof parsed === 'object' && parsed.channels) {
-        // Migration: Add default path config fields to existing sessions
-        for (const channelId in parsed.channels) {
-          const channel = parsed.channels[channelId];
-          if (channel.pathConfigured === undefined) {
-            channel.pathConfigured = false;
-            channel.configuredPath = null;
-            channel.configuredBy = null;
-            channel.configuredAt = null;
-          }
-          // Migration: Add previousSessionIds field to existing sessions
-          if (channel.previousSessionIds === undefined) {
-            channel.previousSessionIds = [];
-          }
-          // Migrate threads too
-          if (channel.threads) {
-            for (const threadTs in channel.threads) {
-              const thread = channel.threads[threadTs];
-              if (thread.pathConfigured === undefined) {
-                thread.pathConfigured = channel.pathConfigured;
-                thread.configuredPath = channel.configuredPath;
-                thread.configuredBy = channel.configuredBy;
-                thread.configuredAt = channel.configuredAt;
-              }
-            }
-          }
-          // Migration: Add sessionId to messageMap entries that don't have it
-          // This enables "time travel" forking after /clear
-          if (channel.messageMap && channel.sessionId) {
-            for (const slackTs in channel.messageMap) {
-              const mapping = channel.messageMap[slackTs];
-              if (!mapping.sessionId) {
-                // Assign current sessionId to old entries (best effort)
-                mapping.sessionId = channel.sessionId;
-              }
-            }
+  const parsed = storeManager.loadStore() as SessionStore;
+  if (parsed && typeof parsed === 'object' && parsed.channels) {
+    // Migration: Add default path config fields to existing sessions
+    for (const channelId in parsed.channels) {
+      const channel = parsed.channels[channelId];
+      if (channel.pathConfigured === undefined) {
+        channel.pathConfigured = false;
+        channel.configuredPath = null;
+        channel.configuredBy = null;
+        channel.configuredAt = null;
+      }
+      // Migration: Add previousSessionIds field to existing sessions
+      if (channel.previousSessionIds === undefined) {
+        channel.previousSessionIds = [];
+      }
+      // Migrate threads too
+      if (channel.threads) {
+        for (const threadTs in channel.threads) {
+          const thread = channel.threads[threadTs];
+          if (thread.pathConfigured === undefined) {
+            thread.pathConfigured = channel.pathConfigured;
+            thread.configuredPath = channel.configuredPath;
+            thread.configuredBy = channel.configuredBy;
+            thread.configuredAt = channel.configuredAt;
           }
         }
-        return parsed;
       }
-      console.error('sessions.json has invalid structure, resetting');
-      return { channels: {} };
-    } catch (error) {
-      console.error('Failed to parse sessions.json, resetting:', error);
-      return { channels: {} };
+      // Migration: Add sessionId to messageMap entries that don't have it
+      // This enables "time travel" forking after /clear
+      if (channel.messageMap && channel.sessionId) {
+        for (const slackTs in channel.messageMap) {
+          const mapping = channel.messageMap[slackTs];
+          if (!mapping.sessionId) {
+            // Assign current sessionId to old entries (best effort)
+            mapping.sessionId = channel.sessionId;
+          }
+        }
+      }
     }
+    return parsed;
   }
   return { channels: {} };
 }
 
 export function saveSessions(store: SessionStore): void {
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(store, null, 2));
+  storeManager.saveStore(store as SessionStore);
 }
 
 export function getSession(channelId: string): Session | null {
@@ -269,7 +251,7 @@ export function getSession(channelId: string): Session | null {
 }
 
 export async function saveSession(channelId: string, session: Partial<Session>): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const existing = store.channels[channelId];
 
@@ -325,7 +307,7 @@ export async function saveThreadSession(
   threadTs: string,
   session: Partial<ThreadSession>
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channel = store.channels[channelId];
 
@@ -463,7 +445,7 @@ export async function saveMessageMapping(
   slackTs: string,
   mapping: SlackMessageMapping
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -692,7 +674,7 @@ export async function addSyncedMessageUuid(
   uuid: string,
   threadTs?: string
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -734,7 +716,7 @@ export async function clearSyncedMessageUuids(
   channelId: string,
   threadTs?: string
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -776,7 +758,7 @@ export async function addSlackOriginatedUserUuid(
   uuid: string,
   threadTs?: string
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -865,7 +847,7 @@ export async function clearSlackOriginatedUserUuids(
   channelId: string,
   threadTs?: string
 ): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -930,7 +912,7 @@ function deleteSdkSessionFile(sessionId: string, workingDir: string): void {
  * @param channelId - Slack channel ID (e.g., "C0123456789")
  */
 export async function deleteSession(channelId: string): Promise<void> {
-  await sessionsMutex.runExclusive(() => {
+  await storeManager.runExclusive(() => {
     const store = loadSessions();
     const channelSession = store.channels[channelId];
 
@@ -995,5 +977,3 @@ export async function deleteSession(channelId: string): Promise<void> {
     console.log(`✅ Cleanup complete for channel ${channelId}`);
   });
 }
-
-

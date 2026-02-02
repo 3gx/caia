@@ -36,7 +36,7 @@ describe('StreamingManager context usage (activity line)', () => {
     const codex = new EventEmitter() as any;
     const manager = new StreamingManager(slack, codex);
 
-    const key = 'C123:thread';
+    const key = 'C123_thread';
     const now = Date.now();
 
     // Manually seed context and state
@@ -49,6 +49,7 @@ describe('StreamingManager context usage (activity line)', () => {
       threadId: 'thread-id',
       turnId: 'turn-id',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       model: 'gpt-5.2-codex',
       reasoningEffort: 'xhigh',
       startTime: now - 1000,
@@ -90,11 +91,13 @@ describe('StreamingManager context usage (activity line)', () => {
 
     await (manager as any).updateActivityMessage(key);
 
-    const call = buildActivityBlocks.mock.calls.at(-1)?.[0];
+    const call = (buildActivityBlocks as any).mock.calls.at(-1)?.[0] as
+      | { contextTokens: number; contextPercent: number }
+      | undefined;
     expect(call).toBeDefined();
 
-    expect(call.contextTokens).toBe(170_000);
-    expect(call.contextPercent).toBeCloseTo(65.9, 1);
+    expect(call?.contextTokens).toBe(170_000);
+    expect(call?.contextPercent).toBeCloseTo(65.9, 1);
   });
 
   it('uses totalTokens when input/output are missing', async () => {
@@ -110,7 +113,7 @@ describe('StreamingManager context usage (activity line)', () => {
     const codex = new EventEmitter() as any;
     const manager = new StreamingManager(slack, codex);
 
-    const key = 'C456:thread';
+    const key = 'C456_thread';
     const now = Date.now();
 
     (manager as any).contexts.set(key, {
@@ -122,6 +125,7 @@ describe('StreamingManager context usage (activity line)', () => {
       threadId: 'thread-id',
       turnId: 'turn-id',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       model: 'gpt-5.2-codex',
       reasoningEffort: 'xhigh',
       startTime: now - 1000,
@@ -171,11 +175,13 @@ describe('StreamingManager context usage (activity line)', () => {
 
     await (manager as any).updateActivityMessage(key);
 
-    const call = buildActivityBlocks.mock.calls.at(-1)?.[0];
+    const call = (buildActivityBlocks as any).mock.calls.at(-1)?.[0] as
+      | { contextTokens: number; contextPercent: number }
+      | undefined;
     expect(call).toBeDefined();
 
-    expect(call.contextTokens).toBe(150_000);
-    expect(call.contextPercent).toBeCloseTo(58.1, 1);
+    expect(call?.contextTokens).toBe(150_000);
+    expect(call?.contextPercent).toBeCloseTo(58.1, 1);
 
     buildActivityBlocks.mockClear();
 
@@ -188,9 +194,11 @@ describe('StreamingManager context usage (activity line)', () => {
 
     await (manager as any).updateActivityMessage(key);
 
-    const followup = buildActivityBlocks.mock.calls.at(-1)?.[0];
+    const followup = (buildActivityBlocks as any).mock.calls.at(-1)?.[0] as
+      | { contextTokens: number; contextPercent: number }
+      | undefined;
     expect(followup).toBeDefined();
-    expect(followup.contextTokens).toBe(160_000);
-    expect(followup.contextPercent).toBeCloseTo(62.0, 1);
+    expect(followup?.contextTokens).toBe(160_000);
+    expect(followup?.contextPercent).toBeCloseTo(62.0, 1);
   });
 });

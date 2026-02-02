@@ -6,10 +6,12 @@
  */
 
 import { App, LogLevel } from '@slack/bolt';
+import type { UnifiedMode } from '../../slack/src/session/types.js';
 import { Mutex } from 'async-mutex';
-import { CodexClient, ApprovalRequestWithId, TurnContent, ReasoningEffort, ApprovalPolicy, SandboxMode } from './codex-client.js';
+import { CodexClient, ApprovalRequestWithId, TurnContent, ReasoningEffort } from './codex-client.js';
 import { StreamingManager, makeConversationKey, StreamingContext } from './streaming.js';
 import { ApprovalHandler } from './approval-handler.js';
+import { ConversationTracker, type ActiveContext } from '../../slack/src/session/conversation-tracker.js';
 import {
   handleCommand,
   CommandContext,
@@ -26,37 +28,39 @@ import {
   saveThreadSession,
   getOrCreateThreadSession,
   getEffectiveWorkingDir,
-  getEffectiveApprovalPolicy,
+  getEffectiveMode,
   getEffectiveThreadId,
   recordTurn,
   deleteChannelSession,
   saveModelSettings,
-  saveApprovalPolicy,
+  saveMode,
+  mapModeToApprovalPolicy,
 } from './session-manager.js';
 import {
   buildActivityBlocks,
-  buildPolicyStatusBlocks,
+  buildModeStatusBlocks,
   buildModelSelectionBlocks,
   buildReasoningSelectionBlocks,
   buildModelConfirmationBlocks,
   buildModelPickerCancelledBlocks,
-  buildPolicyPickerCancelledBlocks,
-  buildSandboxPickerCancelledBlocks,
+  buildModePickerCancelledBlocks,
   buildErrorBlocks,
   buildTextBlocks,
   buildAbortConfirmationModalView,
   buildForkToChannelModalView,
-  buildSandboxStatusBlocks,
+  formatThreadResponseMessage,
   buildActivityEntryBlocks,
   formatThreadActivityEntry,
   buildPathSetupBlocks,
   Block,
 } from './blocks.js';
 import { withSlackRetry } from '../../slack/src/retry.js';
+import { toUserMessage } from '../../slack/src/errors.js';
 import { markProcessingStart, markApprovalWait, removeProcessingEmoji } from './emoji-reactions.js';
+import { markAborted } from './abort-tracker.js';
 import { processSlackFiles, SlackFile, writeTempFile } from '../../slack/src/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
-import { uploadFilesToThread, getMessagePermalink, type ActivityEntry } from './activity-thread.js';
+import { uploadFilesToThread, uploadMarkdownAndPngWithResponse, getMessagePermalink, type ActivityEntry } from './activity-thread.js';
 import { THINKING_MESSAGE_SIZE } from './commands.js';
 
 // ============================================================================
@@ -71,22 +75,19 @@ interface PendingModelSelection {
 
 // Track pending model selections for emoji cleanup
 export const pendingModelSelections = new Map<string, PendingModelSelection>();
-interface PendingPolicySelection {
+interface PendingModeSelection {
   originalTs: string;
   channelId: string;
   threadTs?: string;
 }
+export const pendingModeSelections = new Map<string, PendingModeSelection>();
 
-interface PendingSandboxSelection {
-  originalTs: string;
+interface BusyContext extends ActiveContext {
   channelId: string;
   threadTs?: string;
 }
 
-export const pendingPolicySelections = new Map<string, PendingPolicySelection>();
-export const pendingSandboxSelections = new Map<string, PendingSandboxSelection>();
-import { toUserMessage } from '../../slack/src/errors.js';
-import { markAborted } from './abort-tracker.js';
+const conversationTracker = new ConversationTracker<BusyContext>();
 
 // Global instances
 let app: App;
@@ -203,6 +204,10 @@ export async function startBot(): Promise<void> {
       context.threadTs,
       context.userId
     );
+  });
+
+  streamingManager.onTurnCompleted((context) => {
+    conversationTracker.stopProcessing(context.threadId);
   });
 
   // Register event handlers
@@ -603,7 +608,7 @@ function setupEventHandlers(): void {
         await client.chat.postEphemeral({
           channel: channelId,
           user: userId,
-          text: 'Failed to attach thinking files. Please try again.',
+          text: 'Failed to attach response files. Please try again.',
         });
       }
       return;
@@ -651,6 +656,117 @@ function setupEventHandlers(): void {
       ts: activityMsgTs,
       text,
       blocks,
+    });
+  });
+
+  // Handle attach-response retry button
+  app.action(/^attach_response_file_(.+)$/, async ({ action, ack, body, client }) => {
+    await ack();
+
+    const rawValue = (action as { value?: string }).value;
+    const channelId = body.channel?.id;
+    const userId = body.user?.id;
+
+    if (!rawValue || !channelId) {
+      console.error('[attach_response] Missing action value or channel');
+      return;
+    }
+
+    let payload: {
+      threadParentTs: string;
+      channelId: string;
+      responseMsgTs: string;
+      responseCharCount: number;
+    };
+
+    try {
+      payload = JSON.parse(rawValue);
+    } catch (error) {
+      console.error('[attach_response] Failed to parse action value:', error);
+      return;
+    }
+
+    const { threadParentTs, responseMsgTs, responseCharCount } = payload;
+    const threadSession = getThreadSession(channelId, threadParentTs);
+    const content = threadSession?.lastResponseContent;
+    const responseText = threadSession?.lastResponseText;
+    const durationMs = threadSession?.lastResponseDurationMs;
+
+    if (!content || !responseText) {
+      if (userId) {
+        await client.chat.postEphemeral({
+          channel: channelId,
+          user: userId,
+          text: 'Response content is no longer available for attachment.',
+        });
+      }
+      return;
+    }
+
+    if (responseCharCount && content.length !== responseCharCount) {
+      if (userId) {
+        await client.chat.postEphemeral({
+          channel: channelId,
+          user: userId,
+          text: 'Response content has changed and cannot be attached. Please re-run the request.',
+        });
+      }
+      return;
+    }
+
+    const header = formatThreadResponseMessage(content, durationMs);
+    const slackFormattedResponse = responseText.includes('Full response not attached')
+      ? responseText.replace('Full response not attached', 'Full response attached')
+      : `${header}\n\n_Full response attached._`;
+
+    const uploadResult = await uploadMarkdownAndPngWithResponse(
+      client,
+      channelId,
+      content,
+      slackFormattedResponse,
+      threadParentTs,
+      userId,
+      threadSession?.threadCharLimit
+    );
+
+    if (!uploadResult?.ts || uploadResult.attachmentFailed) {
+      if (userId) {
+        await client.chat.postEphemeral({
+          channel: channelId,
+          user: userId,
+          text: 'Failed to attach response files. Please try again.',
+        });
+      }
+      return;
+    }
+
+    let fileMsgLink: string | undefined;
+    try {
+      fileMsgLink = await getMessagePermalink(client, channelId, uploadResult.ts);
+    } catch (error) {
+      console.error('[attach_response] Failed to get file permalink:', error);
+    }
+
+    if (!fileMsgLink) {
+      if (userId) {
+        await client.chat.postEphemeral({
+          channel: channelId,
+          user: userId,
+          text: 'Attached files, but could not generate link.',
+        });
+      }
+      return;
+    }
+
+    const newText = responseText.includes('Full response not attached')
+      ? responseText.replace('Full response not attached._', `Full response <${fileMsgLink}|attached>._`)
+      : `${responseText}\n_Full response <${fileMsgLink}|attached>._`;
+
+    await client.chat.update({
+      channel: channelId,
+      ts: responseMsgTs,
+      text: newText,
+      blocks: undefined,
     });
   });
 
@@ -703,12 +819,12 @@ function setupEventHandlers(): void {
     });
   });
 
-  // Handle /policy selection buttons
-  app.action(/^policy_select_(never|on-request|on-failure|untrusted)$/, async ({ action, ack, body, client }) => {
+  // Handle /mode selection buttons
+  app.action(/^mode_select_(ask|bypass)$/, async ({ action, ack, body, client }) => {
     await ack();
 
     const actionId = (action as { action_id: string }).action_id;
-    const newPolicy = actionId.replace('policy_select_', '') as ApprovalPolicy;
+    const newMode = actionId.replace('mode_select_', '') as UnifiedMode;
     const channelId = body.channel?.id;
     const messageTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.ts;
     const threadTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.thread_ts
@@ -718,134 +834,51 @@ function setupEventHandlers(): void {
       return;
     }
 
-    const currentPolicy = getEffectiveApprovalPolicy(channelId, threadTs);
+    const currentMode = getEffectiveMode(channelId, threadTs);
 
-    await saveApprovalPolicy(channelId, threadTs, newPolicy);
+    await saveMode(channelId, threadTs, newMode);
 
     // Update active context for status display (applies next turn)
     const conversationKey = makeConversationKey(channelId, threadTs);
     const context = streamingManager.getContext(conversationKey);
     if (context) {
-      context.approvalPolicy = newPolicy;
+      context.mode = newMode;
+      context.approvalPolicy = mapModeToApprovalPolicy(newMode);
     }
 
     await client.chat.update({
       channel: channelId,
       ts: messageTs,
-      text: `Approval policy changed: ${currentPolicy} → ${newPolicy}`,
-      blocks: buildPolicyStatusBlocks({ currentPolicy, newPolicy }),
+      text: `Mode changed: ${currentMode} → ${newMode}`,
+      blocks: buildModeStatusBlocks({ currentMode, newMode }),
     });
 
-    const pending = pendingPolicySelections.get(messageTs);
+    const pending = pendingModeSelections.get(messageTs);
     if (pending) {
       await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
-      pendingPolicySelections.delete(messageTs);
+      pendingModeSelections.delete(messageTs);
     }
   });
 
-  // Handle /policy cancel button
-  app.action('policy_picker_cancel', async ({ ack, body, client }) => {
+  // Handle /mode cancel button
+  app.action('mode_picker_cancel', async ({ ack, body, client }) => {
     await ack();
 
     const channelId = body.channel?.id;
     const messageTs = (body as { message?: { ts?: string } }).message?.ts;
     if (!channelId || !messageTs) return;
 
-    const pending = pendingPolicySelections.get(messageTs);
+    const pending = pendingModeSelections.get(messageTs);
     if (pending) {
       await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
-      pendingPolicySelections.delete(messageTs);
+      pendingModeSelections.delete(messageTs);
     }
 
     await client.chat.update({
       channel: channelId,
       ts: messageTs,
-      text: 'Policy selection cancelled',
-      blocks: buildPolicyPickerCancelledBlocks(),
-    });
-  });
-
-  // Handle /sandbox selection buttons
-  app.action(/^sandbox_select_(read-only|workspace-write|danger-full-access)$/, async ({ action, ack, body, client }) => {
-    await ack();
-
-    const actionId = (action as { action_id: string }).action_id;
-    const newMode = actionId.replace('sandbox_select_', '') as SandboxMode;
-    const channelId = body.channel?.id;
-    const messageTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.ts;
-
-    if (!channelId || !messageTs) {
-      return;
-    }
-
-    if (streamingManager.isAnyStreaming()) {
-      await client.chat.update({
-        channel: channelId,
-        ts: messageTs,
-        text: 'Cannot change sandbox while processing',
-        blocks: buildErrorBlocks('Cannot change sandbox while a turn is running. Please wait or abort.'),
-      });
-      const pending = pendingSandboxSelections.get(messageTs);
-      if (pending) {
-        await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
-        pendingSandboxSelections.delete(messageTs);
-      }
-      return;
-    }
-
-    const currentMode = codex.getSandboxMode();
-
-    try {
-      await codex.restartWithSandbox(newMode);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      await client.chat.update({
-        channel: channelId,
-        ts: messageTs,
-        text: `Failed to update sandbox: ${message}`,
-        blocks: buildErrorBlocks(`Failed to update sandbox: ${message}`),
-      });
-      const pending = pendingSandboxSelections.get(messageTs);
-      if (pending) {
-        await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
-        pendingSandboxSelections.delete(messageTs);
-      }
-      return;
-    }
-
-    await client.chat.update({
-      channel: channelId,
-      ts: messageTs,
-      text: `Sandbox mode changed: ${currentMode ?? 'default'} → ${newMode}`,
-      blocks: buildSandboxStatusBlocks({ currentMode, newMode }),
-    });
-
-    const pending = pendingSandboxSelections.get(messageTs);
-    if (pending) {
-      await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
-      pendingSandboxSelections.delete(messageTs);
-    }
-  });
-
-  // Handle /sandbox cancel button
-  app.action('sandbox_picker_cancel', async ({ ack, body, client }) => {
-    await ack();
-
-    const channelId = body.channel?.id;
-    const messageTs = (body as { message?: { ts?: string } }).message?.ts;
-    if (!channelId || !messageTs) return;
-
-    const pending = pendingSandboxSelections.get(messageTs);
-    if (pending) {
-      await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
-      pendingSandboxSelections.delete(messageTs);
-    }
-
-    await client.chat.update({
-      channel: channelId,
-      ts: messageTs,
-      text: 'Sandbox selection cancelled',
-      blocks: buildSandboxPickerCancelledBlocks(),
+      text: 'Mode selection cancelled',
+      blocks: buildModePickerCancelledBlocks(),
     });
   });
 
@@ -1064,42 +1097,6 @@ async function handleUserMessage(
 
   const commandResult = await handleCommand(commandContext, codex);
   if (commandResult) {
-    if (commandResult.sandboxModeChange) {
-      const newMode = commandResult.sandboxModeChange;
-      const currentMode = codex.getSandboxMode();
-
-      if (streamingManager.isAnyStreaming()) {
-        await app.client.chat.postMessage({
-          channel: channelId,
-          thread_ts: postingThreadTs,
-          blocks: buildErrorBlocks('Cannot change sandbox while a turn is running. Please wait or abort.'),
-          text: 'Cannot change sandbox while a turn is running. Please wait or abort.',
-        });
-        return;
-      }
-
-      try {
-        await codex.restartWithSandbox(newMode);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        await app.client.chat.postMessage({
-          channel: channelId,
-          thread_ts: postingThreadTs,
-          blocks: buildErrorBlocks(`Failed to update sandbox: ${message}`),
-          text: `Failed to update sandbox: ${message}`,
-        });
-        return;
-      }
-
-      await app.client.chat.postMessage({
-        channel: channelId,
-        thread_ts: postingThreadTs,
-        blocks: buildSandboxStatusBlocks({ currentMode, newMode }),
-        text: `Sandbox mode changed: ${currentMode ?? 'default'} → ${newMode}`,
-      });
-      return;
-    }
-
     // Handle /model command with emoji tracking
     if (commandResult.showModelSelection) {
       await markProcessingStart(app.client, channelId, messageTs);
@@ -1122,7 +1119,7 @@ async function handleUserMessage(
       return;
     }
 
-    if (commandResult.showPolicySelection) {
+    if (commandResult.showModeSelection) {
       await markProcessingStart(app.client, channelId, messageTs);
       const response = await app.client.chat.postMessage({
         channel: channelId,
@@ -1132,27 +1129,7 @@ async function handleUserMessage(
       });
 
       if (response.ts) {
-        pendingPolicySelections.set(response.ts, {
-          originalTs: messageTs,
-          channelId,
-          threadTs: postingThreadTs,
-        });
-        await markApprovalWait(app.client, channelId, messageTs);
-      }
-      return;
-    }
-
-    if (commandResult.showSandboxSelection) {
-      await markProcessingStart(app.client, channelId, messageTs);
-      const response = await app.client.chat.postMessage({
-        channel: channelId,
-        thread_ts: postingThreadTs,
-        blocks: commandResult.blocks,
-        text: commandResult.text,
-      });
-
-      if (response.ts) {
-        pendingSandboxSelections.set(response.ts, {
+        pendingModeSelections.set(response.ts, {
           originalTs: messageTs,
           channelId,
           threadTs: postingThreadTs,
@@ -1206,28 +1183,28 @@ async function handleUserMessage(
     return; // Don't process the message
   }
 
-  // Disallow concurrent turns (ccslack-style single-flight)
-  if (streamingManager.isAnyStreaming()) {
-    await app.client.chat.postMessage({
-      channel: channelId,
-      thread_ts: postingThreadTs,
-      blocks: buildErrorBlocks(
-        'Another request is already running. Please wait for it to finish or click Abort on the active status panel.'
-      ),
-      text: 'Another request is already running. Please wait or abort.',
-    });
-    return;
-  }
-
   // Regular message - send to Codex
   // Use postingThreadTs for all session lookups since that's our thread key
   const workingDir = getEffectiveWorkingDir(channelId, postingThreadTs);
-  const approvalPolicy = getEffectiveApprovalPolicy(channelId, postingThreadTs);
+  const mode = getEffectiveMode(channelId, postingThreadTs);
+  const approvalPolicy = mapModeToApprovalPolicy(mode);
   let threadId = getEffectiveThreadId(channelId, postingThreadTs);
 
   // Get session info - always use thread session since all conversations are in threads
   const session = getThreadSession(channelId, postingThreadTs) ?? getSession(channelId);
   console.log(`[message] Session lookup: channel=${channelId}, slackThread=${postingThreadTs}, codexThread=${threadId}, model=${session?.model}, reasoning=${session?.reasoningEffort}`);
+
+  if (threadId && conversationTracker.isBusy(threadId)) {
+    await app.client.chat.postMessage({
+      channel: channelId,
+      thread_ts: postingThreadTs,
+      blocks: buildErrorBlocks(
+        'Another request is already running for this session. Please wait for it to finish or click Abort on the active status panel.'
+      ),
+      text: 'Another request is already running for this session. Please wait or abort.',
+    });
+    return;
+  }
 
   // Start or resume thread
   if (!threadId) {
@@ -1282,7 +1259,7 @@ async function handleUserMessage(
       status: 'running',
       conversationKey,
       elapsedMs: 0,
-      approvalPolicy,
+      mode,
       model: effectiveModel,
       reasoningEffort: effectiveReasoning,
       sandboxMode: effectiveSandbox,
@@ -1296,6 +1273,30 @@ async function handleUserMessage(
     throw new Error('Failed to post message');
   }
 
+  const busyContext: BusyContext = {
+    conversationKey,
+    sessionId: threadId,
+    statusMsgTs: initialResult.ts,
+    originalTs: messageTs,
+    startTime: Date.now(),
+    userId,
+    query: text,
+    channelId,
+    threadTs: postingThreadTs,
+  };
+
+  if (!conversationTracker.startProcessing(threadId, busyContext)) {
+    await app.client.chat.postMessage({
+      channel: channelId,
+      thread_ts: postingThreadTs,
+      blocks: buildErrorBlocks(
+        'Another request is already running for this session. Please wait for it to finish or click Abort on the active status panel.'
+      ),
+      text: 'Another request is already running for this session. Please wait or abort.',
+    });
+    return;
+  }
+
   // Start streaming context
   const streamingContext: StreamingContext = {
     channelId,
@@ -1307,6 +1308,7 @@ async function handleUserMessage(
     threadId,
     turnId: '', // Will be set when turn starts
     approvalPolicy,
+    mode,
     updateRateMs: (session?.updateRateSeconds ?? 3) * 1000,
     model: effectiveModel,
     reasoningEffort: effectiveReasoning,
@@ -1348,6 +1350,7 @@ async function handleUserMessage(
       conversationKey,
       `Start failed: ${message}`
     );
+    conversationTracker.stopProcessing(threadId);
     return;
   }
 
@@ -1387,7 +1390,7 @@ async function createForkChannel(params: CreateForkChannelParams): Promise<Creat
   const { channelName, sourceChannelId, sourceThreadTs, conversationKey, turnId, userId, client } = params;
 
   // Parse source conversation key to get source thread info
-  const parts = conversationKey.split(':');
+  const parts = conversationKey.split('_');
   const sourceConvChannelId = parts[0];
   const sourceConvThreadTs = parts[1];
 
@@ -1790,7 +1793,7 @@ async function handleFork(
   triggerMessageTs?: string
 ): Promise<void> {
   // Parse source conversation
-  const parts = sourceConversationKey.split(':');
+  const parts = sourceConversationKey.split('_');
   const sourceChannelId = parts[0];
   const sourceThreadTs = parts[1];
 

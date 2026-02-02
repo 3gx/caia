@@ -137,7 +137,7 @@ describe('Abort Flow Integration', () => {
 
   it('queueAbort + turn:started = interruptTurn called', async () => {
     // Setup: start streaming with empty turnId
-    const conversationKey = 'C123:1234.5678';
+    const conversationKey = 'C123_1234.5678';
     streamingManager.startStreaming(conversationKey, {
       threadId: 'thread-1',
       turnId: '', // Empty - simulates race condition
@@ -160,7 +160,7 @@ describe('Abort Flow Integration', () => {
   });
 
   it('immediate abort when turnId already available', () => {
-    const conversationKey = 'C123:1234.5678';
+    const conversationKey = 'C123_1234.5678';
     streamingManager.startStreaming(conversationKey, {
       threadId: 'thread-1',
       turnId: 'turn-existing', // Already have turnId
@@ -173,7 +173,7 @@ describe('Abort Flow Integration', () => {
   });
 
   it('context:turnId as backup source triggers pending abort', async () => {
-    const conversationKey = 'C123:1234.5678';
+    const conversationKey = 'C123_1234.5678';
     streamingManager.startStreaming(conversationKey, {
       threadId: 'thread-1',
       turnId: '',
@@ -189,7 +189,7 @@ describe('Abort Flow Integration', () => {
   });
 
   it('abort timeout clears pending state after 10s', async () => {
-    const conversationKey = 'C123:1234.5678';
+    const conversationKey = 'C123_1234.5678';
     streamingManager.startStreaming(conversationKey, {
       threadId: 'thread-1',
       turnId: '',

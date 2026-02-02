@@ -28,6 +28,7 @@ import {
 } from './session-event-stream.js';
 import { buildLiveActivityBlocks, formatThreadActivityBatch } from './blocks.js';
 import { withSlackRetry, withInfiniteRetry, sleep } from '../../slack/src/retry.js';
+import { getSessionsFilePath } from '../../slack/src/session/base-session-manager.js';
 import { truncateWithClosedFormatting, uploadMarkdownWithResponse } from './streaming.js';
 import { MESSAGE_SIZE_DEFAULT } from './commands.js';
 import { postActivityToThread, postThinkingToThread } from './activity-thread.js';
@@ -85,7 +86,7 @@ export interface SyncResult {
   allSucceeded: boolean;
 }
 
-const SESSIONS_FILE = './sessions.json';
+const SESSIONS_FILE = getSessionsFilePath('claude');
 
 /**
  * Get the full messageMap for a channel (for finding existing activity Slack ts).

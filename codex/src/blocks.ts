@@ -3,7 +3,8 @@
  * Centralizes construction of interactive message blocks.
  */
 
-import type { ApprovalPolicy, ReasoningEffort, SandboxMode } from './codex-client.js';
+import type { ReasoningEffort, SandboxMode } from './codex-client.js';
+import type { UnifiedMode } from '../../slack/src/session/types.js';
 
 // Slack Block Kit types (simplified for our use case)
 export interface Block {
@@ -106,7 +107,7 @@ export function buildStatusBlocks(params: StatusBlockParams): Block[] {
 
 export interface HeaderBlockParams {
   status: 'starting' | 'processing' | 'complete' | 'aborted' | 'error';
-  approvalPolicy: ApprovalPolicy;
+  mode: UnifiedMode;
   conversationKey?: string; // For abort button
   model?: string;
   durationMs?: number;
@@ -117,7 +118,7 @@ export interface HeaderBlockParams {
  * Build a compact header block showing status and metadata.
  */
 export function buildHeaderBlock(params: HeaderBlockParams): Block {
-  const { status, approvalPolicy, model, durationMs, errorMessage } = params;
+  const { status, mode, model, durationMs, errorMessage } = params;
 
   const statusEmoji = {
     starting: ':hourglass_flowing_sand:',
@@ -132,14 +133,13 @@ export function buildHeaderBlock(params: HeaderBlockParams): Block {
   // Status
   parts.push(`${statusEmoji} *${status.charAt(0).toUpperCase() + status.slice(1)}*`);
 
-  // Policy badge
-  const policyBadge = {
-    never: ':unlock:',
-    'on-request': ':question:',
-    'on-failure': ':construction:',
-    untrusted: ':lock:',
-  }[approvalPolicy];
-  parts.push(`${policyBadge} ${approvalPolicy}`);
+  // Mode badge
+  const modeBadge: Record<UnifiedMode, string> = {
+    plan: ':clipboard:',
+    ask: ':question:',
+    bypass: ':rocket:',
+  };
+  parts.push(`${modeBadge[mode]} ${mode}`);
 
   // Model (if provided)
   if (model) {
@@ -392,7 +392,7 @@ export function buildActivityEntryActions(params: ActivityEntryActionParams): Bl
   if (includeAttachThinking) {
     elements.push({
       type: 'button',
-      text: { type: 'plain_text', text: 'Attach thinking' },
+      text: { type: 'plain_text', text: 'Attach Response' },
       action_id: `attach_thinking_${slackTs}`,
       value: JSON.stringify({ conversationKey, slackTs }),
     });
@@ -448,8 +448,40 @@ export function buildAttachThinkingFileButton(
     block_id: `attach_thinking_${activityMsgTs}`,
     elements: [{
       type: 'button',
-      text: { type: 'plain_text', text: ':page_facing_up: Attach thinking', emoji: true },
+      text: { type: 'plain_text', text: ':page_facing_up: Attach Response', emoji: true },
       action_id: `attach_thinking_file_${activityMsgTs}`,
+      value: JSON.stringify(value),
+    }],
+  } as Block;
+}
+
+export interface AttachResponseButtonValue {
+  threadParentTs: string;
+  channelId: string;
+  responseMsgTs: string;
+  responseCharCount: number;
+}
+
+export function buildAttachResponseFileButton(
+  responseMsgTs: string,
+  threadParentTs: string,
+  channelId: string,
+  responseCharCount: number
+): Block {
+  const value: AttachResponseButtonValue = {
+    threadParentTs,
+    channelId,
+    responseMsgTs,
+    responseCharCount,
+  };
+
+  return {
+    type: 'actions',
+    block_id: `attach_response_${responseMsgTs}`,
+    elements: [{
+      type: 'button',
+      text: { type: 'plain_text', text: ':page_facing_up: Attach Response', emoji: true },
+      action_id: `attach_response_file_${responseMsgTs}`,
       value: JSON.stringify(value),
     }],
   } as Block;
@@ -486,154 +518,22 @@ export function buildActivityEntryActionParams(
 // Command Response Blocks
 // ============================================================================
 
-export interface PolicyStatusBlockParams {
-  currentPolicy: ApprovalPolicy;
-  newPolicy?: ApprovalPolicy;
+export interface ModeStatusBlockParams {
+  currentMode: UnifiedMode;
+  newMode?: UnifiedMode;
 }
 
 /**
- * Build blocks for /policy command response.
+ * Build blocks for /mode command response.
  */
-export function buildPolicyStatusBlocks(params: PolicyStatusBlockParams): Block[] {
-  const { currentPolicy, newPolicy } = params;
-  const blocks: Block[] = [];
-
-  if (newPolicy) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `:arrows_counterclockwise: Approval policy changed: *${currentPolicy}* → *${newPolicy}*`,
-      },
-    });
-  } else {
-    const descriptions: Record<ApprovalPolicy, string> = {
-      never: 'Never prompt, auto-approve all actions (default)',
-      'on-request': 'Model decides when to ask',
-      'on-failure': 'Auto-run in sandbox, prompt only on failure',
-      untrusted: 'Prompt for everything except safe reads',
-    };
-
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `:clipboard: *Current Approval Policy:* ${currentPolicy}\n_${descriptions[currentPolicy]}_`,
-      },
-    });
-
-    // Show available policies
-    blocks.push({
-      type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text: `Available policies: ${['never', 'on-request', 'on-failure', 'untrusted'].join(', ')}`,
-        },
-      ],
-    });
-  }
-
-  return blocks;
-}
-
-/**
- * Build blocks for /policy command selection prompt.
- */
-export function buildPolicySelectionBlocks(currentPolicy: ApprovalPolicy): Block[] {
-  const descriptions: Record<ApprovalPolicy, string> = {
-    never: 'Never prompt, auto-approve all actions (default)',
-    'on-request': 'Model decides when to ask',
-    'on-failure': 'Auto-run in sandbox, prompt only on failure',
-    untrusted: 'Prompt for everything except safe reads',
-  };
-
-  const button = (policy: ApprovalPolicy, label: string) => ({
-    type: 'button',
-    text: { type: 'plain_text', text: label },
-    action_id: `policy_select_${policy}`,
-    value: policy,
-    ...(currentPolicy === policy ? { style: 'primary' as const } : {}),
-  });
-
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `:clipboard: *Select Approval Policy*\nCurrent: *${currentPolicy}*`,
-      },
-    },
-    {
-      type: 'actions',
-      block_id: 'policy_selection',
-      elements: [
-        button('never', ':unlock: never'),
-        button('on-request', ':question: on-request'),
-        button('on-failure', ':construction: on-failure'),
-        button('untrusted', ':lock: untrusted'),
-      ],
-    },
-    {
-      type: 'context',
-      elements: [
-        {
-          type: 'mrkdwn',
-          text:
-            `- *never* - ${descriptions.never}\n` +
-            `- *on-request* - ${descriptions['on-request']}\n` +
-            `- *on-failure* - ${descriptions['on-failure']}\n` +
-            `- *untrusted* - ${descriptions.untrusted}`,
-        },
-      ],
-    },
-    {
-      type: 'actions',
-      block_id: 'policy_cancel',
-      elements: [{
-        type: 'button',
-        text: { type: 'plain_text', text: 'Cancel' },
-        action_id: 'policy_picker_cancel',
-      }],
-    },
-  ];
-}
-
-/**
- * Build blocks for policy picker cancellation.
- */
-export function buildPolicyPickerCancelledBlocks(): Block[] {
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: ':x: Policy selection cancelled.',
-      },
-    },
-  ];
-}
-
-export interface SandboxStatusBlockParams {
-  currentMode?: SandboxMode;
-  newMode?: SandboxMode;
-}
-
-function formatSandboxMode(mode?: SandboxMode): string {
-  return mode ?? 'default';
-}
-
-/**
- * Build blocks for /sandbox command response.
- */
-export function buildSandboxStatusBlocks(params: SandboxStatusBlockParams): Block[] {
+export function buildModeStatusBlocks(params: ModeStatusBlockParams): Block[] {
   const { currentMode, newMode } = params;
   const blocks: Block[] = [];
 
-  const descriptions: Record<SandboxMode, string> = {
-    'read-only': 'Read-only access (no edits or command execution)',
-    'workspace-write': 'Read/write in workspace',
-    'danger-full-access': 'Full access to filesystem + network (default for this bot)',
+  const descriptions: Record<UnifiedMode, string> = {
+    plan: 'Plan-only responses (not supported in Codex)',
+    ask: 'Ask before tool use (default)',
+    bypass: 'Run tools without approval',
   };
 
   if (newMode) {
@@ -641,47 +541,42 @@ export function buildSandboxStatusBlocks(params: SandboxStatusBlockParams): Bloc
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `:shield: Sandbox mode changed: *${formatSandboxMode(currentMode)}* → *${newMode}*`,
+        text: `:arrows_counterclockwise: Mode changed: *${currentMode}* → *${newMode}*`,
       },
     });
   } else {
-    const display = formatSandboxMode(currentMode);
     blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `:shield: *Current Sandbox Mode:* ${display}`,
+        text: `:clipboard: *Current Mode:* ${currentMode}\n_${descriptions[currentMode]}_`,
       },
     });
-  }
 
-  blocks.push({
-    type: 'context',
-    elements: [
-      {
-        type: 'mrkdwn',
-        text:
-          `- *read-only* - ${descriptions['read-only']}\n` +
-          `- *workspace-write* - ${descriptions['workspace-write']}\n` +
-          `- *danger-full-access* - ${descriptions['danger-full-access']}`,
-      },
-    ],
-  });
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: 'Available modes: ask, bypass',
+        },
+      ],
+    });
+  }
 
   return blocks;
 }
 
 /**
- * Build blocks for /sandbox command selection prompt.
+ * Build blocks for /mode command selection prompt.
  */
-export function buildSandboxSelectionBlocks(currentMode?: SandboxMode): Block[] {
-  const button = (mode: SandboxMode, label: string) => ({
+export function buildModeSelectionBlocks(currentMode: UnifiedMode): Block[] {
+  const button = (mode: UnifiedMode, label: string) => ({
     type: 'button',
     text: { type: 'plain_text', text: label },
-    action_id: `sandbox_select_${mode}`,
+    action_id: `mode_select_${mode}`,
     value: mode,
     ...(currentMode === mode ? { style: 'primary' as const } : {}),
-    ...(mode === 'danger-full-access' && currentMode !== mode ? { style: 'danger' as const } : {}),
   });
 
   return [
@@ -689,40 +584,48 @@ export function buildSandboxSelectionBlocks(currentMode?: SandboxMode): Block[] 
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `:shield: *Select Sandbox Mode*\nCurrent: *${formatSandboxMode(currentMode)}*`,
+        text: `:clipboard: *Select Mode*\nCurrent: *${currentMode}*`,
       },
     },
     {
       type: 'actions',
-      block_id: 'sandbox_selection',
+      block_id: 'mode_selection',
       elements: [
-        button('read-only', ':lock: read-only'),
-        button('workspace-write', ':memo: workspace-write'),
-        button('danger-full-access', ':warning: danger-full-access'),
+        button('ask', ':question: ask'),
+        button('bypass', ':rocket: bypass'),
+      ],
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: '- *ask* - Ask before tool use (default)\n- *bypass* - Run tools without approval',
+        },
       ],
     },
     {
       type: 'actions',
-      block_id: 'sandbox_cancel',
+      block_id: 'mode_cancel',
       elements: [{
         type: 'button',
         text: { type: 'plain_text', text: 'Cancel' },
-        action_id: 'sandbox_picker_cancel',
+        action_id: 'mode_picker_cancel',
       }],
     },
   ];
 }
 
 /**
- * Build blocks for sandbox picker cancellation.
+ * Build blocks for mode picker cancellation.
  */
-export function buildSandboxPickerCancelledBlocks(): Block[] {
+export function buildModePickerCancelledBlocks(): Block[] {
   return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: ':x: Sandbox selection cancelled.',
+        text: ':x: Mode selection cancelled.',
       },
     },
   ];
@@ -1196,7 +1099,7 @@ export function formatTokensK(tokens: number): string {
 }
 
 export interface UnifiedStatusLineParams {
-  approvalPolicy: ApprovalPolicy;
+  mode: UnifiedMode;
   model?: string;
   reasoningEffort?: ReasoningEffort;
   sandboxMode?: SandboxMode;
@@ -1217,8 +1120,8 @@ export interface UnifiedStatusLineParams {
 }
 
 /**
- * Build a unified status line showing policy, model, session, and stats.
- * Line 1: policy | model [reason] | session
+ * Build a unified status line showing mode, model, session, and stats.
+ * Line 1: mode | model [reason] | sandbox | session
  * Line 2: ctx | tokens | cost | duration (only when available)
  */
 export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string {
@@ -1226,13 +1129,13 @@ export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string 
   const line2Parts: string[] = [];
 
   // Default to gpt-5.2-codex with xhigh reasoning when not explicitly set
- const modelLabel = params.model || 'gpt-5.2-codex';
+  const modelLabel = params.model || 'gpt-5.2-codex';
   const reasoningLabel = params.reasoningEffort || 'xhigh';
   const modelWithReasoning = `${modelLabel} [${reasoningLabel}]`;
   const sandboxLabel = params.sandboxMode || 'danger-full-access';
   const sessionLabel = params.sessionId || 'n/a';
 
-  line1Parts.push(params.approvalPolicy);
+  line1Parts.push(params.mode);
   line1Parts.push(modelWithReasoning);
   line1Parts.push(sandboxLabel);
   line1Parts.push(sessionLabel);
@@ -1397,7 +1300,7 @@ export interface ActivityBlockParams {
   conversationKey: string;
   elapsedMs: number;
   entries?: ActivityEntry[]; // For todo extraction
-  approvalPolicy: ApprovalPolicy;
+  mode: UnifiedMode;
   model?: string;
   reasoningEffort?: ReasoningEffort;
   sandboxMode?: SandboxMode;
@@ -1428,7 +1331,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
     conversationKey,
     elapsedMs,
     entries,
-    approvalPolicy,
+    mode,
     model,
     reasoningEffort,
     sandboxMode,
@@ -1485,7 +1388,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
     });
   }
 
-  // Unified status line (policy | model | session [+ stats])
+  // Unified status line (mode | model | session [+ stats])
   const durationForStats = isRunning ? undefined : elapsedMs;
   blocks.push({
     type: 'context',
@@ -1493,7 +1396,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
       {
         type: 'mrkdwn',
         text: buildUnifiedStatusLine({
-          approvalPolicy,
+          mode,
           model,
           reasoningEffort,
           sandboxMode,

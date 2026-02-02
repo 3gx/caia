@@ -77,7 +77,7 @@ describe('Fork to Channel Flow', () => {
       sourceChannelName: 'general',
       sourceMessageTs: '123.456',
       sourceThreadTs: '789.012',
-      conversationKey: 'C123456:789.012',
+      conversationKey: 'C123456_789.012',
       turnId: 'turn_abc123', // Codex turn ID (NOT turnIndex)
       suggestedName: 'general-fork', // Computed by slack-bot.ts before opening modal
     };
@@ -109,14 +109,14 @@ describe('Fork to Channel Flow', () => {
       expect(metadata.sourceChannelName).toBe('general');
       expect(metadata.sourceMessageTs).toBe('123.456');
       expect(metadata.sourceThreadTs).toBe('789.012');
-      expect(metadata.conversationKey).toBe('C123456:789.012');
+      expect(metadata.conversationKey).toBe('C123456_789.012');
       expect(metadata.turnId).toBe('turn_abc123'); // turnId, NOT turnIndex
     });
 
     it('shows generic description without turn number', () => {
       // Modal no longer shows turn number - actual index is queried from Codex at fork time
       const modal = buildForkToChannelModalView(baseParams);
-      const sectionBlock = modal.blocks.find((b) => b.type === 'section');
+      const sectionBlock = modal.blocks.find((b) => b.type === 'section') as { text?: { text: string } };
       expect(sectionBlock?.text?.text).toContain('Fork conversation from this point');
       expect(sectionBlock?.text?.text).not.toMatch(/turn \d+/); // No turn number
     });
@@ -133,13 +133,13 @@ describe('Fork to Channel Flow', () => {
       const buttonValue = JSON.stringify({
         turnId: 'turn_xyz789', // Codex turn ID
         slackTs: '123.456',
-        conversationKey: 'C123:789.012',
+        conversationKey: 'C123_789.012',
       });
 
       const parsed = JSON.parse(buttonValue);
       expect(parsed.turnId).toBe('turn_xyz789');
       expect(parsed.slackTs).toBe('123.456');
-      expect(parsed.conversationKey).toBe('C123:789.012');
+      expect(parsed.conversationKey).toBe('C123_789.012');
       // turnIndex should NOT be in the button value
       expect(parsed.turnIndex).toBeUndefined();
     });
@@ -277,7 +277,7 @@ describe('Fork to Channel Flow', () => {
         sourceChannelName: 'general',
         sourceMessageTs: '123.456',
         sourceThreadTs: '789.012',
-        conversationKey: 'C123456:789.012',
+        conversationKey: 'C123456_789.012',
         turnId: 'turn_def456',
         suggestedName: 'general-fork',
       });
@@ -294,12 +294,12 @@ describe('Fork to Channel Flow', () => {
         sourceChannelName: 'general',
         sourceMessageTs: '123.456',
         sourceThreadTs: '789.012',
-        conversationKey: 'C123456:789.012',
+        conversationKey: 'C123456_789.012',
         turnId: 'turn_first',
         suggestedName: 'general-fork',
       });
 
-      const sectionBlock = modal.blocks.find((b) => b.type === 'section');
+      const sectionBlock = modal.blocks.find((b) => b.type === 'section') as { text?: { text: string } };
       expect(sectionBlock?.text?.text).toContain('Fork conversation from this point');
       expect(sectionBlock?.text?.text).not.toMatch(/turn \d+/);
     });

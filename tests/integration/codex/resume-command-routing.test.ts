@@ -18,9 +18,8 @@ vi.mock('../../../codex/src/session-manager.js', () => {
     saveThreadSession,
     saveThreadCharLimit: vi.fn(),
     clearSession: vi.fn(),
-    getEffectiveApprovalPolicy: vi.fn(() => 'on-request'),
+    getEffectiveMode: vi.fn(() => 'ask'),
     getEffectiveWorkingDir: vi.fn(() => '/tmp'),
-    APPROVAL_POLICIES: ['never', 'on-request', 'on-failure', 'untrusted'],
   };
 });
 
@@ -55,10 +54,10 @@ describe('/resume command routing', () => {
     expect(codex.resumeThread).toHaveBeenCalledWith('thread-xyz');
 
     const { saveSession, saveThreadSession } = await import('../../../codex/src/session-manager.js');
-    expect(saveSession as unknown as vi.Mock).toHaveBeenCalled();
-    expect(saveThreadSession as unknown as vi.Mock).toHaveBeenCalled();
+    expect(saveSession as unknown as any).toHaveBeenCalled();
+    expect(saveThreadSession as unknown as any).toHaveBeenCalled();
 
-    const channelArgs = (saveSession as unknown as vi.Mock).mock.calls[0][1];
+    const channelArgs = (saveSession as unknown as any).mock.calls[0][1];
     expect(channelArgs.threadId).toBe('thread-xyz');
     expect(channelArgs.configuredPath).toBe('/project');
   });

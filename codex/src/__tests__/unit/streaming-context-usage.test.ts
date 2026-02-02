@@ -36,7 +36,7 @@ describe('StreamingManager context usage (activity line)', () => {
     const codex = new EventEmitter() as any;
     const manager = new StreamingManager(slack, codex);
 
-    const key = 'C123:thread';
+    const key = 'C123_thread';
     const now = Date.now();
 
     // Manually seed context and state
@@ -49,6 +49,7 @@ describe('StreamingManager context usage (activity line)', () => {
       threadId: 'thread-id',
       turnId: 'turn-id',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       model: 'gpt-5.2-codex',
       reasoningEffort: 'xhigh',
       startTime: now - 1000,
@@ -90,8 +91,9 @@ describe('StreamingManager context usage (activity line)', () => {
 
     await (manager as any).updateActivityMessage(key);
 
-    const call = buildActivityBlocks.mock.calls.at(-1)?.[0];
+    const call = (buildActivityBlocks.mock.calls as any).at(-1)?.[0] as any;
     expect(call).toBeDefined();
+    if (!call) throw new Error('Expected buildActivityBlocks to be called');
 
     expect(call.contextTokens).toBe(170_000);
     expect(call.contextPercent).toBeCloseTo(65.9, 1);
@@ -110,7 +112,7 @@ describe('StreamingManager context usage (activity line)', () => {
     const codex = new EventEmitter() as any;
     const manager = new StreamingManager(slack, codex);
 
-    const key = 'C456:thread';
+    const key = 'C456_thread';
     const now = Date.now();
 
     (manager as any).contexts.set(key, {
@@ -122,6 +124,7 @@ describe('StreamingManager context usage (activity line)', () => {
       threadId: 'thread-id',
       turnId: 'turn-id',
       approvalPolicy: 'on-request',
+      mode: 'ask',
       model: 'gpt-5.2-codex',
       reasoningEffort: 'xhigh',
       startTime: now - 1000,
@@ -171,8 +174,9 @@ describe('StreamingManager context usage (activity line)', () => {
 
     await (manager as any).updateActivityMessage(key);
 
-    const call = buildActivityBlocks.mock.calls.at(-1)?.[0];
+    const call = (buildActivityBlocks.mock.calls as any).at(-1)?.[0] as any;
     expect(call).toBeDefined();
+    if (!call) throw new Error('Expected buildActivityBlocks to be called');
 
     expect(call.contextTokens).toBe(150_000);
     expect(call.contextPercent).toBeCloseTo(58.1, 1);
@@ -188,8 +192,9 @@ describe('StreamingManager context usage (activity line)', () => {
 
     await (manager as any).updateActivityMessage(key);
 
-    const followup = buildActivityBlocks.mock.calls.at(-1)?.[0];
+    const followup = (buildActivityBlocks.mock.calls as any).at(-1)?.[0] as any;
     expect(followup).toBeDefined();
+    if (!followup) throw new Error('Expected buildActivityBlocks to be called');
     expect(followup.contextTokens).toBe(160_000);
     expect(followup.contextPercent).toBeCloseTo(62.0, 1);
   });
