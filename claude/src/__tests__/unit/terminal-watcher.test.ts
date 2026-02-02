@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import path from 'path';
 import {
   startWatching,
   stopWatching,
@@ -99,11 +100,23 @@ vi.mock('../../blocks.js', () => ({
 }));
 
 // Mock fs
-vi.mock('fs', () => ({
-  existsSync: vi.fn(() => true),
-  readFileSync: vi.fn(() => JSON.stringify({ channels: {} })),
-  writeFileSync: vi.fn(),
-}));
+vi.mock('fs', () => {
+  const fsMock = {
+    existsSync: vi.fn((pathLike) => {
+      const legacySessionsPath = path.join(process.cwd(), 'sessions.json');
+      if (typeof pathLike === 'string' && pathLike === legacySessionsPath) {
+        return false;
+      }
+      return true;
+    }),
+    readFileSync: vi.fn(() => JSON.stringify({ channels: {} })),
+    writeFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    promises: { readFile: vi.fn() },
+  };
+  return { ...fsMock, default: fsMock };
+});
 
 describe('terminal-watcher', () => {
   let mockClient: any;

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import path from 'path';
 import {
   startWatching,
   stopWatching,
@@ -104,7 +105,13 @@ vi.mock('../../../claude/src/blocks.js', () => ({
 // Mock fs
 vi.mock('fs', () => {
   const fsMock = {
-    existsSync: vi.fn(() => true),
+    existsSync: vi.fn((pathLike) => {
+      const legacySessionsPath = path.join(process.cwd(), 'sessions.json');
+      if (typeof pathLike === 'string' && pathLike === legacySessionsPath) {
+        return false;
+      }
+      return true;
+    }),
     readFileSync: vi.fn(() => JSON.stringify({ channels: {} })),
     writeFileSync: vi.fn(),
     unlinkSync: vi.fn(),
