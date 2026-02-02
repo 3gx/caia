@@ -5560,7 +5560,8 @@ app.action(/^plan_accept_edits_(.+)$/, async ({ action, ack, body, client }) => 
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
     const activeQuery = activeQueries.get(conversationKey);
-    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
+    const sessionForBusy = threadTs ? getThreadSession(channelId, threadTs) : getSession(channelId);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? sessionForBusy?.sessionId ?? null);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5613,7 +5614,8 @@ app.action(/^plan_bypass_(.+)$/, async ({ action, ack, body, client }) => {
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
     const activeQuery = activeQueries.get(conversationKey);
-    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
+    const sessionForBusy = threadTs ? getThreadSession(channelId, threadTs) : getSession(channelId);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? sessionForBusy?.sessionId ?? null);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5666,7 +5668,8 @@ app.action(/^plan_manual_(.+)$/, async ({ action, ack, body, client }) => {
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
     const activeQuery = activeQueries.get(conversationKey);
-    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
+    const sessionForBusy = threadTs ? getThreadSession(channelId, threadTs) : getSession(channelId);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? sessionForBusy?.sessionId ?? null);
     // Remove :question: emoji (answer received)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (no longer processing)
@@ -5720,7 +5723,8 @@ app.action(/^plan_reject_(.+)$/, async ({ action, ack, body, client }) => {
   if (pending) {
     pendingPlanApprovals.delete(conversationKey);
     const activeQuery = activeQueries.get(conversationKey);
-    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? null);
+    const sessionForBusy = threadTs ? getThreadSession(channelId, threadTs) : getSession(channelId);
+    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? sessionForBusy?.sessionId ?? null);
     // Remove :question: emoji (answer received - user chose to change the plan)
     await removeReaction(client, pending.channelId, pending.originalTs, 'question');
     // Remove :eyes: emoji (will be re-added when processing resumes)

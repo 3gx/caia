@@ -63,15 +63,17 @@ vi.mock('../../../claude/src/streaming.js', () => ({
 import * as fs from 'fs';
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
+  const isSessionFile = (p: string) => p.endsWith('claude-sessions.json');
+  const isSessionDir = (p: string) => p.endsWith('.config/caia') || p.endsWith('.config') || p.includes('.config/caia');
   return {
     ...actual,
     default: actual,
     existsSync: vi.fn((path: string) => {
-      if (path === './sessions.json') return true;
+      if (isSessionFile(path) || isSessionDir(path)) return true;
       return actual.existsSync(path);
     }),
     readFileSync: vi.fn((path: string, encoding?: string) => {
-      if (path === './sessions.json') {
+      if (isSessionFile(path)) {
         // Return mock messageMap
         return JSON.stringify({
           channels: {

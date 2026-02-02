@@ -34,6 +34,7 @@ vi.mock('fs', () => ({
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     unlinkSync: vi.fn(),
+    mkdirSync: vi.fn(),
     realpathSync: vi.fn((path: string) => path),
   },
 }));
@@ -73,6 +74,9 @@ import {
 } from '../../../claude/src/session-manager.js';
 import type { Session, ThreadSession } from '../../../claude/src/session-manager.js';
 
+const isSessionFile = (p: unknown): boolean => typeof p === 'string' && p.endsWith('claude-sessions.json');
+const isSessionDir = (p: unknown): boolean => typeof p === 'string' && (p.endsWith('.config/caia') || p.endsWith('.config') || p.includes('.config/caia'));
+
 describe('channel lifecycle - deletion', () => {
   const mockSession: Session = {
     sessionId: 'main-session-123',
@@ -106,7 +110,7 @@ describe('channel lifecycle - deletion', () => {
     };
 
     vi.mocked(fs.existsSync).mockImplementation((path) => {
-      if (path === './sessions.json') return true;
+      if (isSessionFile(path) || isSessionDir(path)) return true;
       if (typeof path === 'string' && path.includes('main-session-123.jsonl')) return true;
       return false;
     });
@@ -171,7 +175,7 @@ describe('channel lifecycle - deletion', () => {
     };
 
     vi.mocked(fs.existsSync).mockImplementation((path) => {
-      if (path === './sessions.json') return true;
+      if (isSessionFile(path) || isSessionDir(path)) return true;
       if (typeof path === 'string' && path.includes('.jsonl')) return true;
       return false;
     });
@@ -240,7 +244,7 @@ describe('channel lifecycle - deletion', () => {
     };
 
     vi.mocked(fs.existsSync).mockImplementation((path) => {
-      if (path === './sessions.json') return true;
+      if (isSessionFile(path) || isSessionDir(path)) return true;
       if (typeof path === 'string' && path.includes('.jsonl')) return true;
       return false;
     });
@@ -273,7 +277,7 @@ describe('channel lifecycle - deletion', () => {
     };
 
     vi.mocked(fs.existsSync).mockImplementation((path) => {
-      if (path === './sessions.json') return true;
+      if (isSessionFile(path) || isSessionDir(path)) return true;
       if (typeof path === 'string' && path.includes('.jsonl')) return true;
       return false;
     });
@@ -336,7 +340,7 @@ describe('channel lifecycle - deletion', () => {
     };
 
     vi.mocked(fs.existsSync).mockImplementation((path) => {
-      if (path === './sessions.json') return true;
+      if (isSessionFile(path) || isSessionDir(path)) return true;
       // SDK files do NOT exist (already deleted externally)
       if (typeof path === 'string' && path.includes('.jsonl')) return false;
       return false;

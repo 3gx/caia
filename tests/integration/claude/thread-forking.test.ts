@@ -145,7 +145,7 @@ describe('thread forking', () => {
       });
 
       expect(fs.writeFileSync).toHaveBeenCalledWith(
-        './sessions.json',
+        expect.stringMatching(/claude-sessions\.json$/),
         expect.stringContaining('C123')
       );
 

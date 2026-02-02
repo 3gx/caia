@@ -92,6 +92,33 @@ import { isSessionActiveInTerminal } from '../../../claude/src/concurrent-check.
 import { startClaudeQuery } from '../../../claude/src/claude-client.js';
 import fs from 'fs';
 
+const buildConversationKey = (channelId: string, threadTs?: string) => (
+  threadTs ? `${channelId}_${threadTs}` : channelId
+);
+
+const clearBusySessions = (tracker: { getBusySessions: () => string[]; stopProcessing: (sessionId: string) => void }) => {
+  for (const sessionId of tracker.getBusySessions()) {
+    tracker.stopProcessing(sessionId);
+  }
+};
+
+const markBusySession = (
+  tracker: { startProcessing: (sessionId: string, context: any) => boolean },
+  sessionId: string,
+  channelId: string,
+  threadTs?: string
+) => {
+  tracker.startProcessing(sessionId, {
+    conversationKey: buildConversationKey(channelId, threadTs),
+    sessionId,
+    statusMsgTs: 'status-ts',
+    originalTs: 'orig-ts',
+    startTime: Date.now(),
+    channelId,
+    threadTs,
+  });
+};
+
 describe('slack-bot command handlers', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -248,9 +275,6 @@ describe('slack-bot command handlers', () => {
       const handler = registeredHandlers['event_app_mention'];
       const mockClient = createMockSlackClient();
 
-      // Import busyConversations to verify tracking
-      const { busyConversations } = await import('../../../claude/src/slack-bot.js');
-
       vi.mocked(getSession).mockReturnValue({
         sessionId: 'existing-session-123',
         workingDir: '/test/dir',
@@ -302,11 +326,13 @@ describe('slack-bot command handlers', () => {
       const handler = registeredHandlers['event_app_mention'];
       const mockClient = createMockSlackClient();
 
-      // Import busyConversations to verify tracking
-      const { busyConversations } = await import('../../../claude/src/slack-bot.js');
+      // Import conversationTracker to verify tracking
+      const { conversationTracker } = await import('../../../claude/src/slack-bot.js');
+      const sessionId = 'existing-session-123';
+      clearBusySessions(conversationTracker);
 
       vi.mocked(getSession).mockReturnValue({
-        sessionId: 'existing-session-123',
+        sessionId,
         workingDir: '/test/dir',
         mode: 'default',
         createdAt: Date.now(),
@@ -318,15 +344,13 @@ describe('slack-bot command handlers', () => {
       });
 
       let busyDuringCompact = false;
-      // /compact now uses same conversationKey as regular queries (channelId)
-      const conversationKey = 'C123';
 
       // Mock SDK to check busyConversations during iteration
       vi.mocked(startClaudeQuery).mockReturnValue({
         [Symbol.asyncIterator]: async function* () {
           yield { type: 'system', subtype: 'init', session_id: 'compacted-session-456', model: 'claude-sonnet' };
           // Check if busy during compaction
-          busyDuringCompact = busyConversations.has(conversationKey);
+          busyDuringCompact = conversationTracker.isBusy(sessionId);
           yield { type: 'system', subtype: 'compact_boundary', compact_metadata: { pre_tokens: 5000 } };
           yield { type: 'result', result: '' };
         },
@@ -346,7 +370,7 @@ describe('slack-bot command handlers', () => {
       // Should have been busy during compaction
       expect(busyDuringCompact).toBe(true);
       // Should be cleaned up after completion
-      expect(busyConversations.has(conversationKey)).toBe(false);
+      expect(conversationTracker.isBusy(sessionId)).toBe(false);
     });
 
     it('should post :gear: message when status:compacting received', async () => {
@@ -761,15 +785,15 @@ describe('slack-bot command handlers', () => {
       const handler = registeredHandlers['event_app_mention'];
       const mockClient = createMockSlackClient();
 
-      // Import busyConversations to set up busy state
-      const { busyConversations } = await import('../../../claude/src/slack-bot.js');
+      // Import conversationTracker to set up busy state
+      const { conversationTracker } = await import('../../../claude/src/slack-bot.js');
+      const sessionId = 'existing-session-123';
 
       // Pre-populate busyConversations to simulate an in-progress query
-      const conversationKey = 'C123';
-      busyConversations.add(conversationKey);
+      markBusySession(conversationTracker, sessionId, 'C123');
 
       vi.mocked(getSession).mockReturnValue({
-        sessionId: 'existing-session-123',
+        sessionId,
         workingDir: '/test/dir',
         mode: 'default',
         createdAt: Date.now(),
@@ -811,21 +835,21 @@ describe('slack-bot command handlers', () => {
       });
 
       // Cleanup
-      busyConversations.delete(conversationKey);
+      conversationTracker.stopProcessing(sessionId);
     });
 
     it('should remove :eyes: when /compact is blocked by busy conversation', async () => {
       const handler = registeredHandlers['event_app_mention'];
       const mockClient = createMockSlackClient();
 
-      const { busyConversations } = await import('../../../claude/src/slack-bot.js');
+      const { conversationTracker } = await import('../../../claude/src/slack-bot.js');
+      const sessionId = 'existing-session-123';
 
       // Simulate busy conversation - checkBusyAndRespond uses main channel key
-      const conversationKey = 'C123';
-      busyConversations.add(conversationKey);
+      markBusySession(conversationTracker, sessionId, 'C123');
 
       vi.mocked(getSession).mockReturnValue({
-        sessionId: 'existing-session-123',
+        sessionId,
         workingDir: '/test/dir',
         mode: 'default',
         createdAt: Date.now(),
@@ -867,21 +891,21 @@ describe('slack-bot command handlers', () => {
       });
 
       // Cleanup
-      busyConversations.delete(conversationKey);
+      conversationTracker.stopProcessing(sessionId);
     });
 
     it('should remove :eyes: when /clear is blocked by busy conversation', async () => {
       const handler = registeredHandlers['event_app_mention'];
       const mockClient = createMockSlackClient();
 
-      const { busyConversations } = await import('../../../claude/src/slack-bot.js');
+      const { conversationTracker } = await import('../../../claude/src/slack-bot.js');
+      const sessionId = 'existing-session-123';
 
       // Simulate busy conversation - checkBusyAndRespond uses main channel key
-      const conversationKey = 'C123';
-      busyConversations.add(conversationKey);
+      markBusySession(conversationTracker, sessionId, 'C123');
 
       vi.mocked(getSession).mockReturnValue({
-        sessionId: 'existing-session-123',
+        sessionId,
         workingDir: '/test/dir',
         mode: 'default',
         createdAt: Date.now(),
@@ -923,7 +947,7 @@ describe('slack-bot command handlers', () => {
       });
 
       // Cleanup
-      busyConversations.delete(conversationKey);
+      conversationTracker.stopProcessing(sessionId);
     });
   });
 

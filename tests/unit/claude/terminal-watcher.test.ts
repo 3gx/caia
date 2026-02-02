@@ -8,10 +8,13 @@ import {
   onSessionCleared,
   stopAllWatchers,
 } from '../../../claude/src/terminal-watcher.js';
+import { UPDATE_RATE_DEFAULT } from '../../../claude/src/commands.js';
 import { Session } from '../../../claude/src/session-manager.js';
 import * as sessionManager from '../../../claude/src/session-manager.js';
 import * as sessionReader from '../../../claude/src/session-reader.js';
 import * as streaming from '../../../claude/src/streaming.js';
+
+const defaultPollMs = UPDATE_RATE_DEFAULT * 1000;
 
 // Mock session-reader module
 vi.mock('../../../claude/src/session-reader.js', () => ({
@@ -99,11 +102,17 @@ vi.mock('../../../claude/src/blocks.js', () => ({
 }));
 
 // Mock fs
-vi.mock('fs', () => ({
-  existsSync: vi.fn(() => true),
-  readFileSync: vi.fn(() => JSON.stringify({ channels: {} })),
-  writeFileSync: vi.fn(),
-}));
+vi.mock('fs', () => {
+  const fsMock = {
+    existsSync: vi.fn(() => true),
+    readFileSync: vi.fn(() => JSON.stringify({ channels: {} })),
+    writeFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    promises: { readFile: vi.fn() },
+  };
+  return { ...fsMock, default: fsMock };
+});
 
 describe('terminal-watcher', () => {
   let mockClient: any;
@@ -352,7 +361,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // Advance timer by poll interval
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(UPDATE_RATE_DEFAULT * 1000);
 
       expect(sessionReader.readNewMessages).toHaveBeenCalled();
     });
@@ -381,7 +390,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // Advance timer to trigger poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -413,7 +422,7 @@ describe('terminal-watcher', () => {
       }]);
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -451,7 +460,7 @@ describe('terminal-watcher', () => {
       }]);
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Assistant messages now use uploadMarkdownAndPngWithResponse
       // Note: Fork button is now on activity message in blocks.ts, not response message
@@ -502,7 +511,7 @@ describe('terminal-watcher', () => {
       ]);
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should NOT use uploadMarkdownAndPngWithResponse for activity-only turns
       expect(streaming.uploadMarkdownAndPngWithResponse).not.toHaveBeenCalled();
@@ -550,7 +559,7 @@ describe('terminal-watcher', () => {
       ]);
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should NOT use uploadMarkdownAndPngWithResponse for activity-only turns
       expect(streaming.uploadMarkdownAndPngWithResponse).not.toHaveBeenCalled();
@@ -592,7 +601,7 @@ describe('terminal-watcher', () => {
       }]);
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should use uploadMarkdownAndPngWithResponse for text output
       expect(streaming.uploadMarkdownAndPngWithResponse).toHaveBeenCalled();
@@ -623,7 +632,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // Advance timer and allow promises to settle
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
       await vi.advanceTimersByTimeAsync(0); // flush microtasks
 
       // Long user input should use uploadMarkdownWithResponse (.md only, no PNG)
@@ -665,7 +674,7 @@ describe('terminal-watcher', () => {
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
       await vi.advanceTimersByTimeAsync(0);
 
       // Short user input should use simple text post
@@ -717,7 +726,7 @@ describe('terminal-watcher', () => {
       });
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should NOT have posted a fallback message via chat.postMessage
       // Only the status message and user input should be posted
@@ -784,12 +793,12 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // First poll - should upload and save synthetic mapping
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       const uploadCallsAfterFirstPoll = vi.mocked(streaming.uploadMarkdownAndPngWithResponse).mock.calls.length;
 
       // Second poll - should skip because UUID is now in messageMap
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       const uploadCallsAfterSecondPoll = vi.mocked(streaming.uploadMarkdownAndPngWithResponse).mock.calls.length;
 
@@ -829,7 +838,7 @@ describe('terminal-watcher', () => {
       vi.mocked(streaming.uploadMarkdownAndPngWithResponse).mockResolvedValue(null);
 
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // SHOULD have posted a fallback message via chat.postMessage
       // May be posted multiple times due to immediate + timer polls (messageMap not fully mocked)
@@ -871,7 +880,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'anchor-ts');
 
       // Advance timer to trigger poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Anchor message should NOT be deleted (stays in place)
       expect(mockClient.chat.delete).not.toHaveBeenCalled();
@@ -886,7 +895,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'anchor-ts');
 
       // Advance timer to trigger poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should NOT delete or update anchor message when no new content
       expect(mockClient.chat.delete).not.toHaveBeenCalled();
@@ -916,7 +925,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // First poll - should fail
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Get watcher state to check offset
       const watcher = getWatcher('channel-1');
@@ -946,7 +955,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // First poll - should succeed
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Get watcher state to check offset
       const watcher = getWatcher('channel-1');
@@ -986,7 +995,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // First poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should NOT have posted the message (it was skipped)
       // Only the status message move should have posted
@@ -1035,7 +1044,7 @@ describe('terminal-watcher', () => {
       expect(watcher?.fileOffset).toBe(1000); // Not advanced (offset never advances)
 
       // Timer poll - should succeed (message is re-read from same offset, messageMap filters duplicates)
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       watcher = getWatcher('channel-1');
       expect(watcher?.fileOffset).toBe(1000); // Still not advanced - we rely on messageMap
@@ -1076,10 +1085,10 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // First poll - posts message
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Second poll - same message returned but should be skipped (in messageMap)
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Count how many times Terminal Input was posted
       const postCalls = mockClient.chat.postMessage.mock.calls;
@@ -1124,10 +1133,10 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // First poll - no turns formed, nothing to post
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Second poll - same message returned, still no turns, no action
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // In turn-based model, empty messages that don't form turns
       // are not posted and not tracked - this is fine because:
@@ -1204,7 +1213,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // Advance timer to trigger poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should have persisted planFilePath to main channel session
       expect(sessionManager.saveSession).toHaveBeenCalledWith('channel-1', {
@@ -1251,7 +1260,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', 'thread-ts-123', mockSession, mockClient, 'status-ts');
 
       // Advance timer to trigger poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Should have persisted planFilePath to thread session
       expect(sessionManager.saveThreadSession).toHaveBeenCalledWith('channel-1', 'thread-ts-123', {
@@ -1297,7 +1306,7 @@ describe('terminal-watcher', () => {
       startWatching('channel-1', undefined, mockSession, mockClient, 'status-ts');
 
       // Advance timer to trigger poll
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(defaultPollMs);
 
       // Watcher state should be updated
       const watcher = getWatcher('channel-1');

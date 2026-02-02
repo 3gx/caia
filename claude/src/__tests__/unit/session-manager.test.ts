@@ -29,6 +29,7 @@ vi.mock('fs', () => ({
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     unlinkSync: vi.fn(),
+    mkdirSync: vi.fn(),
     realpathSync: vi.fn((path: string) => path), // Identity function for tests
   },
 }));
@@ -49,6 +50,10 @@ vi.mock('path', async () => {
 });
 
 import fs from 'fs';
+
+// Helper to check if path is a claude session file
+const isSessionFile = (p: unknown): boolean => typeof p === 'string' && p.endsWith('claude-sessions.json');
+const isSessionDir = (p: unknown): boolean => typeof p === 'string' && (p.endsWith('.config/caia') || p.endsWith('.config') || p.includes('.config/caia'));
 
 describe('session-manager', () => {
   beforeEach(() => {
@@ -90,7 +95,10 @@ describe('session-manager', () => {
       // Migration adds previousSessionIds to existing sessions
       expect(result.channels['C123'].previousSessionIds).toEqual([]);
       expect(result.channels['C123'].sessionId).toBe('sess-123');
-      expect(fs.readFileSync).toHaveBeenCalledWith('./sessions.json', 'utf-8');
+      expect(fs.readFileSync).toHaveBeenCalledWith(
+        expect.stringMatching(/claude-sessions\.json$/),
+        'utf-8'
+      );
     });
   });
 
@@ -207,7 +215,7 @@ describe('session-manager', () => {
       saveSessions(store);
 
       expect(fs.writeFileSync).toHaveBeenCalledWith(
-        './sessions.json',
+        expect.stringMatching(/claude-sessions\.json$/),
         JSON.stringify(store, null, 2)
       );
     });
@@ -242,8 +250,8 @@ describe('session-manager', () => {
 
       // Mock session exists
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        // sessions.json exists
-        if (path === './sessions.json') return true;
+        // Session store file exists
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         // SDK file exists
         if (typeof path === 'string' && path.endsWith('main-session-123.jsonl')) return true;
         return false;
@@ -309,7 +317,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         // All SDK files exist
         if (typeof path === 'string' && path.includes('.jsonl')) return true;
         return false;
@@ -368,7 +376,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         if (typeof path === 'string' && path.includes('test-session.jsonl')) return true;
         return false;
       });
@@ -379,7 +387,7 @@ describe('session-manager', () => {
 
       // Verify final state written to disk
       const finalWrite = vi.mocked(fs.writeFileSync).mock.calls[vi.mocked(fs.writeFileSync).mock.calls.length - 1];
-      expect(finalWrite[0]).toBe('./sessions.json');
+      expect(finalWrite[0]).toMatch(/claude-sessions\.json$/);
       const writtenData = JSON.parse(finalWrite[1] as string);
       expect(writtenData.channels['C123']).toBeUndefined();
     });
@@ -462,7 +470,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         // All SDK files exist
         if (typeof path === 'string' && path.includes('.jsonl')) return true;
         return false;
@@ -519,7 +527,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         // SDK file does NOT exist (already deleted)
         if (typeof path === 'string' && path.includes('.jsonl')) return false;
         return false;
@@ -569,7 +577,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         if (typeof path === 'string' && path.includes('.jsonl')) return true;
         return false;
       });
@@ -645,7 +653,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         if (typeof path === 'string' && path.includes('.jsonl')) return true;
         return false;
       });
@@ -842,7 +850,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         // All SDK files exist
         if (typeof path === 'string' && path.includes('.jsonl')) return true;
         return false;
@@ -883,7 +891,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         if (typeof path === 'string' && path.includes('S1.jsonl')) return true;
         return false;
       });
@@ -931,7 +939,7 @@ describe('session-manager', () => {
       };
 
       vi.mocked(fs.existsSync).mockImplementation((path) => {
-        if (path === './sessions.json') return true;
+        if (isSessionFile(path) || isSessionDir(path)) return true;
         if (typeof path === 'string' && path.includes('.jsonl')) return true;
         return false;
       });

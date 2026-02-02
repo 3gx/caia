@@ -22,7 +22,9 @@ export function getSessionsFilePath(agentName: string): string {
 function ensureSessionsDirExists(): void {
   const dir = getSessionsDir();
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    if (typeof fs.mkdirSync === 'function') {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
 }
 

@@ -82,9 +82,6 @@ import { startClaudeQuery } from '../../../claude/src/claude-client.js';
 import { uploadMarkdownAndPngWithResponse } from '../../../claude/src/streaming.js';
 import fs from 'fs';
 
-// Will be populated dynamically after module import
-let busyConversations: Set<string>;
-
 describe('slack-bot button handlers', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -99,8 +96,7 @@ describe('slack-bot button handlers', () => {
     } as any);
 
     vi.resetModules();
-    const slackBot = await import('../../../claude/src/slack-bot.js');
-    busyConversations = slackBot.busyConversations;
+    await import('../../../claude/src/slack-bot.js');
   });
 
   describe('SDK question abort button handler', () => {
