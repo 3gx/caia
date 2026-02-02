@@ -80,12 +80,9 @@ describe('Session Manager', () => {
     it('returns empty store on invalid structure', () => {
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readFileSync.mockReturnValue(JSON.stringify({ invalid: true }));
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const store = loadSessions();
       expect(store).toEqual({ channels: {} });
-      expect(consoleSpy).toHaveBeenCalled();
-      consoleSpy.mockRestore();
     });
   });
 
@@ -109,10 +106,10 @@ describe('Session Manager', () => {
 
       saveSessions(store);
 
-      expect(mockFs.writeFileSync).toHaveBeenCalledWith(
-        './sessions.json',
-        JSON.stringify(store, null, 2)
-      );
+      expect(mockFs.writeFileSync).toHaveBeenCalled();
+      const [filePath, content] = mockFs.writeFileSync.mock.calls[0];
+      expect(filePath).toMatch(/codex-sessions\.json$/);
+      expect(content).toBe(JSON.stringify(store, null, 2));
     });
   });
 

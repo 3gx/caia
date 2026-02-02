@@ -116,8 +116,8 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':memo:');
     expect(statusLineText).not.toContain(':brain:');
 
-    // Status line SHOULD include policy/model/session/stats
-    expect(statusLineText).toContain('on-request');
+    // Status line SHOULD include mode/model/session/stats
+    expect(statusLineText).toContain('ask');
     expect(statusLineText).toContain('codex-mini [high]');
     expect(statusLineText).toContain('danger-full-access');
     expect(statusLineText).toContain('thread-abc');

@@ -56,9 +56,15 @@ describe('Path Navigation Flow Integration', () => {
       },
     };
 
-    // Mock session file operations
+    // Mock session file operations (using pattern match for session file path)
+    const isSessionFile = (p: string) => p.endsWith('codex-sessions.json');
+    const isSessionDir = (p: string) => p.endsWith('.config/caia') || p.endsWith('.config') || p.includes('.config/caia');
+
     mockFs.existsSync.mockImplementation((p: any) => {
-      if (p === './sessions.json') return true;
+      if (isSessionFile(p)) return true;
+      if (isSessionDir(p)) return true;
+      // Legacy sessions.json check (for cleanup)
+      if (p.endsWith('sessions.json') && !isSessionFile(p)) return false;
       // Simulate real filesystem for path validation
       if (p === '/Users/test/projects') return true;
       if (p === '/Users/test/projects/subdir') return true;
@@ -68,15 +74,17 @@ describe('Path Navigation Flow Integration', () => {
     });
 
     mockFs.readFileSync.mockImplementation((p: any) => {
-      if (p === './sessions.json') return JSON.stringify(sessionStore);
+      if (isSessionFile(p)) return JSON.stringify(sessionStore);
       throw new Error('File not found');
     });
 
     mockFs.writeFileSync.mockImplementation((p: any, data: any) => {
-      if (p === './sessions.json') {
+      if (isSessionFile(p)) {
         sessionStore = JSON.parse(data as string);
       }
     });
+
+    mockFs.mkdirSync.mockImplementation(() => undefined);
 
     mockFs.statSync.mockImplementation((p: any) => {
       if (p === '/Users/test/projects' || p === '/Users/test/projects/subdir') {
