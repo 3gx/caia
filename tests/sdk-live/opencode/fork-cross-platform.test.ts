@@ -4,7 +4,8 @@
  * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
-import { createOpencode, OpencodeClient } from '@opencode-ai/sdk';
+import { OpencodeClient } from '@opencode-ai/sdk';
+import { createOpencodeWithCleanup, OpencodeTestServer } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -47,6 +48,7 @@ async function waitForEvent(
 }
 
 describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
+  let opencode: OpencodeTestServer;
   let client: OpencodeClient;
   let server: { close(): void; url: string };
   let testPort: number;
@@ -57,13 +59,13 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
     const counter = new Int32Array(buffer);
     testPort = basePort + Atomics.add(counter, 0, 1);
 
-    const result = await createOpencode({ port: testPort });
-    client = result.client;
-    server = result.server;
+    opencode = await createOpencodeWithCleanup(testPort);
+    client = opencode.client;
+    server = opencode.server;
   });
 
-  afterAll(() => {
-    server.close();
+  afterAll(async () => {
+    await opencode.cleanup();
   });
 
   it('CANARY: bot messages forkable after CLI resume', async () => {

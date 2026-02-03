@@ -4,12 +4,14 @@
  * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
-import { createOpencode, OpencodeClient } from '@opencode-ai/sdk';
+import { OpencodeClient } from '@opencode-ai/sdk';
+import { createOpencodeWithCleanup, OpencodeTestServer } from './test-helpers.js';
 import * as fs from 'fs';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
 describe.skipIf(SKIP_LIVE)('Image Support', { timeout: 60000 }, () => {
+  let opencode: OpencodeTestServer;
   let client: OpencodeClient;
   let server: { close(): void; url: string };
   let testPort: number;
@@ -21,17 +23,17 @@ describe.skipIf(SKIP_LIVE)('Image Support', { timeout: 60000 }, () => {
     const counter = new Int32Array(buffer);
     testPort = basePort + Atomics.add(counter, 0, 1);
 
-    const result = await createOpencode({ port: testPort });
-    client = result.client;
-    server = result.server;
+    opencode = await createOpencodeWithCleanup(testPort);
+    client = opencode.client;
+    server = opencode.server;
 
     // Create a minimal test image
     const minimalPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
     fs.writeFileSync(testImagePath, minimalPng);
   });
 
-  afterAll(() => {
-    server.close();
+  afterAll(async () => {
+    await opencode.cleanup();
     try {
       fs.unlinkSync(testImagePath);
     } catch {}

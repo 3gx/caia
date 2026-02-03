@@ -4,7 +4,7 @@
  * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
  */
 import { describe, it, expect, inject } from 'vitest';
-import { createOpencode } from '@opencode-ai/sdk';
+import { createOpencodeWithCleanup } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -15,9 +15,9 @@ describe.skipIf(SKIP_LIVE)('Server Errors', { timeout: 30000 }, () => {
     const counter = new Int32Array(buffer);
     const testPort = basePort + Atomics.add(counter, 0, 1);
 
-    const { server } = await createOpencode({ port: testPort });
-    expect(server.url).toMatch(new RegExp(`:${testPort}`));
+    const opencode = await createOpencodeWithCleanup(testPort);
+    expect(opencode.server.url).toMatch(new RegExp(`:${testPort}`));
 
-    server.close();
+    await opencode.cleanup();
   });
 });
