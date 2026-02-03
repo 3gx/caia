@@ -13,7 +13,7 @@ describe.skipIf(SKIP_LIVE)('Server Errors', { timeout: 30000 }, () => {
     const buffer = inject('portCounter') as SharedArrayBuffer;
     const basePort = inject('basePort') as number;
     const counter = new Int32Array(buffer);
-    const testPort = basePort + Atomics.add(counter, 0, 1);
+    const testPort = findFreePort(counter, basePort);
 
     const opencode = await createOpencodeWithCleanup(testPort);
     expect(opencode.server.url).toMatch(new RegExp(`:${testPort}`));

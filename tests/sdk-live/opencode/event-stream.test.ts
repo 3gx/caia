@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -69,7 +69,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Basic', { timeout: 60000 }, () => {
     const buffer = inject('portCounter') as SharedArrayBuffer;
     const basePort = inject('basePort') as number;
     const counter = new Int32Array(buffer);
-    testPort = basePort + Atomics.add(counter, 0, 1);
+    testPort = findFreePort(counter, basePort);
 
     opencode = await createOpencodeWithCleanup(testPort);
     client = opencode.client;
@@ -122,7 +122,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
     const buffer = inject('portCounter') as SharedArrayBuffer;
     const basePort = inject('basePort') as number;
     const counter = new Int32Array(buffer);
-    testPort = basePort + Atomics.add(counter, 0, 1);
+    testPort = findFreePort(counter, basePort);
 
     opencode = await createOpencodeWithCleanup(testPort);
     client = opencode.client;

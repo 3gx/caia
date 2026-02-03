@@ -31,7 +31,7 @@ describe.skipIf(SKIP_LIVE)('Server Restart', { timeout: 60000 }, () => {
     const buffer = inject('portCounter') as SharedArrayBuffer;
     const basePort = inject('basePort') as number;
     const counter = new Int32Array(buffer);
-    const testPort = basePort + Atomics.add(counter, 0, 1);
+    const testPort = findFreePort(counter, basePort);
 
     // Start first server
     const opencode1 = await createOpencodeWithCleanup(testPort);
