@@ -859,7 +859,7 @@ describe('Block Kit Builders', () => {
         status: 'completed',
         conversationKey: 'C123_456.789',
         elapsedMs: 2000,
-        forkTurnId: 'turn_xyz789', // Codex turn ID (NOT turnIndex)
+        forkTurnIndex: 2, // 0-based turn index (queried from Codex at button creation time)
         forkSlackTs: '999.000',
         ...baseParams,
       });
@@ -867,11 +867,11 @@ describe('Block Kit Builders', () => {
       const forkBlock = blocks.find((b) => b.type === 'actions' && (b.block_id || '').startsWith('fork_')) as any;
       expect(forkBlock).toBeDefined();
       const forkBtn = forkBlock.elements?.[0];
-      expect(forkBtn?.action_id).toBe('fork_C123_456.789_turn_xyz789');
+      expect(forkBtn?.action_id).toBe('fork_C123_456.789_2');
       // Button text should match ccslack format with emoji
       expect(forkBtn?.text?.text).toBe(':twisted_rightwards_arrows: Fork here');
       expect(forkBtn?.text?.emoji).toBe(true);
-      expect(forkBtn?.value).toContain('"turnId":"turn_xyz789"');
+      expect(forkBtn?.value).toContain('"turnIndex":2');
     });
 
     it('does NOT show fork button during running status (only Abort shown)', () => {
@@ -880,7 +880,7 @@ describe('Block Kit Builders', () => {
         status: 'running',
         conversationKey: 'C123_456.789',
         elapsedMs: 1000,
-        forkTurnId: 'turn_xyz789',
+        forkTurnIndex: 2,
         forkSlackTs: '999.000',
         ...baseParams,
       });
@@ -901,7 +901,7 @@ describe('Block Kit Builders', () => {
         status: 'completed',
         conversationKey: 'C123_456.789',
         elapsedMs: 5000,
-        forkTurnId: 'turn_def456',
+        forkTurnIndex: 3,
         forkSlackTs: '888.000',
         ...baseParams,
       });

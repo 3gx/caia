@@ -312,6 +312,8 @@ interface StreamingState {
   pendingAbort?: boolean;
   /** Timeout for pending abort (safety net) */
   pendingAbortTimeout?: ReturnType<typeof setTimeout>;
+  /** Turn index for fork button - queried from Codex at turn completion */
+  forkTurnIndex?: number;
   // Activity thread batch state (for thread posting)
   /** User's message ts (thread parent) */
   threadParentTs: string | null;
@@ -1126,6 +1128,18 @@ export class StreamingManager {
               state.threadParentTs || originalTs,
               'Turn failed'
             ).catch((err) => console.error('[streaming] Error post failed:', err));
+          }
+
+          // Query Codex for turn count to get fork button index
+          // This is the source of truth - robust across bot restarts and CLI usage
+          if (status === 'completed') {
+            try {
+              const turnCount = await this.codex.getThreadTurnCount(threadId);
+              state.forkTurnIndex = turnCount - 1; // 0-indexed, just-completed turn
+              console.log(`[streaming] Fork button will use turnIndex=${state.forkTurnIndex} (from ${turnCount} turns)`);
+            } catch (err) {
+              console.error('[streaming] Failed to get turn count for fork button:', err);
+            }
           }
 
           // FINAL update - shows complete status and response
@@ -1981,7 +1995,7 @@ export class StreamingManager {
         outputTokens: outputTokensForStats,
         costUsd: includeFinalStats ? state.costUsd : undefined,
         spinner,
-        forkTurnId: context.turnId,
+        forkTurnIndex: state.forkTurnIndex,
         forkSlackTs: state.activityMessageTs || threadTs,
         // Pass userId and channelId for @mention in Complete notification (Claude-style)
         userId: context.userId,

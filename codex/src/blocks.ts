@@ -345,8 +345,8 @@ export function buildApprovalDeniedBlocks(command?: string): Block[] {
 // ============================================================================
 
 export interface ForkBlockParams {
-  /** Codex turn ID - used to query actual index from Codex (source of truth) */
-  turnId: string;
+  /** Turn index (0-based) - queried from Codex at button creation time */
+  turnIndex: number;
   slackTs: string;
   conversationKey: string;
 }
@@ -355,11 +355,13 @@ export interface ForkBlockParams {
  * Build blocks for "Fork here" button.
  * Matches ccslack style: emoji + text, shown only after query completes.
  *
- * NOTE: We store turnId (not turnIndex) because the index must always be
- * queried from Codex at fork time to handle CLI usage, bot restarts, etc.
+ * NOTE: We store turnIndex (queried from Codex at button creation time).
+ * This is robust across bot restarts and CLI usage because:
+ * - turnIndex is immutable once stored
+ * - forkThreadAtTurn validates index is still valid
  */
 export function buildForkButton(params: ForkBlockParams): Block {
-  const { turnId, slackTs, conversationKey } = params;
+  const { turnIndex, slackTs, conversationKey } = params;
 
   return {
     type: 'actions',
@@ -372,8 +374,8 @@ export function buildForkButton(params: ForkBlockParams): Block {
           text: ':twisted_rightwards_arrows: Fork here',
           emoji: true,
         },
-        action_id: `fork_${conversationKey}_${turnId}`,
-        value: JSON.stringify({ turnId, slackTs, conversationKey }),
+        action_id: `fork_${conversationKey}_${turnIndex}`,
+        value: JSON.stringify({ turnIndex, slackTs, conversationKey }),
       },
     ],
   };
@@ -385,7 +387,7 @@ export function buildForkButton(params: ForkBlockParams): Block {
 
 export interface ActivityEntryActionParams {
   conversationKey: string;
-  /** Codex turn ID - used to query actual index from Codex (source of truth) */
+  /** Codex turn ID - used for activity entry actions (fork is always disabled here) */
   turnId: string;
   slackTs: string;
   includeFork?: boolean;
@@ -396,6 +398,8 @@ export function buildActivityEntryActions(params: ActivityEntryActionParams): Bl
   const { conversationKey, turnId, slackTs, includeFork = true, includeAttachThinking = true } = params;
   const elements: any[] = [];
   if (includeFork) {
+    // NOTE: Fork is always disabled for activity entries (see buildActivityEntryActionParams)
+    // This code path is kept for API completeness but never executes in practice
     elements.push({
       type: 'button',
       text: {
@@ -1185,8 +1189,8 @@ export interface ForkToChannelModalParams {
   sourceMessageTs: string;
   sourceThreadTs: string;
   conversationKey: string;
-  /** Codex turn ID - actual index is queried from Codex at fork execution time */
-  turnId: string;
+  /** Turn index (0-based) - queried from Codex at button creation time */
+  turnIndex: number;
   /** Suggested channel name (computed by checking existing forks) */
   suggestedName: string;
 }
@@ -1277,8 +1281,8 @@ export interface ActivityBlockParams {
   outputTokens?: number;
   costUsd?: number;
   spinner?: string;
-  /** Codex turn ID for fork button - index is queried from Codex at fork time */
-  forkTurnId?: string;
+  /** Turn index (0-based) for fork button - queried from Codex at button creation */
+  forkTurnIndex?: number;
   forkSlackTs?: string;
   /** User ID for @mention in Complete notification (Claude-style) */
   userId?: string;
@@ -1413,10 +1417,10 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
   // Fork button on main activity/status panel - ONLY after query completes (matches ccslack UX)
   // During processing: show Abort button
   // After completion: show Fork button (replaces Abort)
-  if (!isRunning && params.forkTurnId && params.forkSlackTs) {
+  if (!isRunning && params.forkTurnIndex !== undefined && params.forkSlackTs) {
     blocks.push(
       buildForkButton({
-        turnId: params.forkTurnId,
+        turnIndex: params.forkTurnIndex,
         slackTs: params.forkSlackTs,
         conversationKey,
       })

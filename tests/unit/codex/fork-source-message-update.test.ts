@@ -44,7 +44,7 @@ describe('updateSourceMessageWithForkLink', () => {
 
     await updateSourceMessageWithForkLink(client, 'C_SOURCE', '111.222', 'C_FORK', {
       conversationKey: 'C_SOURCE_111.222',
-      turnId: 'turn_1',
+      turnIndex: 1,
     });
 
     expect(client.conversations.history).toHaveBeenCalledWith(
@@ -93,7 +93,7 @@ describe('updateSourceMessageWithForkLink', () => {
     await updateSourceMessageWithForkLink(client, 'C_THREAD', replyTs, 'C_FORK', {
       threadTs: parentTs,
       conversationKey: 'C_THREAD_222.000',
-      turnId: 'turn_thread_1',
+      turnIndex: 1,
     });
 
     expect(client.conversations.replies).toHaveBeenCalledWith(
@@ -155,7 +155,7 @@ describe('updateSourceMessageWithForkLink', () => {
       sourceChannelId: 'C_SOURCE',
       sourceMessageTs,
       conversationKey: 'C_SOURCE_333.444',
-      turnId: 'turn_restore_1',
+      turnIndex: 1,
     });
 
     const updateCall = client.chat.update.mock.calls[0][0];

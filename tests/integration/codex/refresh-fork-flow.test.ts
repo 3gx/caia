@@ -47,7 +47,7 @@ describe('Refresh Fork Flow', () => {
 
     await updateSourceMessageWithForkLink(client, 'C_SOURCE', sourceMessageTs, 'C_FORK', {
       conversationKey: 'C_SOURCE_555.666',
-      turnId: 'turn_1',
+      turnIndex: 1,
     });
 
     const updated = messages[0];
@@ -62,7 +62,7 @@ describe('Refresh Fork Flow', () => {
       sourceChannelId: 'C_SOURCE',
       sourceMessageTs,
       conversationKey: 'C_SOURCE_555.666',
-      turnId: 'turn_1',
+      turnIndex: 1,
     });
 
     const restored = messages[0];

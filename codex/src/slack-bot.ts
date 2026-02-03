@@ -344,27 +344,27 @@ function setupEventHandlers(): void {
 
     await ack();
 
-    // Parse metadata - contains turnId (Codex identifier), NOT turnIndex
+    // Parse metadata - contains turnIndex (queried from Codex at button creation time)
     const metadata = JSON.parse(view.private_metadata || '{}') as {
       sourceChannelId: string;
       sourceChannelName: string;
       sourceMessageTs: string;
       sourceThreadTs: string;
       conversationKey: string;
-      turnId: string;
+      turnIndex: number;
     };
 
     const userId = body.user.id;
 
     try {
       // Create the fork channel and session
-      // createForkChannel queries Codex for actual turn index using turnId
+      // turnIndex was queried from Codex at button creation time
       const result = await createForkChannel({
         channelName: normalizedName,
         sourceChannelId: metadata.sourceChannelId,
         sourceThreadTs: metadata.sourceThreadTs,
         conversationKey: metadata.conversationKey,
-        turnId: metadata.turnId,
+        turnIndex: metadata.turnIndex,
         userId,
         client,
       });
@@ -380,7 +380,7 @@ function setupEventHandlers(): void {
             {
               threadTs: metadata.sourceThreadTs || undefined,
               conversationKey: metadata.conversationKey,
-              turnId: metadata.turnId,
+              turnIndex: metadata.turnIndex,
             }
           );
         } catch (updateError) {
@@ -439,9 +439,9 @@ function setupEventHandlers(): void {
         }
       } else if (actionId.startsWith('fork_')) {
         // Fork action - open modal for channel name input
-        // Button value contains turnId (Codex identifier), NOT turnIndex
+        // Button value contains turnIndex (queried from Codex at button creation)
         const value = (action as { value: string }).value;
-        const { turnId, slackTs, conversationKey } = JSON.parse(value);
+        const { turnIndex, slackTs, conversationKey } = JSON.parse(value);
         const messageTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.ts;
         const threadTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.thread_ts ?? messageTs;
 
@@ -502,7 +502,7 @@ function setupEventHandlers(): void {
               sourceMessageTs: messageTs ?? '',
               sourceThreadTs: threadTs ?? '',
               conversationKey,
-              turnId,
+              turnIndex,
               suggestedName,
             }),
           });
@@ -773,7 +773,7 @@ function setupEventHandlers(): void {
       forkChannelId?: string;
       threadTs?: string;
       conversationKey?: string;
-      turnId?: string;
+      turnIndex?: number;
     };
     try {
       forkInfo = JSON.parse(valueStr);
@@ -800,7 +800,7 @@ function setupEventHandlers(): void {
       sourceMessageTs: messageTs,
       threadTs: forkInfo.threadTs,
       conversationKey: forkInfo.conversationKey,
-      turnId: forkInfo.turnId,
+      turnIndex: forkInfo.turnIndex,
     });
   });
 
@@ -1365,8 +1365,8 @@ interface CreateForkChannelParams {
   sourceChannelId: string;
   sourceThreadTs: string;
   conversationKey: string;
-  /** Codex turn ID - actual index is queried from Codex at fork time */
-  turnId: string;
+  /** Turn index (0-based) - queried from Codex at button creation time */
+  turnIndex: number;
   userId: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any; // Slack WebClient - using any for flexibility with Slack API types
@@ -1378,7 +1378,7 @@ interface CreateForkChannelResult {
 }
 
 async function createForkChannel(params: CreateForkChannelParams): Promise<CreateForkChannelResult> {
-  const { channelName, sourceChannelId, sourceThreadTs, conversationKey, turnId, userId, client } = params;
+  const { channelName, sourceChannelId, sourceThreadTs, conversationKey, turnIndex, userId, client } = params;
 
   // Parse source conversation key to get source thread info
   const parts = conversationKey.split('_');
@@ -1394,11 +1394,9 @@ async function createForkChannel(params: CreateForkChannelParams): Promise<Creat
   // Get the source runtime (needed for fork operations)
   const sourceRuntime = await getRuntime(conversationKey);
 
-  // Query Codex for actual turn index (source of truth)
-  const turnIndex = await sourceRuntime.codex.findTurnIndex(sourceThreadId, turnId);
-  if (turnIndex < 0) {
-    throw new Error('Cannot fork: Turn not found in Codex thread.');
-  }
+  // turnIndex was queried from Codex at button creation time - use it directly
+  // Validation: Codex.forkThreadAtTurn will validate bounds
+  console.log(`[createForkChannel] Using turnIndex=${turnIndex} (stored at button creation time)`);
 
   // Inherit working directory lock from source session
   const sourceThreadSession = sourceConvThreadTs
@@ -1523,7 +1521,8 @@ async function updateSourceMessageWithForkLink(
   forkInfo?: {
     threadTs?: string;
     conversationKey?: string;
-    turnId?: string;
+    /** Turn index (0-based) - stored at button creation time */
+    turnIndex?: number;
   }
 ): Promise<void> {
   const threadTs = forkInfo?.threadTs;
@@ -1584,7 +1583,7 @@ async function updateSourceMessageWithForkLink(
     let actionsBlockIndex = -1;
 
     const refreshButton =
-      forkInfo?.conversationKey && forkInfo?.turnId
+      forkInfo?.conversationKey && forkInfo?.turnIndex !== undefined
         ? {
             type: 'button',
             text: { type: 'plain_text', text: '🔄 Refresh fork', emoji: true },
@@ -1593,7 +1592,7 @@ async function updateSourceMessageWithForkLink(
               forkChannelId,
               threadTs: forkInfo.threadTs,
               conversationKey: forkInfo.conversationKey,
-              turnId: forkInfo.turnId,
+              turnIndex: forkInfo.turnIndex,
             }),
           }
         : undefined;
@@ -1675,12 +1674,13 @@ async function restoreForkHereButton(
     sourceMessageTs: string;
     threadTs?: string;
     conversationKey?: string;
-    turnId?: string;
+    /** Turn index (0-based) - stored at button creation time */
+    turnIndex?: number;
   }
 ): Promise<void> {
-  const { sourceChannelId, sourceMessageTs, threadTs, conversationKey, turnId } = forkInfo;
+  const { sourceChannelId, sourceMessageTs, threadTs, conversationKey, turnIndex } = forkInfo;
 
-  if (!conversationKey || !turnId) {
+  if (!conversationKey || turnIndex === undefined) {
     console.log('[RestoreForkHere] Missing fork point info, cannot restore button');
     return;
   }
@@ -1746,9 +1746,9 @@ async function restoreForkHereButton(
     const forkButton = {
       type: 'button',
       text: { type: 'plain_text', text: ':twisted_rightwards_arrows: Fork here', emoji: true },
-      action_id: `fork_${conversationKey}_${turnId}`,
+      action_id: `fork_${conversationKey}_${turnIndex}`,
       value: JSON.stringify({
-        turnId,
+        turnIndex,
         slackTs: sourceMessageTs,
         conversationKey,
       }),
