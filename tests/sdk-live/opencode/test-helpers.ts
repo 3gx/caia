@@ -53,6 +53,24 @@ export interface OpencodeTestServer {
  *
  * IMPORTANT: Only use cleanup() - don't call server.close() directly.
  */
+/**
+ * Delete all sessions for a client.
+ */
+async function deleteAllSessions(client: OpencodeClient): Promise<void> {
+  try {
+    const sessions = await client.session.list();
+    if (sessions.data) {
+      await Promise.all(
+        sessions.data.map(s =>
+          client.session.delete({ path: { id: s.id } }).catch(() => {})
+        )
+      );
+    }
+  } catch {
+    // Ignore errors during cleanup
+  }
+}
+
 export async function createOpencodeWithCleanup(port: number): Promise<OpencodeTestServer> {
   const result = await createOpencode({ port });
 
@@ -66,7 +84,10 @@ export async function createOpencodeWithCleanup(port: number): Promise<OpencodeT
     client: result.client,
     server: result.server,
     cleanup: async () => {
-      // First try graceful close
+      // Delete all sessions first
+      await deleteAllSessions(result.client);
+
+      // Then try graceful close
       result.server.close();
 
       // Give it a moment to close gracefully
