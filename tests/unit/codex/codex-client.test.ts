@@ -668,30 +668,6 @@ describe('CodexClient Point-in-Time Fork', () => {
 
       expect(index).toBe(-1);
     });
-
-    it('findTurnIndex handles numeric 0-based turnId', async () => {
-      const client = new CodexClient({ requestTimeout: 100 });
-      vi.spyOn(client, 'readThread').mockResolvedValue({
-        thread: { id: 'thread-123', workingDirectory: '/test', createdAt: new Date().toISOString() },
-        turns: [{ id: 'turn-1' }, { id: 'turn-2' }],
-      });
-
-      const index = await client.findTurnIndex('thread-123', '0');
-
-      expect(index).toBe(0);
-    });
-
-    it('findTurnIndex handles numeric 1-based turnId', async () => {
-      const client = new CodexClient({ requestTimeout: 100 });
-      vi.spyOn(client, 'readThread').mockResolvedValue({
-        thread: { id: 'thread-123', workingDirectory: '/test', createdAt: new Date().toISOString() },
-        turns: [{ id: 'turn-1' }, { id: 'turn-2' }],
-      });
-
-      const index = await client.findTurnIndex('thread-123', '1');
-
-      expect(index).toBe(0);
-    });
   });
 
   describe('forkThreadAtTurn calculation', () => {

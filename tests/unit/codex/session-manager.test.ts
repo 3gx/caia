@@ -510,8 +510,8 @@ describe('Session Manager', () => {
     });
   });
 
-  describe('getEffectiveThreadId - Thread Scoped', () => {
-    it('returns null when thread session has no threadId', () => {
+  describe('getEffectiveThreadId - Channel Fallback', () => {
+    it('falls back to channel session when thread session has no threadId', () => {
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readFileSync.mockReturnValue(
         JSON.stringify({
@@ -545,11 +545,12 @@ describe('Session Manager', () => {
         })
       );
 
+      // Should fallback to channel threadId
       const threadId = getEffectiveThreadId('C123', '1111.0000');
-      expect(threadId).toBeNull();
+      expect(threadId).toBe('channel-codex-thread');
     });
 
-    it('returns null when thread session does not exist', () => {
+    it('falls back to channel session when thread session does not exist', () => {
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readFileSync.mockReturnValue(
         JSON.stringify({
@@ -570,8 +571,9 @@ describe('Session Manager', () => {
         })
       );
 
+      // Thread session doesn't exist at all, should fallback to channel
       const threadId = getEffectiveThreadId('C123', '2222.0000');
-      expect(threadId).toBeNull();
+      expect(threadId).toBe('channel-codex-thread');
     });
 
     it('uses thread session threadId when available', () => {
@@ -613,7 +615,10 @@ describe('Session Manager', () => {
       expect(threadId).toBe('thread-specific-codex-thread');
     });
 
-    it('does not share channel threadId across different Slack threads', () => {
+    it('allows multiple main channel mentions to share same Codex thread', () => {
+      // This tests the main channel session persistence fix:
+      // First @bot from main channel saves threadId to channel session
+      // Second @bot from main channel (different ts) finds it via fallback
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readFileSync.mockReturnValue(
         JSON.stringify({
@@ -648,8 +653,9 @@ describe('Session Manager', () => {
         })
       );
 
+      // Second @bot has different ts, but should find the same Codex thread via fallback
       const threadId = getEffectiveThreadId('C123', '2222.0000');
-      expect(threadId).toBeNull();
+      expect(threadId).toBe('shared-codex-thread');
     });
   });
 
