@@ -415,4 +415,155 @@ describe.skipIf(SKIP_LIVE)('Fork Button turnId Verification', { timeout: 120000 
     console.log('\n✓ VERIFIED: Fork button flow works correctly with turnId lookup');
     console.log('==========================================\n');
   });
+
+  // CRITICAL: 4-variable test matching exact bug scenario
+  // Verifies: store turnId from turn:started, query Codex at fork time, verify content
+  it('4-variable fork at turn 2: store turnId, query Codex, verify content', async () => {
+    notifications.length = 0;
+
+    console.log('\n=== 4-Variable Fork Button Flow Test ===');
+    console.log('Scenario: a=42, b=84, c=840, d=184');
+    console.log('Fork at turn 2 (c=840) using stored turnId');
+    console.log('Verify: a, b, c present; d absent\n');
+
+    // 1. Create thread
+    const threadResult = await rpc<{ thread: ThreadInfo }>('thread/start', {
+      workingDirectory: process.cwd(),
+    });
+    const threadId = threadResult.thread.id;
+    console.log(`Thread: ${threadId}`);
+
+    // 2. Send 4 turns, capture turnId from turn:started for EACH
+    const turnIdMap: Record<number, string> = {};
+    const variables = [
+      { name: 'a', value: 42 },
+      { name: 'b', value: 84 },
+      { name: 'c', value: 840 },
+      { name: 'd', value: 184 },
+    ];
+
+    for (let i = 0; i < variables.length; i++) {
+      notifications.length = 0;
+      const { name, value } = variables[i];
+
+      await rpc('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: `Assume variable ${name} has value ${value}. Just confirm by saying "${name} = ${value}".` }],
+      });
+      await waitForTurnComplete();
+
+      // Extract turnId from turn:started notification (EXACTLY like the bot does)
+      const turnId = extractTurnIdFromNotifications();
+      expect(turnId, `Turn ${i} should have turnId`).toBeDefined();
+      turnIdMap[i] = turnId!;
+      console.log(`Turn ${i} (${name}=${value}): turnId from turn:started = "${turnId}"`);
+    }
+
+    // 3. Simulate fork button click for turn 2 (c=840)
+    // The button stores turnId, NOT index
+    const storedTurnId = turnIdMap[2];
+    console.log(`\n--- Fork Button Click ---`);
+    console.log(`Button stored turnId: "${storedTurnId}"`);
+
+    // 4. At fork time: Query Codex thread/read to find actual index
+    console.log(`\n--- Query Codex for Turn Index ---`);
+    const readResult = await rpc<{ thread: ThreadInfo }>('thread/read', {
+      threadId,
+      includeTurns: true,
+    });
+
+    const turns = readResult.thread.turns!;
+    console.log(`thread/read returned ${turns.length} turns:`);
+    for (let i = 0; i < turns.length; i++) {
+      console.log(`  turns[${i}].id = "${turns[i].id}"`);
+    }
+
+    // Use EXACT same conversion logic as codex-client.ts findTurnIndex()
+    function findTurnIndexWithConversion(turns: Array<{ id: string }>, turnId: string): number {
+      // Try direct match first
+      let index = turns.findIndex((t) => t.id === turnId);
+      if (index >= 0) return index;
+
+      // Handle format mismatch: "0" -> "turn-1", "1" -> "turn-2", etc.
+      const numericId = parseInt(turnId, 10);
+      if (!isNaN(numericId)) {
+        const convertedId = `turn-${numericId + 1}`;
+        index = turns.findIndex((t) => t.id === convertedId);
+      }
+      return index;
+    }
+
+    const actualIndex = findTurnIndexWithConversion(turns, storedTurnId);
+    console.log(`\nfindTurnIndex("${storedTurnId}") = ${actualIndex} (expected: 2)`);
+    expect(actualIndex, `turnId "${storedTurnId}" should map to index 2`).toBe(2);
+
+    // 5. Fork using fork + rollback pattern
+    console.log(`\n--- Fork at Index ${actualIndex} ---`);
+    const forkResult = await rpc<{ thread: ThreadInfo }>('thread/fork', { threadId });
+    const forkedThreadId = forkResult.thread.id;
+    console.log(`Forked thread: ${forkedThreadId}`);
+
+    const turnsToRollback = turns.length - (actualIndex + 1);
+    console.log(`Rolling back ${turnsToRollback} turns to keep only 0, 1, 2`);
+
+    if (turnsToRollback > 0) {
+      await rpc('thread/rollback', {
+        threadId: forkedThreadId,
+        numTurns: turnsToRollback,
+      });
+    }
+
+    // 6. VERIFY: Query forked thread for variable values
+    console.log(`\n--- Content Verification ---`);
+    notifications.length = 0;
+    await rpc('turn/start', {
+      threadId: forkedThreadId,
+      input: [{ type: 'text', text: 'List all the variables I asked you to assume and their values.' }],
+    });
+    await waitForTurnComplete();
+
+    // Extract response text
+    let responseText = '';
+    for (const n of notifications) {
+      const params = n.params as Record<string, unknown>;
+      const msg = params.msg as Record<string, unknown> | undefined;
+      const textContent =
+        (typeof params.delta === 'string' ? params.delta : null) ||
+        (typeof params.text === 'string' ? params.text : null) ||
+        (typeof params.content === 'string' ? params.content : null) ||
+        (msg && typeof msg.delta === 'string' ? msg.delta : null) ||
+        (msg && typeof msg.text === 'string' ? msg.text : null) ||
+        (msg && typeof msg.content === 'string' ? msg.content : null);
+      if (textContent) {
+        responseText += textContent;
+      }
+    }
+
+    console.log(`\nForked thread response: "${responseText.slice(0, 500)}..."`);
+
+    // Check for variable values
+    const has42 = responseText.includes('42');
+    const has84 = responseText.includes('84');
+    const has840 = responseText.includes('840');
+    const has184 = responseText.includes('184');
+
+    console.log(`\n=== CONTENT VERIFICATION ===`);
+    console.log(`Contains 42 (a): ${has42} (expected: true)`);
+    console.log(`Contains 84 (b): ${has84} (expected: true)`);
+    console.log(`Contains 840 (c): ${has840} (expected: true)`);
+    console.log(`Contains 184 (d): ${has184} (expected: FALSE - must NOT be in fork at turn 2)`);
+
+    // CRITICAL assertions
+    expect(has42, `Fork should contain a=42. Response: "${responseText.slice(0, 300)}..."`).toBe(true);
+    expect(has840, `Fork should contain c=840. Response: "${responseText.slice(0, 300)}..."`).toBe(true);
+    expect(has184, `Fork must NOT contain d=184. Response: "${responseText.slice(0, 300)}..."`).toBe(false);
+
+    if (has42 && has840 && !has184) {
+      console.log('\n✓ VERIFIED: turnId-based fork correctly includes a, b, c and excludes d');
+    } else {
+      console.log('\n✗ FAILED: Fork content incorrect');
+    }
+
+    console.log('==========================================\n');
+  });
 });
