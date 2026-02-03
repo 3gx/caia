@@ -22,21 +22,19 @@ import {
   truncatePath,
   truncateText,
   truncateUrl,
+  type Block,
   type TodoItem,
   type BaseActivityEntry,
 } from 'caia-slack';
 
-// Slack Block Kit types (simplified for our use case)
-export interface Block {
-  type: string;
-  block_id?: string;
-  text?: {
-    type: string;
-    text: string;
-  };
-  elements?: any[];
-  accessory?: any;
-}
+// Re-export shared types, constants, builders, and formatters for backwards compatibility
+export type { Block } from 'caia-slack';
+export {
+  DEFAULT_CONTEXT_WINDOW,
+  buildPathSetupBlocks,
+  formatThreadStartingMessage,
+  formatThreadErrorMessage,
+} from 'caia-slack';
 
 export interface StatusBlockParams {
   status: 'processing' | 'aborted' | 'error';
@@ -504,14 +502,7 @@ export function buildStatusDisplayBlocks(params: StatusDisplayParams): Block[] {
   ];
 }
 
-// All current Claude models (opus-4, opus-4-5, sonnet-4, sonnet-4-5, haiku-4, 3.5-*)
-// have a context window of 200,000 tokens. This constant is used as a fallback
-// when contextWindow is not yet available (first query after /clear, /resume, or fresh channel).
-// The SDK only provides contextWindow in the result message at query END, but we need it
-// during the spinner loop for real-time context % display.
-export const DEFAULT_CONTEXT_WINDOW = 200000;
-
-// Re-export shared functions for backwards compatibility
+// Re-export additional shared functions for backwards compatibility
 export { computeAutoCompactThreshold, formatTokensK } from 'caia-slack';
 
 /**
@@ -1016,39 +1007,6 @@ export function buildAbortConfirmationModalView(params: {
       },
     ],
   };
-}
-
-// ============================================================================
-// Path Configuration Blocks
-// ============================================================================
-
-/**
- * Build blocks for path setup prompt when working directory not configured.
- */
-export function buildPathSetupBlocks(): Block[] {
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: ':warning: *Working directory not configured*',
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: 'Before I can help, you need to set the working directory for this channel.\n\nThis is a *one-time setup* and cannot be changed later.',
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '*Steps:*\n1. `/ls` - explore current directory\n2. `/cd /absolute/path/to/project` - navigate to desired directory\n3. `/set-current-path` - lock the directory',
-      },
-    },
-  ];
 }
 
 // ============================================================================
@@ -2388,23 +2346,4 @@ export function formatThreadResponseMessage(
   }
 
   return lines.join('\n');
-}
-
-/**
- * Format starting message for thread posting.
- *
- * @returns Formatted mrkdwn text for thread message
- */
-export function formatThreadStartingMessage(): string {
-  return ':brain: *Analyzing request...*';
-}
-
-/**
- * Format error message for thread posting.
- *
- * @param message - Error message
- * @returns Formatted mrkdwn text for thread message
- */
-export function formatThreadErrorMessage(message: string): string {
-  return `:x: *Error:* ${message}`;
 }

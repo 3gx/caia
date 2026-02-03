@@ -5,3 +5,4 @@ export * from './markdown-png.js';
 export * from './file-handler.js';
 export * from './session/index.js';
 export * from './formatting/index.js';
+export * from './blocks/index.js';

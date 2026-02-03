@@ -23,20 +23,18 @@ import {
   truncateText,
   truncateUrl,
   truncateWithClosedFormatting,
+  type Block,
   type TodoItem,
 } from 'caia-slack';
 
-// Slack Block Kit types (simplified for our use case)
-export interface Block {
-  type: string;
-  block_id?: string;
-  text?: {
-    type: string;
-    text: string;
-  };
-  elements?: unknown[];
-  accessory?: unknown;
-}
+// Re-export shared types, constants, builders, and formatters for backwards compatibility
+export type { Block } from 'caia-slack';
+export {
+  DEFAULT_CONTEXT_WINDOW,
+  buildPathSetupBlocks,
+  formatThreadStartingMessage,
+  formatThreadErrorMessage,
+} from 'caia-slack';
 
 // ============================================================================
 // Status Blocks
@@ -1056,43 +1054,11 @@ export function buildErrorBlocks(message: string): Block[] {
   ];
 }
 
-/**
- * Build blocks for path setup prompt (shown when pathConfigured is false).
- */
-export function buildPathSetupBlocks(): Block[] {
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: ':warning: *Working directory not configured*',
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: 'Before I can help, you need to set the working directory for this channel.\n\nThis is a *one-time setup* and cannot be changed later.',
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '*Steps:*\n1. `/ls` - explore current directory\n2. `/cd /path/to/project` - navigate to desired directory\n3. `/set-current-path` - lock the directory',
-      },
-    },
-  ];
-}
-
 // ============================================================================
 // Progress Indicators
 // ============================================================================
 
-// Codex-specific default context window (all current models have 200k context)
-export const DEFAULT_CONTEXT_WINDOW = 200000;
-
-// Re-export shared token functions for backwards compatibility
+// Re-export additional shared token functions for backwards compatibility
 export { computeAutoCompactThreshold, formatTokensK } from 'caia-slack';
 
 export interface UnifiedStatusLineParams {
@@ -1756,13 +1722,6 @@ export function formatThreadActivityEntry(entry: ActivityEntry): string {
 }
 
 /**
- * Format starting message for thread.
- */
-export function formatThreadStartingMessage(): string {
-  return ':brain: *Analyzing request...*';
-}
-
-/**
  * Format thinking message for thread.
  * Shows duration and character count.
  * Uses :bulb: emoji (matches ccslack).
@@ -1781,13 +1740,6 @@ export function formatThreadResponseMessage(content: string, durationMs?: number
   const durationStr = durationMs ? ` [${(durationMs / 1000).toFixed(1)}s]` : '';
   const charStr = ` _[${content.length} chars]_`;
   return `:speech_balloon: *Response*${durationStr}${charStr}`;
-}
-
-/**
- * Format error message for thread.
- */
-export function formatThreadErrorMessage(message: string): string {
-  return `:x: *Error*\n${message}`;
 }
 
 // ============================================================================
