@@ -4,7 +4,7 @@
  * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
  */
 import { describe, it, expect, inject } from 'vitest';
-import { createOpencodeWithCleanup } from './test-helpers.js';
+import { createOpencodeWithCleanup, findFreePort } from './test-helpers.js';
 import net from 'net';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
