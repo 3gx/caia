@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -32,16 +32,16 @@ describe.skipIf(SKIP_LIVE)('Session Updates', { timeout: 30000 }, () => {
 
   it('CANARY: session.update() changes properties', async () => {
     const created = await client.session.create({
-      body: { title: 'Original Title' },
+      body: { title: `${TEST_SESSION_PREFIX}Original Title` },
     });
     opencode.trackSession(created.data!.id);
 
     await client.session.update({
       path: { id: created.data!.id },
-      body: { title: 'Updated Title' },
+      body: { title: `${TEST_SESSION_PREFIX}Updated Title` },
     });
 
     const updated = await client.session.get({ path: { id: created.data!.id } });
-    expect(updated.data?.title).toBe('Updated Title');
+    expect(updated.data?.title).toBe(`${TEST_SESSION_PREFIX}Updated Title`);
   });
 });

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -32,7 +32,7 @@ describe.skipIf(SKIP_LIVE)('Message History', { timeout: 120000 }, () => {
 
   it('CANARY: session.messages() lists all messages', async () => {
     const session = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -48,7 +48,7 @@ describe.skipIf(SKIP_LIVE)('Message History', { timeout: 120000 }, () => {
 
   it('CANARY: messages have correct roles (user/assistant)', async () => {
     const session = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -67,7 +67,7 @@ describe.skipIf(SKIP_LIVE)('Message History', { timeout: 120000 }, () => {
 
   it('CANARY: messages have timestamps', async () => {
     const session = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 

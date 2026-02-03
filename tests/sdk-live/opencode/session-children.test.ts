@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -32,7 +32,7 @@ describe.skipIf(SKIP_LIVE)('Session Children', { timeout: 60000 }, () => {
 
   it('CANARY: session.children() lists forked sessions', async () => {
     const parent = await client.session.create({
-      body: { title: 'Parent Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Parent Session` },
     });
     opencode.trackSession(parent.data!.id);
 

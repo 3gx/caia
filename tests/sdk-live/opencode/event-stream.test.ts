@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -94,7 +94,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Basic', { timeout: 60000 }, () => {
       () => true,
       { timeoutMs: 10000, description: 'any event' },
     );
-    const session = await client.session.create({ body: { title: 'Event Test' } });
+    const session = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Event Test` } });
     opencode.trackSession(session.data!.id);
     const event = await eventPromise;
     expect(event).toBeDefined();
@@ -106,7 +106,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Basic', { timeout: 60000 }, () => {
       event => Boolean(event.payload?.type && event.payload?.properties),
       { timeoutMs: 10000, description: 'event with type/properties' },
     );
-    const session = await client.session.create({ body: { title: 'Event Test' } });
+    const session = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Event Test` } });
     opencode.trackSession(session.data!.id);
     const event = await eventPromise;
     expect(event.payload?.type).toBeDefined();
@@ -141,7 +141,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
       event => event.payload?.type === 'session.created',
       { timeoutMs: 10000, description: 'session.created event' },
     );
-    const session = await client.session.create({ body: { title: 'Event Test' } });
+    const session = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Event Test` } });
     opencode.trackSession(session.data!.id);
     const event = await createdPromise;
     expect(event.payload?.type).toBe('session.created');
@@ -149,7 +149,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
 
   it('CANARY: session.idle event on completion', async () => {
     const sessionResult = await client.session.create({
-      body: { title: 'Idle Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Idle Test` },
     });
     opencode.trackSession(sessionResult.data!.id);
     const sessionId = sessionResult.data?.id;
@@ -173,7 +173,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
 
   it('CANARY: session.status event shows busy/idle', async () => {
     const sessionResult = await client.session.create({
-      body: { title: 'Status Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Status Test` },
     });
     opencode.trackSession(sessionResult.data!.id);
     const sessionId = sessionResult.data?.id;

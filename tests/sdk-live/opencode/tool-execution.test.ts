@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -57,7 +57,7 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
 
   it('CANARY: tool.state transitions work', async () => {
     const session = await client.session.create({
-      body: { title: 'Tool Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Tool Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -92,7 +92,7 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
 
   it('CANARY: bash tool works', async () => {
     const session = await client.session.create({
-      body: { title: 'Bash Tool Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Bash Tool Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -107,7 +107,7 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
 
   it('CANARY: read tool works', async () => {
     const session = await client.session.create({
-      body: { title: 'Read Tool Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Read Tool Test` },
     });
     opencode.trackSession(session.data!.id);
 

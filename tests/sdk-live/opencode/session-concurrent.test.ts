@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -32,9 +32,9 @@ describe.skipIf(SKIP_LIVE)('Concurrent Sessions', { timeout: 120000 }, () => {
 
   it('CANARY: multiple sessions can run in parallel', async () => {
     const sessions = await Promise.all([
-      client.session.create({ body: { title: 'Session 1' } }),
-      client.session.create({ body: { title: 'Session 2' } }),
-      client.session.create({ body: { title: 'Session 3' } }),
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Session 1` } }),
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Session 2` } }),
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Session 3` } }),
     ]);
 
     expect(sessions).toHaveLength(3);
@@ -46,7 +46,7 @@ describe.skipIf(SKIP_LIVE)('Concurrent Sessions', { timeout: 120000 }, () => {
 
   it('CANARY: 10 concurrent sessions work correctly', async () => {
     const promises = Array.from({ length: 10 }, (_, i) =>
-      client.session.create({ body: { title: `Session ${i}` } })
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Session ${i}` } })
     );
 
     const sessions = await Promise.all(promises);

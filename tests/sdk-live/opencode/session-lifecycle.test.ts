@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -31,8 +31,8 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
   });
 
   it('CANARY: session.list() returns all sessions', async () => {
-    const s1 = await client.session.create({ body: { title: 'Test 1' } });
-    const s2 = await client.session.create({ body: { title: 'Test 2' } });
+    const s1 = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Test 1` } });
+    const s2 = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Test 2` } });
     opencode.trackSession(s1.data!.id);
     opencode.trackSession(s2.data!.id);
 
@@ -41,7 +41,7 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
   });
 
   it('CANARY: session.get() retrieves session details', async () => {
-    const created = await client.session.create({ body: { title: 'Test' } });
+    const created = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Test` } });
     opencode.trackSession(created.data!.id);
 
     const retrieved = await client.session.get({
@@ -51,7 +51,7 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
   });
 
   it('CANARY: session.delete() removes session', async () => {
-    const created = await client.session.create({ body: { title: 'Test Delete' } });
+    const created = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Test Delete` } });
     // Don't track - this test deletes the session manually
 
     await client.session.delete({ path: { id: created.data!.id } });
@@ -61,7 +61,7 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
   });
 
   it('CANARY: session.status() shows status map', async () => {
-    const created = await client.session.create({ body: { title: 'Test' } });
+    const created = await client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Test` } });
     opencode.trackSession(created.data!.id);
 
     const status = await client.session.status();

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -32,7 +32,7 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
 
   it('CANARY: session.create() returns session ID', async () => {
     const result = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(result.data!.id);
 
@@ -43,7 +43,7 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
 
   it('CANARY: session has working directory', async () => {
     const result = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(result.data!.id);
 
@@ -53,15 +53,15 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
 
   it('CANARY: session has title', async () => {
     const result = await client.session.create({
-      body: { title: 'My Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}My Test Session` },
     });
     opencode.trackSession(result.data!.id);
-    expect(result.data?.title).toBe('My Test Session');
+    expect(result.data?.title).toBe(`${TEST_SESSION_PREFIX}My Test Session`);
   });
 
   it('CANARY: session inherits permissions from config', async () => {
     const result = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(result.data!.id);
 

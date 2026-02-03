@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -57,7 +57,7 @@ describe.skipIf(SKIP_LIVE)('Async Prompting', { timeout: 60000 }, () => {
 
   it('CANARY: session.promptAsync() returns immediately', async () => {
     const session = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -74,7 +74,7 @@ describe.skipIf(SKIP_LIVE)('Async Prompting', { timeout: 60000 }, () => {
 
   it('CANARY: async prompt can be monitored via events', async () => {
     const session = await client.session.create({
-      body: { title: 'Test Session' },
+      body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 

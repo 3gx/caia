@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -86,7 +86,7 @@ describe.skipIf(SKIP_LIVE)('Message Streaming', { timeout: 120000 }, () => {
 
   it('CANARY: message_part.updated streams text deltas', async () => {
     const session = await client.session.create({
-      body: { title: 'Streaming Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Streaming Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -137,7 +137,7 @@ describe.skipIf(SKIP_LIVE)('Message Streaming', { timeout: 120000 }, () => {
 
   it('CANARY: streaming can be aborted', async () => {
     const session = await client.session.create({
-      body: { title: 'Abort Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Abort Test` },
     });
     opencode.trackSession(session.data!.id);
 

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -57,7 +57,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
 
   it('CANARY: session handles 20+ messages', async () => {
     const session = await client.session.create({
-      body: { title: 'Many Messages Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Many Messages Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -75,7 +75,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
 
   it('CANARY: session compact event fires', async () => {
     const session = await client.session.create({
-      body: { title: 'Compact Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Compact Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -103,7 +103,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
 
   it('CANARY: session survives hours of activity', async () => {
     const session = await client.session.create({
-      body: { title: 'Long Session Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Long Session Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -112,9 +112,9 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
 
   it('CANARY: concurrent operations work', async () => {
     const sessions = await Promise.all([
-      client.session.create({ body: { title: 'Concurrent 1' } }),
-      client.session.create({ body: { title: 'Concurrent 2' } }),
-      client.session.create({ body: { title: 'Concurrent 3' } }),
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Concurrent 1` } }),
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Concurrent 2` } }),
+      client.session.create({ body: { title: `${TEST_SESSION_PREFIX}Concurrent 3` } }),
     ]);
 
     sessions.forEach(s => {

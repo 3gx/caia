@@ -11,10 +11,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Registry file for tracking active test servers.
- * Used by globalSetup to clean up on SIGINT.
+ * Session title prefix for easy identification.
+ * Use: `opencode session list | grep vitest-opencode`
  */
-const REGISTRY_FILE = path.join(__dirname, '.test-cleanup-registry.json');
+export const TEST_SESSION_PREFIX = 'vitest-opencode-';
+
+/**
+ * Registry file for tracking active test servers.
+ * Uses PID to avoid collisions between parallel test runs.
+ */
+const REGISTRY_FILE = path.join(__dirname, `.test-cleanup-registry.${process.pid}.json`);
 
 interface RegistryEntry {
   port: number;
@@ -101,7 +107,13 @@ export async function cleanupAllRegisteredServers(): Promise<void> {
  * Clear the registry file. Called at start of test run.
  */
 export function clearRegistry(): void {
-  writeRegistry([]);
+  try {
+    if (fs.existsSync(REGISTRY_FILE)) {
+      fs.unlinkSync(REGISTRY_FILE);
+    }
+  } catch {
+    // Ignore
+  }
 }
 
 /**

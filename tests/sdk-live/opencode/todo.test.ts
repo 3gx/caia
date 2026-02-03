@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -57,7 +57,7 @@ describe.skipIf(SKIP_LIVE)('Todo List', { timeout: 60000 }, () => {
 
   it('CANARY: todo.updated event received', async () => {
     const session = await client.session.create({
-      body: { title: 'Todo Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Todo Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -80,7 +80,7 @@ describe.skipIf(SKIP_LIVE)('Todo List', { timeout: 60000 }, () => {
 
   it('CANARY: session.todo() returns todo list', async () => {
     const session = await client.session.create({
-      body: { title: 'Todo List Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Todo List Test` },
     });
     opencode.trackSession(session.data!.id);
 

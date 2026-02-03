@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -61,7 +61,7 @@ describe.skipIf(SKIP_LIVE)('Provider & Models', { timeout: 30000 }, () => {
         const modelId = firstProvider.models[modelKeys[0]].id;
 
         const session = await client.session.create({
-          body: { title: 'Model Test Session', model: modelId },
+          body: { title: `${TEST_SESSION_PREFIX}Model Test Session`, model: modelId },
         });
         opencode.trackSession(session.data!.id);
 

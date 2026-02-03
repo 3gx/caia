@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
-import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort } from './test-helpers.js';
+import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
@@ -57,7 +57,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
 
   it('CANARY: bot messages forkable after CLI resume', async () => {
     const session = await client.session.create({
-      body: { title: 'Cross-Platform Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Cross-Platform Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -112,7 +112,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
 
   it('CANARY: early bot messages forkable after extended CLI usage', async () => {
     const session = await client.session.create({
-      body: { title: 'Extended CLI Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Extended CLI Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -154,7 +154,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
 
   it('CANARY: message ID mapping survives CLI session usage', async () => {
     const session = await client.session.create({
-      body: { title: 'Message ID Mapping Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Message ID Mapping Test` },
     });
     opencode.trackSession(session.data!.id);
 
@@ -208,7 +208,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
 
   it('CANARY: fork button works after user switches between CLI and bot', async () => {
     const session = await client.session.create({
-      body: { title: 'Fork Button Test' },
+      body: { title: `${TEST_SESSION_PREFIX}Fork Button Test` },
     });
     opencode.trackSession(session.data!.id);
 
