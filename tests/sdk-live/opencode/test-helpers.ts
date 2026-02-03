@@ -69,14 +69,13 @@ function removeFromRegistry(port: number): void {
 
 /**
  * Clean up all registered servers. Called by globalSetup on SIGINT.
+ * NOTE: Only kills processes. Sessions cannot be deleted via CLI.
+ * Sessions with 'vitest-opencode-' prefix can be identified and cleaned manually.
  */
 export async function cleanupAllRegisteredServers(): Promise<void> {
   const entries = readRegistry();
 
-  // Collect all session IDs to delete
-  const allSessionIds = entries.flatMap(e => e.sessionIds);
-
-  // Kill all PIDs first
+  // Kill all PIDs
   for (const entry of entries) {
     for (const pid of entry.pids) {
       try {
@@ -87,20 +86,14 @@ export async function cleanupAllRegisteredServers(): Promise<void> {
     }
   }
 
-  // Wait for processes to die
-  await new Promise(resolve => setTimeout(resolve, 200));
-
-  // Delete sessions via CLI (since servers are dead)
-  for (const sessionId of allSessionIds) {
-    try {
-      execSync(`opencode session delete ${sessionId} 2>/dev/null`, { encoding: 'utf-8' });
-    } catch {
-      // Session may already be deleted or CLI not available
-    }
-  }
-
   // Clear registry
-  writeRegistry([]);
+  try {
+    if (fs.existsSync(REGISTRY_FILE)) {
+      fs.unlinkSync(REGISTRY_FILE);
+    }
+  } catch {
+    // Ignore
+  }
 }
 
 /**

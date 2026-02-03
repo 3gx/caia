@@ -18,9 +18,9 @@ async function handleSignal(signal: string) {
   if (cleanupDone) return;
   cleanupDone = true;
 
-  console.log(`\n[globalSetup] Received ${signal}, cleaning up test servers...`);
+  console.log(`\n[globalSetup] Received ${signal}, killing test server processes...`);
   await cleanupAllRegisteredServers();
-  console.log('[globalSetup] Cleanup complete');
+  console.log('[globalSetup] Processes killed. Sessions with "vitest-opencode-" prefix may remain.');
   process.exit(1);
 }
 
