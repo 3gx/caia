@@ -38,7 +38,10 @@ describe.skipIf(SKIP_LIVE)('Concurrent Sessions', { timeout: 120000 }, () => {
     ]);
 
     expect(sessions).toHaveLength(3);
-    sessions.forEach(s => expect(s.data?.id).toBeDefined());
+    sessions.forEach(s => {
+      opencode.trackSession(s.data!.id);
+      expect(s.data?.id).toBeDefined();
+    });
   });
 
   it('CANARY: 10 concurrent sessions work correctly', async () => {
@@ -47,6 +50,7 @@ describe.skipIf(SKIP_LIVE)('Concurrent Sessions', { timeout: 120000 }, () => {
     );
 
     const sessions = await Promise.all(promises);
+    sessions.forEach(s => opencode.trackSession(s.data!.id));
     expect(sessions).toHaveLength(10);
   });
 });

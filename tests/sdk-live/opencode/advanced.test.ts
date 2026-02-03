@@ -59,6 +59,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Many Messages Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     for (let i = 0; i < 10; i++) {
       await client.session.prompt({
@@ -76,6 +77,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Compact Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const compactPromise = waitForEvent(
       client,
@@ -103,6 +105,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Long Session Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     expect(session.data?.id).toBeDefined();
   });
@@ -114,7 +117,10 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
       client.session.create({ body: { title: 'Concurrent 3' } }),
     ]);
 
-    sessions.forEach(s => expect(s.data?.id).toBeDefined());
+    sessions.forEach(s => {
+      opencode.trackSession(s.data!.id);
+      expect(s.data?.id).toBeDefined();
+    });
 
     const promptPromises = sessions.map(s =>
       client.session.prompt({

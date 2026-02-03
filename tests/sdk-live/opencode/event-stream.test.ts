@@ -94,7 +94,8 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Basic', { timeout: 60000 }, () => {
       () => true,
       { timeoutMs: 10000, description: 'any event' },
     );
-    await client.session.create({ body: { title: 'Event Test' } });
+    const session = await client.session.create({ body: { title: 'Event Test' } });
+    opencode.trackSession(session.data!.id);
     const event = await eventPromise;
     expect(event).toBeDefined();
   });
@@ -105,7 +106,8 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Basic', { timeout: 60000 }, () => {
       event => Boolean(event.payload?.type && event.payload?.properties),
       { timeoutMs: 10000, description: 'event with type/properties' },
     );
-    await client.session.create({ body: { title: 'Event Test' } });
+    const session = await client.session.create({ body: { title: 'Event Test' } });
+    opencode.trackSession(session.data!.id);
     const event = await eventPromise;
     expect(event.payload?.type).toBeDefined();
     expect(event.payload?.properties).toBeDefined();
@@ -139,7 +141,8 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
       event => event.payload?.type === 'session.created',
       { timeoutMs: 10000, description: 'session.created event' },
     );
-    await client.session.create({ body: { title: 'Event Test' } });
+    const session = await client.session.create({ body: { title: 'Event Test' } });
+    opencode.trackSession(session.data!.id);
     const event = await createdPromise;
     expect(event.payload?.type).toBe('session.created');
   });
@@ -148,6 +151,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
     const sessionResult = await client.session.create({
       body: { title: 'Idle Test' },
     });
+    opencode.trackSession(sessionResult.data!.id);
     const sessionId = sessionResult.data?.id;
     expect(sessionId).toBeDefined();
 
@@ -171,6 +175,7 @@ describe.skipIf(SKIP_LIVE)('Event Stream - Session Events', { timeout: 60000 }, 
     const sessionResult = await client.session.create({
       body: { title: 'Status Test' },
     });
+    opencode.trackSession(sessionResult.data!.id);
     const sessionId = sessionResult.data?.id;
     expect(sessionId).toBeDefined();
 

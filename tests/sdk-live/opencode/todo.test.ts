@@ -59,6 +59,7 @@ describe.skipIf(SKIP_LIVE)('Todo List', { timeout: 60000 }, () => {
     const session = await client.session.create({
       body: { title: 'Todo Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const eventPromise = waitForEvent(
       client,
@@ -81,6 +82,7 @@ describe.skipIf(SKIP_LIVE)('Todo List', { timeout: 60000 }, () => {
     const session = await client.session.create({
       body: { title: 'Todo List Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     // The todo API may vary - check if it exists
     if (typeof client.session.todo === 'function') {

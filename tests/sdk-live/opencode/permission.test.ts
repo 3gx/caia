@@ -84,6 +84,7 @@ describe.skipIf(SKIP_LIVE)('Permission Flow', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
     const eventPromise = waitForEvent(
       client,
       event =>
@@ -107,6 +108,7 @@ describe.skipIf(SKIP_LIVE)('Permission Flow', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const eventsPromise = collectEventsUntil(
       client,
@@ -129,6 +131,7 @@ describe.skipIf(SKIP_LIVE)('Permission Flow', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const eventPromise = waitForEvent(
       client,

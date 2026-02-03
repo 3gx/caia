@@ -59,6 +59,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Cross-Platform Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     await client.session.prompt({
       path: { id: session.data!.id },
@@ -88,6 +89,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { messageID: forkPointId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
 
@@ -112,6 +114,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Extended CLI Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     await client.session.prompt({
       path: { id: session.data!.id },
@@ -140,6 +143,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { messageID: botMsg2Id! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
 
@@ -152,6 +156,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Message ID Mapping Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const capturePromise = waitForEvent(
       client,
@@ -196,6 +201,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { messageID: capturedMessageId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
   });
@@ -204,6 +210,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
     const session = await client.session.create({
       body: { title: 'Fork Button Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     await client.session.prompt({
       path: { id: session.data!.id },
@@ -246,6 +253,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { messageID: forkBtnMsgId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
 

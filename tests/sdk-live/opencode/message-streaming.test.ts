@@ -88,6 +88,7 @@ describe.skipIf(SKIP_LIVE)('Message Streaming', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Streaming Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const textParts: string[] = [];
     let idleReceived = false;
@@ -138,6 +139,7 @@ describe.skipIf(SKIP_LIVE)('Message Streaming', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Abort Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const busyPromise = waitForSessionStatus(
       client,

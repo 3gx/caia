@@ -68,9 +68,13 @@ export interface OpencodeTestServer {
   server: { close(): void; url: string };
   port: number;
   /**
+   * Track a session ID for cleanup.
+   * Call this after creating a session to ensure it gets deleted during cleanup.
+   */
+  trackSession: (sessionId: string) => void;
+  /**
    * Clean up the server AND its spawned processes.
-   * NOTE: Sessions are NOT automatically deleted because parallel tests
-   * share session storage and cleanup would cause race conditions.
+   * Deletes only sessions that were tracked via trackSession().
    */
   cleanup: () => Promise<void>;
 }
@@ -100,14 +104,25 @@ export async function createOpencodeWithCleanup(port: number): Promise<OpencodeT
   // Capture PIDs - safe because we verified port was free before creating server
   const trackedPids = findPidsOnPort(port);
 
+  // Track session IDs created by this test instance
+  const trackedSessionIds: string[] = [];
+
   return {
     client: result.client,
     server: result.server,
     port,
+    trackSession: (sessionId: string) => {
+      trackedSessionIds.push(sessionId);
+    },
     cleanup: async () => {
-      // NOTE: We do NOT delete sessions here because parallel tests share
-      // session storage. Deleting sessions would cause race conditions.
-      // Sessions can be cleaned up manually: opencode session list | xargs -I{} opencode session delete {}
+      // Delete only OUR tracked sessions - safe for parallel tests
+      for (const sessionId of trackedSessionIds) {
+        try {
+          await result.client.session.delete({ path: { id: sessionId } });
+        } catch {
+          // Session may already be deleted
+        }
+      }
 
       // Try graceful close
       result.server.close();

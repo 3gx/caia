@@ -31,8 +31,10 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
   });
 
   it('CANARY: session.list() returns all sessions', async () => {
-    await client.session.create({ body: { title: 'Test 1' } });
-    await client.session.create({ body: { title: 'Test 2' } });
+    const s1 = await client.session.create({ body: { title: 'Test 1' } });
+    const s2 = await client.session.create({ body: { title: 'Test 2' } });
+    opencode.trackSession(s1.data!.id);
+    opencode.trackSession(s2.data!.id);
 
     const list = await client.session.list();
     expect(list.data?.length).toBeGreaterThanOrEqual(2);
@@ -40,6 +42,7 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
 
   it('CANARY: session.get() retrieves session details', async () => {
     const created = await client.session.create({ body: { title: 'Test' } });
+    opencode.trackSession(created.data!.id);
 
     const retrieved = await client.session.get({
       path: { id: created.data!.id }
@@ -49,6 +52,7 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
 
   it('CANARY: session.delete() removes session', async () => {
     const created = await client.session.create({ body: { title: 'Test Delete' } });
+    // Don't track - this test deletes the session manually
 
     await client.session.delete({ path: { id: created.data!.id } });
 
@@ -58,6 +62,7 @@ describe.skipIf(SKIP_LIVE)('Session Lifecycle', { timeout: 60000 }, () => {
 
   it('CANARY: session.status() shows status map', async () => {
     const created = await client.session.create({ body: { title: 'Test' } });
+    opencode.trackSession(created.data!.id);
 
     const status = await client.session.status();
     expect(status.data).toBeDefined();

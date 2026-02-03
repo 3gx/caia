@@ -63,6 +63,7 @@ describe.skipIf(SKIP_LIVE)('Provider & Models', { timeout: 30000 }, () => {
         const session = await client.session.create({
           body: { title: 'Model Test Session', model: modelId },
         });
+        opencode.trackSession(session.data!.id);
 
         // Model info structure varies by SDK version
         expect(session.data).toBeDefined();

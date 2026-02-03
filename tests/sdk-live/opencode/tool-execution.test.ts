@@ -59,6 +59,7 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Tool Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const toolStates: string[] = [];
     const checkPromise = collectEventsUntil(
@@ -93,6 +94,7 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Bash Tool Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     const result = await client.session.prompt({
       path: { id: session.data!.id },
@@ -107,6 +109,7 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Read Tool Test' },
     });
+    opencode.trackSession(session.data!.id);
 
     // Ask to read a common file
     const result = await client.session.prompt({

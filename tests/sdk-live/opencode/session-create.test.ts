@@ -34,6 +34,7 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
     const result = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(result.data!.id);
 
     expect(result.data?.id).toBeDefined();
     expect(typeof result.data?.id).toBe('string');
@@ -44,6 +45,7 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
     const result = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(result.data!.id);
 
     expect(result.data?.directory).toBeDefined();
     expect(typeof result.data?.directory).toBe('string');
@@ -53,6 +55,7 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
     const result = await client.session.create({
       body: { title: 'My Test Session' },
     });
+    opencode.trackSession(result.data!.id);
     expect(result.data?.title).toBe('My Test Session');
   });
 
@@ -60,6 +63,7 @@ describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
     const result = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(result.data!.id);
 
     expect(result.data?.id).toBeDefined();
   });

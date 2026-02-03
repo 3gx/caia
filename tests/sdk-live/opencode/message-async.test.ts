@@ -59,6 +59,7 @@ describe.skipIf(SKIP_LIVE)('Async Prompting', { timeout: 60000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const startTime = Date.now();
     const result = await client.session.promptAsync({
@@ -75,6 +76,7 @@ describe.skipIf(SKIP_LIVE)('Async Prompting', { timeout: 60000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const idlePromise = waitForEvent(
       client,

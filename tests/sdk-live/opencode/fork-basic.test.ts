@@ -34,6 +34,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },
@@ -50,6 +51,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messageId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
     expect(fork.data?.id).not.toBe(parent.data!.id);
@@ -59,6 +61,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },
@@ -73,6 +76,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messageId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
     expect(fork.data?.id).not.toBe(parent.data?.id);
@@ -82,6 +86,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     for (let i = 0; i < 3; i++) {
       await client.session.prompt({
@@ -98,6 +103,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: secondMessageId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     const forkMessages = await client.session.messages({ path: { id: fork.data!.id } });
     expect(forkMessages.data!.length).toBeLessThan(messages.data!.length);
@@ -107,6 +113,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },
@@ -121,6 +128,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messageId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },

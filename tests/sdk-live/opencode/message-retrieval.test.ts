@@ -34,6 +34,7 @@ describe.skipIf(SKIP_LIVE)('Message Retrieval', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     await client.session.prompt({
       path: { id: session.data!.id },
@@ -55,6 +56,7 @@ describe.skipIf(SKIP_LIVE)('Message Retrieval', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     await client.session.prompt({
       path: { id: session.data!.id },

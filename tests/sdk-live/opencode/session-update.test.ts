@@ -34,6 +34,7 @@ describe.skipIf(SKIP_LIVE)('Session Updates', { timeout: 30000 }, () => {
     const created = await client.session.create({
       body: { title: 'Original Title' },
     });
+    opencode.trackSession(created.data!.id);
 
     await client.session.update({
       path: { id: created.data!.id },

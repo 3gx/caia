@@ -63,6 +63,7 @@ describe.skipIf(SKIP_LIVE)('Abort Functionality', { timeout: 60000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const promptPromise = client.session.prompt({
       path: { id: session.data!.id },
@@ -92,6 +93,7 @@ describe.skipIf(SKIP_LIVE)('Abort Functionality', { timeout: 60000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const promptPromise = client.session.prompt({
       path: { id: session.data!.id },

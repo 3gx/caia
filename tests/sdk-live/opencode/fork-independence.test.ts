@@ -34,6 +34,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },
@@ -46,6 +47,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messages.data![0].info.id },
     });
+    opencode.trackSession(fork.data!.id);
 
     const parentStatus = await client.session.get({ path: { id: parent.data!.id } });
     const forkStatus = await client.session.get({ path: { id: fork.data!.id } });
@@ -58,6 +60,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },
@@ -70,6 +73,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messages.data![0].info.id },
     });
+    opencode.trackSession(fork.data!.id);
 
     const forkMsgCountBefore = (await client.session.messages({ path: { id: fork.data!.id } })).data!.length;
 
@@ -88,6 +92,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     await client.session.prompt({
       path: { id: parent.data!.id },
@@ -100,6 +105,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messages.data![0].info.id },
     });
+    // Don't track fork - this test deletes it manually
 
     await client.session.delete({ path: { id: fork.data!.id } });
 

@@ -34,6 +34,7 @@ describe.skipIf(SKIP_LIVE)('Session Children', { timeout: 60000 }, () => {
     const parent = await client.session.create({
       body: { title: 'Parent Session' },
     });
+    opencode.trackSession(parent.data!.id);
 
     // Create a message first
     await client.session.prompt({
@@ -53,6 +54,7 @@ describe.skipIf(SKIP_LIVE)('Session Children', { timeout: 60000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messageId! },
     });
+    opencode.trackSession(fork.data!.id);
 
     expect(fork.data?.id).toBeDefined();
 

@@ -36,6 +36,7 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const result = await client.session.prompt({
       path: { id: session.data!.id },
@@ -49,6 +50,7 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const result = await client.session.prompt({
       path: { id: session.data!.id },
@@ -72,6 +74,7 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
     const session = await client.session.create({
       body: { title: 'Test Session' },
     });
+    opencode.trackSession(session.data!.id);
 
     const result = await client.session.prompt({
       path: { id: session.data!.id },
