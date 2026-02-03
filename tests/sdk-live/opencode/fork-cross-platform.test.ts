@@ -9,19 +9,6 @@ import { createOpencodeWithCleanup, OpencodeTestServer } from './test-helpers.js
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
-async function waitForSessionIdle(client: OpencodeClient, sessionId: string, timeoutMs = 30000): Promise<void> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const status = await client.session.status();
-    const sessionStatus = status.data?.[sessionId];
-    if (sessionStatus?.type === 'idle') {
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timeout waiting for session ${sessionId} to become idle`);
-}
-
 async function waitForEvent(
   client: OpencodeClient,
   predicate: (event: any) => boolean,
@@ -77,13 +64,13 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Remember A=1111' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     await client.session.prompt({
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Remember B=2222' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     const botMessages = await client.session.messages({ path: { id: session.data!.id } });
     const assistantMsgs = botMessages.data?.filter(m => m.info.role === 'assistant');
@@ -95,7 +82,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Remember C=3333 (from CLI)' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     const fork = await client.session.fork({
       path: { id: session.data!.id },
@@ -110,7 +97,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: fork.data!.id },
       body: { parts: [{ type: 'text', text: 'List all values you remember (A, B, C)' }] },
     });
-    await waitForSessionIdle(client, fork.data!.id);
+    // prompt() blocks until completion
 
     const checkMessages = await client.session.messages({ path: { id: fork.data!.id } });
     const assistantResponses = checkMessages.data?.filter(m => m.info.role === 'assistant');
@@ -130,13 +117,13 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Bot message 1: X=10' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     await client.session.prompt({
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Bot message 2: Y=20' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     const botMessages = await client.session.messages({ path: { id: session.data!.id } });
     const botMsg2Id = botMessages.data?.[1]?.info.id || botMessages.data?.[0]?.info.id;
@@ -146,7 +133,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
         path: { id: session.data!.id },
         body: { parts: [{ type: 'text', text: `CLI message ${i}: Z${i}=${i * 100}` }] },
       });
-      await waitForSessionIdle(client, session.data!.id);
+      // prompt() blocks until completion
     }
 
     const fork = await client.session.fork({
@@ -198,7 +185,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'CLI message' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     const messages = await client.session.messages({ path: { id: session.data!.id } });
     const foundMessage = messages.data?.find(m => m.info.id === capturedMessageId);
@@ -222,13 +209,13 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Bot: A=1' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     await client.session.prompt({
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Bot: B=2' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     const botMsgs = await client.session.messages({ path: { id: session.data!.id } });
     const forkBtnMsgId = botMsgs.data?.[1]?.info.id || botMsgs.data?.[0]?.info.id;
@@ -238,21 +225,21 @@ describe.skipIf(SKIP_LIVE)('Fork - Cross-Platform', { timeout: 180000 }, () => {
         path: { id: session.data!.id },
         body: { parts: [{ type: 'text', text: `CLI: C${i}=${i}` }] },
       });
-      await waitForSessionIdle(client, session.data!.id);
+      // prompt() blocks until completion
     }
 
     await client.session.prompt({
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Bot: D=4 (fork point)' }] },
     });
-    await waitForSessionIdle(client, session.data!.id);
+    // prompt() blocks until completion
 
     for (let i = 0; i < 2; i++) {
       await client.session.prompt({
         path: { id: session.data!.id },
         body: { parts: [{ type: 'text', text: `CLI: E${i}=${i}` }] },
       });
-      await waitForSessionIdle(client, session.data!.id);
+      // prompt() blocks until completion
     }
 
     const fork = await client.session.fork({

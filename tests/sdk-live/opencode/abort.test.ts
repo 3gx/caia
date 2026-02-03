@@ -38,19 +38,6 @@ async function waitForSessionStatus(
   }
 }
 
-async function waitForSessionIdle(client: OpencodeClient, sessionId: string, timeoutMs = 30000): Promise<void> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const status = await client.session.status();
-    const sessionStatus = status.data?.[sessionId];
-    if (sessionStatus?.type === 'idle') {
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timeout waiting for session ${sessionId} to become idle`);
-}
-
 describe.skipIf(SKIP_LIVE)('Abort Functionality', { timeout: 60000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
@@ -95,7 +82,7 @@ describe.skipIf(SKIP_LIVE)('Abort Functionality', { timeout: 60000 }, () => {
     }
 
     await promptPromise.catch(() => {});
-    await waitForSessionIdle(client, session.data!.id, 20000);
+    // After prompt completes/fails, session is idle
 
     const sessions = await client.session.list();
     expect(sessions.data).toBeDefined();
@@ -124,7 +111,7 @@ describe.skipIf(SKIP_LIVE)('Abort Functionality', { timeout: 60000 }, () => {
     }
 
     await promptPromise.catch(() => {});
-    await waitForSessionIdle(client, session.data!.id, 20000);
+    // After prompt completes/fails, session is idle
 
     const result = await client.session.prompt({
       path: { id: session.data!.id },

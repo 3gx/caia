@@ -34,19 +34,6 @@ async function waitForEvent(
   throw new Error(`Stream ended without finding event: ${description}`);
 }
 
-async function waitForSessionIdle(client: OpencodeClient, sessionId: string, timeoutMs = 30000): Promise<void> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const status = await client.session.status();
-    const sessionStatus = status.data?.[sessionId];
-    if (sessionStatus?.type === 'idle') {
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timeout waiting for session ${sessionId} to become idle`);
-}
-
 describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
@@ -78,7 +65,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
         path: { id: session.data!.id },
         body: { parts: [{ type: 'text', text: `Message ${i}: Remember number ${i}` }] },
       });
-      await waitForSessionIdle(client, session.data!.id);
+      // prompt() blocks until completion
     }
 
     const messages = await client.session.messages({ path: { id: session.data!.id } });
@@ -101,7 +88,7 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
         path: { id: session.data!.id },
         body: { parts: [{ type: 'text', text: `Long message ${i} with content to increase context window` }] },
       });
-      await waitForSessionIdle(client, session.data!.id);
+      // prompt() blocks until completion
     }
     try {
       await compactPromise;

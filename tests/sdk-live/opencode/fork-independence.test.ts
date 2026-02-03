@@ -9,19 +9,6 @@ import { createOpencodeWithCleanup, OpencodeTestServer } from './test-helpers.js
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
-async function waitForSessionIdle(client: OpencodeClient, sessionId: string, timeoutMs = 30000): Promise<void> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const status = await client.session.status();
-    const sessionStatus = status.data?.[sessionId];
-    if (sessionStatus?.type === 'idle') {
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timeout waiting for session ${sessionId} to become idle`);
-}
-
 describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
@@ -52,7 +39,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { parts: [{ type: 'text', text: 'Base message' }] },
     });
-    await waitForSessionIdle(client, parent.data!.id);
+    // prompt() blocks until completion
 
     const messages = await client.session.messages({ path: { id: parent.data!.id } });
     const fork = await client.session.fork({
@@ -76,7 +63,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { parts: [{ type: 'text', text: 'Base' }] },
     });
-    await waitForSessionIdle(client, parent.data!.id);
+    // prompt() blocks until completion
 
     const messages = await client.session.messages({ path: { id: parent.data!.id } });
     const fork = await client.session.fork({
@@ -90,7 +77,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { parts: [{ type: 'text', text: 'New parent message' }] },
     });
-    await waitForSessionIdle(client, parent.data!.id);
+    // prompt() blocks until completion
 
     const forkMsgCountAfter = (await client.session.messages({ path: { id: fork.data!.id } })).data!.length;
 
@@ -106,7 +93,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { parts: [{ type: 'text', text: 'Base' }] },
     });
-    await waitForSessionIdle(client, parent.data!.id);
+    // prompt() blocks until completion
 
     const messages = await client.session.messages({ path: { id: parent.data!.id } });
     const fork = await client.session.fork({
