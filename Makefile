@@ -1,4 +1,4 @@
-.PHONY: build clean test claude-test codex-test
+.PHONY: build clean test claude-test codex-test opencode-test
 
 JOBS ?= 4
 
@@ -16,3 +16,6 @@ claude-test:
 
 codex-test:
 	npm run test:codex -- --maxWorkers=$(JOBS)
+
+opencode-test:
+	npm run test:opencode -- --maxWorkers=$(JOBS)

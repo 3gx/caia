@@ -14,10 +14,12 @@
     "clean": "rm -rf slack/dist claude/dist codex/dist opencode/dist",
     "test": "vitest run",
     "test:claude": "vitest run tests/sdk-live/claude --config vitest.config.sdk-live.ts --reporter=verbose",
-    "test:codex": "vitest run tests/sdk-live/codex --config vitest.config.sdk-live.ts --reporter=verbose"
+    "test:codex": "vitest run tests/sdk-live/codex --config vitest.config.sdk-live.ts --reporter=verbose",
+    "test:opencode": "vitest run --config vitest.config.sdk-opencode.ts --reporter=verbose"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "latest",
+    "@opencode-ai/sdk": "latest",
     "@slack/bolt": "^4.1.0",
     "@slack/web-api": "^7.8.0",
     "async-mutex": "^0.5.0",
