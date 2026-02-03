@@ -370,6 +370,153 @@ describe.skipIf(SKIP_LIVE)('Codex Thread Fork', { timeout: 120000 }, () => {
     console.log('==========================================\n');
   });
 
+  // CRITICAL: Tests exact bug scenario - 4 variables, fork at turn 2, verify a,b,c known
+  // This matches the reported issue: fork from d=184 should have a=42, b=84, c=840
+  it('fork-at-turn-2 with 4 variables keeps first 3 variables', async () => {
+    // Clear notifications
+    notifications.length = 0;
+
+    console.log('\n=== Fork at Turn 2 (4 Variables) Test ===');
+    console.log('Scenario: a=42, b=84, c=840, d=184 → fork at turn 2 → should have a, b, c only\n');
+
+    // 1. Start original thread
+    const threadResult = await rpc<{ thread: ThreadInfo }>('thread/start', {
+      workingDirectory: process.cwd(),
+    });
+    const originalThreadId = threadResult.thread.id;
+    expect(originalThreadId).toBeDefined();
+    console.log(`Original thread: ${originalThreadId}`);
+
+    // 2. Send 4 turns with variable assignments (matching user's exact scenario)
+    // Turn 0: a = 42
+    await rpc('turn/start', {
+      threadId: originalThreadId,
+      input: [{ type: 'text', text: 'Assume variable a has value 42. Just confirm by saying "a = 42".' }],
+    });
+    let complete = await waitForTurnComplete();
+    expect(complete).toBe(true);
+    console.log('Turn 0 completed (a = 42)');
+    notifications.length = 0;
+
+    // Turn 1: b = 84
+    await rpc('turn/start', {
+      threadId: originalThreadId,
+      input: [{ type: 'text', text: 'Assume variable b has value 84. Just confirm by saying "b = 84".' }],
+    });
+    complete = await waitForTurnComplete();
+    expect(complete).toBe(true);
+    console.log('Turn 1 completed (b = 84)');
+    notifications.length = 0;
+
+    // Turn 2: c = 840
+    await rpc('turn/start', {
+      threadId: originalThreadId,
+      input: [{ type: 'text', text: 'Assume variable c has value 840. Just confirm by saying "c = 840".' }],
+    });
+    complete = await waitForTurnComplete();
+    expect(complete).toBe(true);
+    console.log('Turn 2 completed (c = 840)');
+    notifications.length = 0;
+
+    // Turn 3: d = 184
+    await rpc('turn/start', {
+      threadId: originalThreadId,
+      input: [{ type: 'text', text: 'Assume variable d has value 184. Just confirm by saying "d = 184".' }],
+    });
+    complete = await waitForTurnComplete();
+    expect(complete).toBe(true);
+    console.log('Turn 3 completed (d = 184)');
+    notifications.length = 0;
+
+    // 3. Fork at turn index 2 (should have a=42, b=84, c=840, but NOT d=184)
+    const forkTurnIndex = 2;
+
+    // Query Codex for actual turn count
+    console.log('\nQuerying Codex for turn count...');
+    const readResult = await rpc<{ thread: ThreadInfo & { turns?: Array<{ id: string }> } }>('thread/read', {
+      threadId: originalThreadId,
+      includeTurns: true,
+    });
+    const totalTurns = readResult.thread.turns?.length ?? 0;
+    console.log(`Codex reports ${totalTurns} turns in source thread`);
+    expect(totalTurns).toBe(4);
+
+    const turnsToRollback = totalTurns - (forkTurnIndex + 1);
+    console.log(`Forking at turn ${forkTurnIndex}, will rollback ${turnsToRollback} turns...`);
+
+    // Fork the thread
+    const forkResult = await rpc<{ thread: ThreadInfo }>('thread/fork', {
+      threadId: originalThreadId,
+    });
+    const forkedThread = forkResult.thread;
+    expect(forkedThread.id).toBeDefined();
+    expect(forkedThread.id).not.toBe(originalThreadId);
+    console.log(`Forked thread: ${forkedThread.id}`);
+
+    // Rollback to keep only turns 0, 1, 2
+    if (turnsToRollback > 0) {
+      await rpc('thread/rollback', {
+        threadId: forkedThread.id,
+        numTurns: turnsToRollback,
+      });
+      console.log('Rollback complete');
+    }
+
+    // 4. Verify forked thread has a, b, c but NOT d
+    notifications.length = 0;
+    await rpc('turn/start', {
+      threadId: forkedThread.id,
+      input: [{ type: 'text', text: 'List all the variables I asked you to assume and their values.' }],
+    });
+
+    const forkTurnComplete = await waitForTurnComplete();
+    expect(forkTurnComplete).toBe(true);
+
+    // Extract response text
+    let responseText = '';
+    for (const n of notifications) {
+      const params = n.params as Record<string, unknown>;
+      const msg = params.msg as Record<string, unknown> | undefined;
+      const textContent =
+        (typeof params.delta === 'string' ? params.delta : null) ||
+        (typeof params.text === 'string' ? params.text : null) ||
+        (typeof params.content === 'string' ? params.content : null) ||
+        (msg && typeof msg.delta === 'string' ? msg.delta : null) ||
+        (msg && typeof msg.text === 'string' ? msg.text : null) ||
+        (msg && typeof msg.content === 'string' ? msg.content : null);
+      if (textContent) {
+        responseText += textContent;
+      }
+    }
+
+    console.log(`\nForked thread response: "${responseText.slice(0, 500)}..."`);
+    console.log('\n=== CONTENT VERIFICATION ===');
+
+    // Check for variable values
+    const has42 = responseText.includes('42');
+    const has84 = responseText.includes('84') && !responseText.includes('184'); // 84 but not 184
+    const has840 = responseText.includes('840');
+    const has184 = responseText.includes('184');
+
+    console.log(`Contains 42 (a): ${has42} (expected: true)`);
+    console.log(`Contains 84 (b): ${has84} (expected: true)`);
+    console.log(`Contains 840 (c): ${has840} (expected: true)`);
+    console.log(`Contains 184 (d): ${has184} (expected: false - should NOT be in fork at turn 2)`);
+
+    // CRITICAL assertions
+    expect(has42, `Expected response to contain '42' (a). Response: "${responseText.slice(0, 300)}..."`).toBe(true);
+    expect(has840, `Expected response to contain '840' (c). Response: "${responseText.slice(0, 300)}..."`).toBe(true);
+    expect(has184, `Expected response to NOT contain '184' (d). Response: "${responseText.slice(0, 300)}..."`).toBe(false);
+
+    if (!has184 && has42 && has840) {
+      console.log('✓ VERIFIED: Fork at turn 2 correctly has a, b, c and excludes d');
+    } else {
+      console.log('✗ FAILED: Fork content incorrect');
+    }
+
+    console.log('==========================================\n');
+  });
+
   it('thread/fork returns proper error for invalid thread ID', async () => {
     console.log('\n=== Thread Fork Error Handling Test ===');
 
