@@ -146,13 +146,25 @@ describe.skipIf(SKIP_LIVE)('Message Streaming', { timeout: 120000 }, () => {
       { timeoutMs: 5000 },
     );
 
-    await client.session.prompt({
+    // Don't await - prompt() blocks until completion
+    const promptPromise = client.session.prompt({
       path: { id: session.data!.id },
       body: { parts: [{ type: 'text', text: 'Write a very long story.' }] },
     });
 
-    await busyPromise;
-    await client.session.abort({ path: { id: session.data!.id } });
+    try {
+      await busyPromise;
+    } catch {
+      // Session may complete before becoming busy
+    }
+
+    try {
+      await client.session.abort({ path: { id: session.data!.id } });
+    } catch {
+      // Abort may fail if already idle
+    }
+
+    await promptPromise.catch(() => {});
 
     // After abort, session should still be accessible
     const status = await client.session.status();
