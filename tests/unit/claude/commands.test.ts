@@ -136,11 +136,11 @@ describe('commands', () => {
       expect(result.response).toContain('Mode set to');
     });
 
-    it('should switch to edit mode with /mode edit', () => {
+    it('should reject invalid /mode edit (no longer supported)', () => {
       const result = parseCommand('/mode edit', mockSession);
       expect(result.handled).toBe(true);
-      expect(result.sessionUpdate?.mode).toBe('acceptEdits');
-      expect(result.response).toContain('Mode set to');
+      expect(result.isError).toBe(true);
+      expect(result.response).toContain('Unknown mode');
     });
 
     it('should handle mode shortcuts case-insensitively', () => {
@@ -153,7 +153,7 @@ describe('commands', () => {
       const result = parseCommand('/mode invalid', mockSession);
       expect(result.handled).toBe(true);
       expect(result.response).toContain('Unknown mode');
-      expect(result.response).toContain('/mode [plan|bypass|ask|edit]');
+      expect(result.response).toContain('/mode [plan|bypass|ask]');
       expect(result.sessionUpdate).toBeUndefined();
     });
   });
@@ -1014,11 +1014,10 @@ describe('commands', () => {
       expect(result.error).toBeUndefined();
     });
 
-    it('should extract /mode edit at start', () => {
+    it('should return error for invalid /mode edit (no longer supported)', () => {
       const result = extractInlineMode('/mode edit refactor the function');
-      expect(result.mode).toBe('acceptEdits');
-      expect(result.remainingText).toBe('refactor the function');
-      expect(result.error).toBeUndefined();
+      expect(result.mode).toBeUndefined();
+      expect(result.error).toBeDefined();
     });
 
     it('should ignore /mode in middle of text', () => {

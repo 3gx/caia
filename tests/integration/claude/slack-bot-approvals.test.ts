@@ -102,22 +102,17 @@ describe('slack-bot approval handlers', () => {
       expect(handler).toBeDefined();
     });
 
-    it('should register option 2: accept edits handler', async () => {
-      const handler = registeredHandlers['action_^plan_accept_edits_(.+)$'];
-      expect(handler).toBeDefined();
-    });
-
-    it('should register option 3: bypass handler', async () => {
+    it('should register option 2: bypass handler', async () => {
       const handler = registeredHandlers['action_^plan_bypass_(.+)$'];
       expect(handler).toBeDefined();
     });
 
-    it('should register option 4: manual handler', async () => {
+    it('should register option 3: manual handler', async () => {
       const handler = registeredHandlers['action_^plan_manual_(.+)$'];
       expect(handler).toBeDefined();
     });
 
-    it('should register option 5: reject handler', async () => {
+    it('should register option 4: reject handler', async () => {
       const handler = registeredHandlers['action_^plan_reject_(.+)$'];
       expect(handler).toBeDefined();
     });
@@ -151,36 +146,8 @@ describe('slack-bot approval handlers', () => {
       );
     });
 
-    // Test option 2: accept edits
-    it('option 2: should set acceptEdits mode', async () => {
-      const handler = registeredHandlers['action_^plan_accept_edits_(.+)$'];
-      const mockClient = createMockSlackClient();
-      const ack = vi.fn();
-
-      await handler({
-        action: { action_id: 'plan_accept_edits_C123' },
-        ack,
-        body: {
-          channel: { id: 'C123' },
-          message: { ts: 'msg123' },
-          user: { id: 'U123' },
-        },
-        client: mockClient,
-      });
-
-      expect(ack).toHaveBeenCalled();
-      expect(saveSession).toHaveBeenCalledWith('C123', { mode: 'acceptEdits' });
-      expect(mockClient.chat.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channel: 'C123',
-          ts: 'msg123',
-          text: expect.stringContaining('accept-edits'),
-        })
-      );
-    });
-
-    // Test option 3: bypass permissions (thread context - uses saveThreadSession)
-    it('option 3: should set bypassPermissions mode', async () => {
+    // Test option 2: bypass permissions (thread context - uses saveThreadSession)
+    it('option 2: should set bypassPermissions mode', async () => {
       const handler = registeredHandlers['action_^plan_bypass_(.+)$'];
       const mockClient = createMockSlackClient();
       const ack = vi.fn();
@@ -208,8 +175,8 @@ describe('slack-bot approval handlers', () => {
       );
     });
 
-    // Test option 4: manual approval
-    it('option 4: should set default (manual) mode', async () => {
+    // Test option 3: manual approval
+    it('option 3: should set default (manual) mode', async () => {
       const handler = registeredHandlers['action_^plan_manual_(.+)$'];
       const mockClient = createMockSlackClient();
       const ack = vi.fn();
@@ -236,8 +203,8 @@ describe('slack-bot approval handlers', () => {
       );
     });
 
-    // Test option 5: reject
-    it('option 5: should update message on reject', async () => {
+    // Test option 4: reject
+    it('option 4: should update message on reject', async () => {
       const handler = registeredHandlers['action_^plan_reject_(.+)$'];
       const mockClient = createMockSlackClient();
       const ack = vi.fn();

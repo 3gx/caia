@@ -62,7 +62,6 @@ export const MODE_SHORTCUTS: Record<string, PermissionMode> = {
   plan: 'plan',
   bypass: 'bypassPermissions',
   ask: 'default',
-  edit: 'acceptEdits',
 };
 
 export interface InlineModeResult {
@@ -266,7 +265,7 @@ function handleHelp(): CommandResult {
 \`/set-current-path\` - Lock current directory (one-time only)
 \`/status\` - Show session info (ID, mode, directory, context)
 \`/context\` - Show context window usage
-\`/mode [plan|bypass|ask|edit]\` - Set mode or show picker
+\`/mode [plan|bypass|ask]\` - Set mode or show picker
 \`/show-plan\` - Show current plan file in thread
 \`/model\` - Show model picker
 \`/max-thinking-tokens [n]\` - Set thinking budget (0=disable, 1024-128000, default=31999)
@@ -549,7 +548,7 @@ function handleMode(modeArg: string, session: Session): CommandResult {
   // Invalid argument - reject with help
   return {
     handled: true,
-    response: `❌ Unknown mode \`${modeArg}\`. Usage: \`/mode [plan|bypass|ask|edit]\``,
+    response: `❌ Unknown mode \`${modeArg}\`. Usage: \`/mode [plan|bypass|ask]\``,
     isError: true,
   };
 }

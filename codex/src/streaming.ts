@@ -1982,6 +1982,9 @@ export class StreamingManager {
         spinner,
         forkTurnId: context.turnId,
         forkSlackTs: state.activityMessageTs || threadTs,
+        // Pass userId and channelId for @mention in Complete notification (Claude-style)
+        userId: context.userId,
+        channelId: context.channelId,
       });
 
       const fallbackText = activityText || 'Processing...';

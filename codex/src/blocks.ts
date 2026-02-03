@@ -5,6 +5,26 @@
 
 import type { ReasoningEffort, SandboxMode } from './codex-client.js';
 import type { UnifiedMode } from '../../slack/src/session/types.js';
+import {
+  markdownToSlack,
+  stripMarkdownCodeFence,
+  formatTokensK,
+  formatTokenCount,
+  computeAutoCompactThreshold,
+  getToolEmoji,
+  formatToolName as sharedFormatToolName,
+  normalizeToolName,
+  formatToolInputSummary,
+  isTodoItem,
+  extractLatestTodos,
+  formatTodoListDisplay,
+  TODO_LIST_MAX_CHARS,
+  truncatePath,
+  truncateText,
+  truncateUrl,
+  truncateWithClosedFormatting,
+  type TodoItem,
+} from 'caia-slack';
 
 // Slack Block Kit types (simplified for our use case)
 export interface Block {
@@ -1069,34 +1089,11 @@ export function buildPathSetupBlocks(): Block[] {
 // Progress Indicators
 // ============================================================================
 
-// Auto-compact defaults (mirrors ccslack)
-const COMPACT_BUFFER = 13000;
-const DEFAULT_EFFECTIVE_MAX_OUTPUT_TOKENS = 32000;
+// Codex-specific default context window (all current models have 200k context)
 export const DEFAULT_CONTEXT_WINDOW = 200000;
 
-/**
- * Compute auto-compact threshold in tokens.
- */
-export function computeAutoCompactThreshold(contextWindow: number, maxOutputTokens?: number): number {
-  const effectiveMaxOutput = Math.min(
-    DEFAULT_EFFECTIVE_MAX_OUTPUT_TOKENS,
-    maxOutputTokens ?? DEFAULT_EFFECTIVE_MAX_OUTPUT_TOKENS
-  );
-  return contextWindow - effectiveMaxOutput - COMPACT_BUFFER;
-}
-
-/** Format token count as "x.yk" with one decimal for readability. */
-function formatTokenCount(count: number): string {
-  if (count >= 1000) {
-    return `${(count / 1000).toFixed(1)}k`;
-  }
-  return count.toString();
-}
-
-/** Format token count as "x.yk" for compact threshold display. */
-export function formatTokensK(tokens: number): string {
-  return `${(tokens / 1000).toFixed(1)}k`;
-}
+// Re-export shared token functions for backwards compatibility
+export { computeAutoCompactThreshold, formatTokensK } from 'caia-slack';
 
 export interface UnifiedStatusLineParams {
   mode: UnifiedMode;
@@ -1121,7 +1118,7 @@ export interface UnifiedStatusLineParams {
 
 /**
  * Build a unified status line showing mode, model, session, and stats.
- * Line 1: mode | model [reason] | sandbox | session
+ * Line 1: mode | model [reason] | session (NO sandbox - unified with Claude format)
  * Line 2: ctx | tokens | cost | duration (only when available)
  */
 export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string {
@@ -1132,12 +1129,12 @@ export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string 
   const modelLabel = params.model || 'gpt-5.2-codex';
   const reasoningLabel = params.reasoningEffort || 'xhigh';
   const modelWithReasoning = `${modelLabel} [${reasoningLabel}]`;
-  const sandboxLabel = params.sandboxMode || 'danger-full-access';
+  // NOTE: sandboxMode removed from display per unified UX plan - Codex always uses danger-full-access
+  // so displaying it adds no information and differs from Claude's format
   const sessionLabel = params.sessionId || 'n/a';
 
   line1Parts.push(params.mode);
   line1Parts.push(modelWithReasoning);
-  line1Parts.push(sandboxLabel);
   line1Parts.push(sessionLabel);
 
   // Show context usage: "X% left, Y used / Z"
@@ -1317,6 +1314,10 @@ export interface ActivityBlockParams {
   /** Codex turn ID for fork button - index is queried from Codex at fork time */
   forkTurnId?: string;
   forkSlackTs?: string;
+  /** User ID for @mention in Complete notification (Claude-style) */
+  userId?: string;
+  /** Channel ID - skip mention in DMs */
+  channelId?: string;
 }
 
 /**
@@ -1415,6 +1416,18 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
     ],
   });
 
+  // Complete header with user mention (Claude-style - triggers Slack notification)
+  // Only show in non-DM channels (DMs don't need @mention)
+  if (status === 'completed' && params.userId && params.channelId && !params.channelId.startsWith('D')) {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `<@${params.userId}> :white_check_mark: *Complete*`,
+      },
+    });
+  }
+
   // Abort button (only during processing)
   if (isRunning) {
     blocks.push({
@@ -1488,375 +1501,24 @@ export function buildAbortConfirmationModalView(params: AbortConfirmationModalPa
 
 import type { ActivityEntry } from './activity-thread.js';
 
-/**
- * Strip markdown code fence wrapper if present.
- *
- * Case A: Explicit ```markdown or ```md tag -> Always strip
- * Case B: Code blocks with language tags (```python, etc.) -> Never strip
- * Case C: Empty ``` (bare fence) -> Don't strip (preserve as-is)
- */
-export function stripMarkdownCodeFence(content: string): string {
-  // Must start with ``` and end with ``` on its own line
-  if (!content.startsWith('```')) return content;
-  if (!/\n```\s*$/.test(content)) return content;
-
-  // Find first newline
-  const firstNewline = content.indexOf('\n');
-  if (firstNewline === -1) return content;
-
-  // Extract first word as language tag (handles "js filename=x" info strings)
-  const tagLine = content.slice(3, firstNewline).trim();
-  const tag = tagLine.split(/\s/)[0].toLowerCase();
-
-  // Helper to extract inner content
-  const extractInner = (): string | null => {
-    const afterFirstLine = content.slice(firstNewline + 1);
-    const match = afterFirstLine.match(/^([\s\S]*)\n```\s*$/);
-    return match ? match[1].replace(/\r$/, '') : null;
-  };
-
-  // CASE A: Explicit markdown/md tag -> strip
-  if (tag === 'markdown' || tag === 'md') {
-    return extractInner() ?? content;
-  }
-
-  // CASE B: Non-empty tag that isn't markdown/md -> don't strip (it's code)
-  if (tag !== '') {
-    return content;
-  }
-
-  // CASE C: Empty tag (bare fence) -> don't strip
-  return content;
-}
-
-/**
- * Convert standard Markdown to Slack mrkdwn format.
- *
- * Differences:
- * - Bold: **text** or __text__ -> *text*
- * - Italic: *text* or _text_ -> _text_
- * - Bold+Italic: ***text*** or ___text___ -> *_text_*
- * - Strikethrough: ~~text~~ -> ~text~
- * - Links: [text](url) -> <url|text>
- * - Headers: # Header -> *Header*
- * - Tables: | col | col | -> wrapped in code block (Slack doesn't support tables)
- * - Horizontal rules: --- -> unicode line separator
- */
-export function markdownToSlack(text: string): string {
-  let result = text;
-
-  // Protect code blocks from conversion
-  const codeBlocks: string[] = [];
-  result = result.replace(/```[\s\S]*?```/g, (match) => {
-    codeBlocks.push(match);
-    return `\u27E6CODE_BLOCK_${codeBlocks.length - 1}\u27E7`;
-  });
-
-  // Convert markdown tables to code blocks
-  // Match consecutive lines that start and end with |
-  result = result.replace(
-    /(?:^[ \t]*\|.+\|[ \t]*$\n?)+/gm,
-    (table) => {
-      const wrapped = '```\n' + table.trimEnd() + '\n```';
-      codeBlocks.push(wrapped);
-      // If original table ended with newline, preserve it for spacing after code block
-      const suffix = table.endsWith('\n') ? '\n' : '';
-      return `\u27E6CODE_BLOCK_${codeBlocks.length - 1}\u27E7${suffix}`;
-    }
-  );
-
-  // Protect inline code
-  const inlineCode: string[] = [];
-  result = result.replace(/`[^`]+`/g, (match) => {
-    inlineCode.push(match);
-    return `\u27E6INLINE_CODE_${inlineCode.length - 1}\u27E7`;
-  });
-
-  // Convert links: [text](url) -> <url|text>
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
-
-  // Convert headers: # Header -> temporary marker (will become bold)
-  result = result.replace(/^#{1,6}\s+(.+)$/gm, '\u27E6B\u27E7$1\u27E6/B\u27E7');
-
-  // Convert bold+italic combinations FIRST (before bold/italic separately)
-  // ***text*** -> *_text_* (bold+italic with asterisks)
-  result = result.replace(/\*\*\*(.+?)\*\*\*/g, '\u27E6BI\u27E7$1\u27E6/BI\u27E7');
-  // ___text___ -> *_text_* (bold+italic with underscores)
-  result = result.replace(/___(.+?)___/g, '\u27E6BI\u27E7$1\u27E6/BI\u27E7');
-
-  // Convert bold: **text** or __text__ -> temporary marker
-  result = result.replace(/\*\*(.+?)\*\*/g, '\u27E6B\u27E7$1\u27E6/B\u27E7');
-  result = result.replace(/__(.+?)__/g, '\u27E6B\u27E7$1\u27E6/B\u27E7');
-
-  // Convert italic *text* -> _text_ (safe now since bold/headers are marked)
-  result = result.replace(/\*([^*\n]+)\*/g, '_$1_');
-
-  // Restore bold+italic markers to _*text*_ (italic wrapping bold)
-  result = result.replace(/\u27E6BI\u27E7/g, '_*').replace(/\u27E6\/BI\u27E7/g, '*_');
-
-  // Restore bold markers to *text*
-  result = result.replace(/\u27E6B\u27E7/g, '*').replace(/\u27E6\/B\u27E7/g, '*');
-
-  // Convert strikethrough: ~~text~~ -> ~text~
-  result = result.replace(/~~(.+?)~~/g, '~$1~');
-
-  // Convert horizontal rules: --- or *** or ___ -> unicode line
-  result = result.replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
-
-  // Restore inline code
-  for (let i = 0; i < inlineCode.length; i++) {
-    result = result.replace(`\u27E6INLINE_CODE_${i}\u27E7`, inlineCode[i]);
-  }
-
-  // Restore code blocks
-  for (let i = 0; i < codeBlocks.length; i++) {
-    result = result.replace(`\u27E6CODE_BLOCK_${i}\u27E7`, codeBlocks[i]);
-  }
-
-  return result;
-}
-
-/**
- * Truncate text and close any open formatting markers.
- * Handles: ``` code blocks, ` inline code, * bold, _ italic, ~ strikethrough
- */
-export function truncateWithClosedFormatting(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-
-  // Reserve space for suffix and potential closing markers
-  const suffix = '\n\n_...truncated. Full response attached._';
-  const maxContent = limit - suffix.length - 10; // 10 chars buffer for closing markers
-
-  let truncated = text.substring(0, maxContent);
-
-  // Find good break point (newline or space)
-  const lastNewline = truncated.lastIndexOf('\n');
-  const lastSpace = truncated.lastIndexOf(' ');
-  const minBreak = Math.floor(maxContent * 0.8);
-  const breakPoint = Math.max(
-    lastNewline > minBreak ? lastNewline : -1,
-    lastSpace > minBreak ? lastSpace : -1,
-    minBreak
-  );
-  truncated = truncated.substring(0, breakPoint);
-
-  // Close open code blocks (```)
-  const codeBlockCount = (truncated.match(/```/g) || []).length;
-  const insideCodeBlock = codeBlockCount % 2 === 1;
-  if (insideCodeBlock) {
-    truncated += '\n```';
-  }
-
-  // Only check inline formatting if NOT inside a code block
-  // (inside code blocks, backticks/asterisks/etc are literal characters)
-  if (!insideCodeBlock) {
-    // Close open inline code (`) - count single backticks not part of ```
-    const inlineCodeCount = (truncated.match(/(?<!`)`(?!`)/g) || []).length;
-    if (inlineCodeCount % 2 === 1) {
-      truncated += '`';
-    }
-
-    // Close open bold (*) - count single asterisks not part of ** or ***
-    const boldCount = (truncated.match(/(?<!\*)\*(?!\*)/g) || []).length;
-    if (boldCount % 2 === 1) {
-      truncated += '*';
-    }
-
-    // Close open italic (_)
-    const italicCount = (truncated.match(/(?<!_)_(?!_)/g) || []).length;
-    if (italicCount % 2 === 1) {
-      truncated += '_';
-    }
-
-    // Close open strikethrough (~)
-    const strikeCount = (truncated.match(/~/g) || []).length;
-    if (strikeCount % 2 === 1) {
-      truncated += '~';
-    }
-  }
-
-  return truncated + suffix;
-}
+// Re-export shared markdown and truncation functions for backwards compatibility
+export { stripMarkdownCodeFence, markdownToSlack, truncateWithClosedFormatting } from 'caia-slack';
 
 // ============================================================================
 // Thread Activity Formatting
 // ============================================================================
 
-// Tool emoji mapping for thread messages
-const THREAD_TOOL_EMOJI: Record<string, string> = {
-  Read: ':mag:',
-  Glob: ':mag:',
-  Grep: ':mag:',
-  Edit: ':memo:',
-  Write: ':memo:',
-  Bash: ':computer:',
-  Shell: ':computer:',
-  WebFetch: ':globe_with_meridians:',
-  Task: ':robot_face:',
-  CommandExecution: ':computer:',
-  FileRead: ':mag:',
-  FileWrite: ':memo:',
-  TodoWrite: ':clipboard:',
-  WebSearch: ':globe_with_meridians:',
-  FileChange: ':memo:',
-  NotebookEdit: ':notebook:',
-  Skill: ':zap:',
-  AskUserQuestion: ':question:',
-};
-
-// ============================================================================
-// Tool Formatting Helpers (ported from ccslack)
-// ============================================================================
-
-function truncatePath(path: string, maxLen: number): string {
-  if (path.length <= maxLen) return path;
-  const parts = path.split('/');
-  if (parts.length <= 2) return path.slice(-maxLen);
-  // Keep last 2 segments
-  const lastTwo = parts.slice(-2).join('/');
-  return lastTwo.length <= maxLen ? lastTwo : '...' + path.slice(-(maxLen - 3));
-}
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen - 3) + '...';
-}
-
-function truncateUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const path = u.pathname.length > 20 ? u.pathname.slice(0, 17) + '...' : u.pathname;
-    return u.hostname + path;
-  } catch {
-    return truncateText(url, 35);
-  }
-}
-
-/**
- * Canonical tool name mapping.
- * Maps alternative/legacy tool names to their display names.
- */
-const TOOL_NAME_ALIASES: Record<string, string> = {
-  commandexecution: 'Bash',
-  fileread: 'Read',
-  filewrite: 'Write',
-  shell: 'Bash',
-  filechange: 'FileChange',
-  file_change: 'FileChange',
-  websearch: 'WebSearch',
-  web_search: 'WebSearch',
-};
-
-/**
- * Normalize tool name for display and comparison.
- * Handles:
- * - MCP-style names like "mcp__claude-code__Read" -> "Read"
- * - Legacy names like "commandExecution" -> "Bash"
- * - Case normalization
- */
-export function normalizeToolName(toolName: string): string {
-  // Handle MCP-style names first
-  let name = toolName;
-  if (name.includes('__')) {
-    name = name.split('__').pop()!;
-  }
-
-  // Check for aliases (case-insensitive)
-  const alias = TOOL_NAME_ALIASES[name.toLowerCase()];
-  if (alias) {
-    return alias;
-  }
-
-  return name;
-}
+// Re-export shared tool formatting functions for backwards compatibility
+// Note: formatToolName here includes emoji (formatToolNameWithEmoji from shared)
+export { normalizeToolName, getToolEmoji, formatToolInputSummary } from 'caia-slack';
+import { formatToolNameWithEmoji } from 'caia-slack';
 
 /**
  * Get formatted tool name with emoji.
+ * Wrapper to maintain backwards compatibility - calls formatToolNameWithEmoji from shared.
  */
 export function formatToolName(tool: string): string {
-  const normalized = normalizeToolName(tool);
-  const emoji = THREAD_TOOL_EMOJI[normalized] || ':gear:';
-  return `${emoji} *${normalized}*`;
-}
-
-/**
- * Get emoji for a tool.
- */
-export function getToolEmoji(tool: string): string {
-  const normalized = normalizeToolName(tool);
-  return THREAD_TOOL_EMOJI[normalized] || ':gear:';
-}
-
-/**
- * Format tool input as compact inline summary for display.
- * Returns a short string with the key parameter for each tool type.
- * Ported from ccslack - battle-tested tool-specific formatting.
- */
-export function formatToolInputSummary(toolName: string, input?: string | Record<string, unknown>): string {
-  if (!input) return '';
-
-  // Handle string input (legacy format)
-  if (typeof input === 'string') {
-    const truncated = input.length > 80 ? input.slice(0, 77) + '...' : input;
-    return ` \`${truncated}\``;
-  }
-
-  const tool = normalizeToolName(toolName).toLowerCase();
-
-  switch (tool) {
-    // Tools with special UI - show tool name only (no input details)
-    case 'askuserquestion':
-      return '';  // Has its own button UI
-
-    case 'read':
-    case 'edit':
-    case 'write':
-    case 'filechange':
-      return input.file_path ? ` \`${truncatePath(input.file_path as string, 40)}\`` : '';
-    case 'grep':
-      return input.pattern ? ` \`"${truncateText(input.pattern as string, 25)}"\`` : '';
-    case 'glob':
-      return input.pattern ? ` \`${truncateText(input.pattern as string, 30)}\`` : '';
-    case 'bash':
-    case 'commandexecution':
-      return input.command ? ` \`${truncateText(input.command as string, 35)}\`` : '';
-    case 'task':
-      const subtype = input.subagent_type ? `:${input.subagent_type}` : '';
-      const desc = input.description ? ` "${truncateText(input.description as string, 25)}"` : '';
-      return `${subtype}${desc}`;
-    case 'webfetch':
-      return input.url ? ` \`${truncateUrl(input.url as string)}\`` : '';
-    case 'websearch':
-      if (input.query) {
-        return ` "${truncateText(input.query as string, 30)}"`;
-      }
-      return input.url ? ` \`${truncateUrl(input.url as string)}\`` : '';
-    case 'todowrite': {
-      const todoItems = Array.isArray(input.todos) ? input.todos.filter(isTodoItem) : [];
-      if (todoItems.length === 0) return '';
-      const completedCnt = todoItems.filter((t: TodoItem) => t.status === 'completed').length;
-      const inProgressCnt = todoItems.filter((t: TodoItem) => t.status === 'in_progress').length;
-      const pendingCnt = todoItems.filter((t: TodoItem) => t.status === 'pending').length;
-      // Build compact status: "3✓ 1→ 5☐" (omit zeros)
-      const parts: string[] = [];
-      if (completedCnt > 0) parts.push(`${completedCnt}✓`);
-      if (inProgressCnt > 0) parts.push(`${inProgressCnt}→`);
-      if (pendingCnt > 0) parts.push(`${pendingCnt}☐`);
-      return parts.length > 0 ? ` ${parts.join(' ')}` : '';
-    }
-    case 'notebookedit':
-      return input.notebook_path ? ` \`${truncatePath(input.notebook_path as string, 35)}\`` : '';
-    case 'skill':
-      return input.skill ? ` \`${input.skill}\`` : '';
-    default:
-      // Generic fallback: show first meaningful string parameter
-      const firstParam = Object.entries(input)
-        .find(([k, v]) => typeof v === 'string' && v.length > 0 && v.length < 50 && !k.startsWith('_'));
-      if (firstParam) {
-        return ` \`${truncateText(String(firstParam[1]), 30)}\``;
-      }
-      return '';
-  }
+  return formatToolNameWithEmoji(tool);
 }
 
 /**
@@ -2078,8 +1740,9 @@ export function formatThreadActivityEntry(entry: ActivityEntry): string {
       return lines.join('\n');
     }
     case 'generating': {
+      // Use "Response" label (Claude-style) instead of "Generating"
       const duration = entry.durationMs ? ` [${(entry.durationMs / 1000).toFixed(1)}s]` : '';
-      return `:memo: *Generating*${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
+      return `:speech_balloon: *Response*${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
     }
     case 'error':
       return `:x: *Error:* ${entry.message || 'Unknown error'}`;
@@ -2131,194 +1794,5 @@ export function formatThreadErrorMessage(message: string): string {
 // Todo List Display (Ported from ccslack)
 // ============================================================================
 
-export const TODO_LIST_MAX_CHARS = 500; // Max chars for todo section at top of activity message
-
-/**
- * Todo item from SDK TodoWrite tool.
- */
-export interface TodoItem {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm?: string;  // Optional - may be missing in older SDK versions
-}
-
-/**
- * Type guard to validate a todo item structure.
- */
-export function isTodoItem(item: unknown): item is TodoItem {
-  return typeof item === 'object' && item !== null &&
-    'content' in item && typeof (item as any).content === 'string' &&
-    'status' in item && ['pending', 'in_progress', 'completed'].includes((item as any).status);
-}
-
-/**
- * Extract the latest todo list from activity log.
- * Searches backwards for the most recent TodoWrite tool_complete entry.
- * Falls back to tool_start if no complete entry exists (for in-progress display).
- */
-export function extractLatestTodos(activityLog: ActivityEntry[]): TodoItem[] {
-  // Search backwards for the most recent TodoWrite entry
-  for (let i = activityLog.length - 1; i >= 0; i--) {
-    const entry = activityLog[i];
-    const toolName = (entry.tool || '').toLowerCase();
-
-    // Prefer tool_complete entries
-    if (entry.type === 'tool_complete' && toolName === 'todowrite') {
-      const toolInput = entry.toolInput;
-      if (toolInput && typeof toolInput === 'object' && 'todos' in toolInput) {
-        const todos = (toolInput as { todos?: unknown }).todos;
-        if (Array.isArray(todos)) {
-          return todos.filter(isTodoItem);
-        }
-      }
-    }
-  }
-
-  // Fallback: check for tool_start if no complete entry found
-  for (let i = activityLog.length - 1; i >= 0; i--) {
-    const entry = activityLog[i];
-    const toolName = (entry.tool || '').toLowerCase();
-
-    if (entry.type === 'tool_start' && toolName === 'todowrite') {
-      const toolInput = entry.toolInput;
-      if (toolInput && typeof toolInput === 'object' && 'todos' in toolInput) {
-        const todos = (toolInput as { todos?: unknown }).todos;
-        if (Array.isArray(todos)) {
-          return todos.filter(isTodoItem);
-        }
-      }
-    }
-  }
-
-  return [];
-}
-
-/**
- * Format a single todo item for display.
- * Truncates text to 50 chars max.
- */
-function formatTodoItem(item: TodoItem): string {
-  const text = item.status === 'in_progress'
-    ? (item.activeForm || item.content)
-    : item.content;
-  const truncated = text.length > 50 ? text.slice(0, 47) + '...' : text;
-
-  switch (item.status) {
-    case 'completed':
-      return `:ballot_box_with_check: ~${truncated}~`;
-    case 'in_progress':
-      return `:arrow_right: *${truncated}*`;
-    case 'pending':
-      return `:white_large_square: ${truncated}`;
-    default:
-      return `:white_large_square: ${truncated}`;
-  }
-}
-
-/**
- * Format todo list for display at top of activity message.
- * Implements smart truncation algorithm:
- * 1. Try to fit all items first
- * 2. If exceeds maxChars, prioritize in_progress items
- * 3. Show up to 3 most recent completed, pending items until limit
- * 4. Add summaries for truncated sections
- */
-export function formatTodoListDisplay(todos: TodoItem[], maxChars: number = TODO_LIST_MAX_CHARS): string {
-  if (todos.length === 0) return '';
-
-  // Separate todos by status (preserving order)
-  const completed: TodoItem[] = [];
-  const inProgress: TodoItem[] = [];
-  const pending: TodoItem[] = [];
-
-  for (const todo of todos) {
-    if (todo.status === 'completed') completed.push(todo);
-    else if (todo.status === 'in_progress') inProgress.push(todo);
-    else pending.push(todo);
-  }
-
-  const total = todos.length;
-  const completedCount = completed.length;
-  const allDone = completedCount === total;
-
-  // Header: 📋 Tasks (completed/total) ✓ (checkmark when all done)
-  const header = allDone
-    ? `:clipboard: *Tasks (${completedCount}/${total})* :white_check_mark:`
-    : `:clipboard: *Tasks (${completedCount}/${total})*`;
-
-  // Special case: no in_progress items - add divider between completed and pending
-  const hasInProgress = inProgress.length > 0;
-  const needsDivider = !hasInProgress && completed.length > 0 && pending.length > 0;
-
-  // Try to fit all items first
-  const allLines = [
-    ...completed.map(formatTodoItem),
-    ...(needsDivider ? ['────'] : []),
-    ...inProgress.map(formatTodoItem),
-    ...pending.map(formatTodoItem),
-  ];
-  const fullText = [header, ...allLines].join('\n');
-
-  if (fullText.length <= maxChars) {
-    // All items fit - return full list
-    return fullText;
-  }
-
-  // Smart truncation needed
-  const lines: string[] = [header];
-  let charCount = header.length;
-
-  // Track truncation
-  let completedShown = 0;
-  let pendingShown = 0;
-  const MAX_COMPLETED_SHOWN = 3;
-  const MAX_PENDING_SHOWN = 3;
-
-  // Helper to add line if it fits
-  const addLine = (line: string): boolean => {
-    if (charCount + 1 + line.length <= maxChars - 30) { // Reserve 30 chars for summaries
-      lines.push(line);
-      charCount += 1 + line.length;
-      return true;
-    }
-    return false;
-  };
-
-  // Show last 3 completed (most recent)
-  const completedToShow = completed.slice(-MAX_COMPLETED_SHOWN);
-  const completedTruncated = completed.length - completedToShow.length;
-
-  // Add completed truncation summary at top if needed
-  if (completedTruncated > 0) {
-    addLine(`...${completedTruncated} more completed`);
-  }
-
-  // Add shown completed items
-  for (const item of completedToShow) {
-    if (addLine(formatTodoItem(item))) completedShown++;
-  }
-
-  // Add all in_progress items (non-negotiable)
-  for (const item of inProgress) {
-    addLine(formatTodoItem(item));
-  }
-
-  // Add divider if no in_progress (between completed and pending)
-  if (!hasInProgress && completed.length > 0 && pending.length > 0) {
-    addLine('────');
-  }
-
-  // Add pending items until limit
-  for (const item of pending.slice(0, MAX_PENDING_SHOWN)) {
-    if (addLine(formatTodoItem(item))) pendingShown++;
-    else break;
-  }
-
-  // Add pending truncation summary if needed
-  const pendingTruncated = pending.length - pendingShown;
-  if (pendingTruncated > 0) {
-    lines.push(`...${pendingTruncated} more pending`);
-  }
-
-  return lines.join('\n');
-}
+// Re-export shared todo functions for backwards compatibility
+export { TODO_LIST_MAX_CHARS, isTodoItem, extractLatestTodos, formatTodoListDisplay, type TodoItem } from 'caia-slack';

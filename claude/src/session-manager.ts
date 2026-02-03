@@ -9,14 +9,13 @@ import { SessionStoreManager } from '../../slack/src/session/base-session-manage
  * - 'plan': Read-only mode, writes to plan file via ExitPlanMode tool
  * - 'default': Ask-based mode, prompts for approval on tool use
  * - 'bypassPermissions': Auto mode, runs tools without approval
- * - 'acceptEdits': Accept code edits without prompting
  */
-export type PermissionMode = 'plan' | 'default' | 'bypassPermissions' | 'acceptEdits';
+export type PermissionMode = 'plan' | 'default' | 'bypassPermissions';
 
 /**
  * All available permission modes for UI display.
  */
-export const PERMISSION_MODES: readonly PermissionMode[] = ['plan', 'default', 'bypassPermissions', 'acceptEdits'];
+export const PERMISSION_MODES: readonly PermissionMode[] = ['plan', 'default', 'bypassPermissions'];
 
 /**
  * Usage data from the last query (for /status and /context commands).

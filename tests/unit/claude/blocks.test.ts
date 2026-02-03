@@ -681,19 +681,18 @@ describe('blocks', () => {
   });
 
   describe('buildModeSelectionBlocks', () => {
-    it('should show all four SDK mode buttons', () => {
+    it('should show all three mode buttons', () => {
       const blocks = buildModeSelectionBlocks('plan');
 
       const actions = blocks.find((b: any) => b.type === 'actions');
       expect(actions).toBeDefined();
-      expect(actions.elements).toHaveLength(4);
+      expect(actions.elements).toHaveLength(3);
 
-      // Verify all SDK mode buttons exist
+      // Verify all 3 mode buttons exist
       const values = actions.elements.map((e: any) => e.value);
       expect(values).toContain('plan');
       expect(values).toContain('default');
       expect(values).toContain('bypassPermissions');
-      expect(values).toContain('acceptEdits');
     });
 
     it('should highlight current mode as primary', () => {
@@ -707,15 +706,14 @@ describe('blocks', () => {
       expect(planBtn.style).toBeUndefined();
     });
 
-    it('should include mode descriptions with SDK names', () => {
+    it('should include mode descriptions with unified names', () => {
       const blocks = buildModeSelectionBlocks('default');
 
       const context = blocks.find((b: any) => b.type === 'context');
       expect(context).toBeDefined();
       expect(context.elements[0].text).toContain('plan');
-      expect(context.elements[0].text).toContain('default');
-      expect(context.elements[0].text).toContain('bypassPermissions');
-      expect(context.elements[0].text).toContain('acceptEdits');
+      expect(context.elements[0].text).toContain('ask');
+      expect(context.elements[0].text).toContain('bypass');
     });
 
     it('should show current mode in header', () => {
@@ -885,7 +883,7 @@ describe('blocks', () => {
       });
 
       expect(blocks).toHaveLength(1);
-      expect(blocks[0].elements[0].text).toBe('_Default | claude-opus_');
+      expect(blocks[0].elements[0].text).toBe('_Ask | claude-opus_');
     });
 
     it('should show mode | model | aborted when model is known', () => {
@@ -935,13 +933,13 @@ describe('blocks', () => {
   });
 
   describe('buildPlanApprovalBlocks (CLI fidelity)', () => {
-    it('should show 5 action buttons across 3 actions blocks', () => {
+    it('should show 4 action buttons across 3 actions blocks', () => {
       const blocks = buildPlanApprovalBlocks({ conversationKey: 'C123' });
       const actionsBlocks = blocks.filter((b: any) => b.type === 'actions');
       const allButtons = actionsBlocks.flatMap((b: any) => b.elements || []);
 
       expect(actionsBlocks).toHaveLength(3);
-      expect(allButtons).toHaveLength(5);
+      expect(allButtons).toHaveLength(4);
     });
 
     it('should have correct action IDs matching CLI options', () => {
@@ -951,12 +949,11 @@ describe('blocks', () => {
         (b.elements || []).map((e: any) => e.action_id)
       );
 
-      // 5 CLI options
+      // 4 options
       expect(actionIds).toContain('plan_clear_bypass_C123_T456');  // Option 1
-      expect(actionIds).toContain('plan_accept_edits_C123_T456'); // Option 2
-      expect(actionIds).toContain('plan_bypass_C123_T456');       // Option 3
-      expect(actionIds).toContain('plan_manual_C123_T456');       // Option 4
-      expect(actionIds).toContain('plan_reject_C123_T456');       // Option 5
+      expect(actionIds).toContain('plan_bypass_C123_T456');        // Option 2
+      expect(actionIds).toContain('plan_manual_C123_T456');        // Option 3
+      expect(actionIds).toContain('plan_reject_C123_T456');        // Option 4
     });
 
     it('should display requested permissions when provided', () => {
@@ -989,29 +986,27 @@ describe('blocks', () => {
       expect(text).not.toContain('Requested permissions');
     });
 
-    it('should have primary style for options 1 and 2, danger for option 5', () => {
+    it('should have primary style for options 1 and 2, danger for option 4', () => {
       const blocks = buildPlanApprovalBlocks({ conversationKey: 'C123' });
       const actionsBlocks = blocks.filter((b: any) => b.type === 'actions');
       const allButtons = actionsBlocks.flatMap((b: any) => b.elements || []);
 
       const clearBypassBtn = allButtons.find((e: any) => e.action_id.includes('plan_clear_bypass'));
-      const acceptEditsBtn = allButtons.find((e: any) => e.action_id.includes('plan_accept_edits'));
+      const bypassBtn = allButtons.find((e: any) => e.action_id.includes('plan_bypass_'));
       const rejectBtn = allButtons.find((e: any) => e.action_id.includes('plan_reject'));
 
       expect(clearBypassBtn.style).toBe('primary');
-      expect(acceptEditsBtn.style).toBe('primary');
+      expect(bypassBtn.style).toBe('primary');
       expect(rejectBtn.style).toBe('danger');
     });
 
-    it('should have no style (default) for options 3 and 4', () => {
+    it('should have no style (default) for option 3', () => {
       const blocks = buildPlanApprovalBlocks({ conversationKey: 'C123' });
       const actionsBlocks = blocks.filter((b: any) => b.type === 'actions');
       const allButtons = actionsBlocks.flatMap((b: any) => b.elements || []);
 
-      const bypassBtn = allButtons.find((e: any) => e.action_id.includes('plan_bypass_'));
       const manualBtn = allButtons.find((e: any) => e.action_id.includes('plan_manual_'));
 
-      expect(bypassBtn.style).toBeUndefined();
       expect(manualBtn.style).toBeUndefined();
     });
 
@@ -1020,14 +1015,13 @@ describe('blocks', () => {
       expect(blocks[0].type).toBe('divider');
     });
 
-    it('should include context hint explaining all 5 options', () => {
+    it('should include context hint explaining all 4 options', () => {
       const blocks = buildPlanApprovalBlocks({ conversationKey: 'C123' });
       const contextBlock = blocks.find((b: any) => b.type === 'context');
 
       expect(contextBlock).toBeDefined();
       const contextText = contextBlock.elements[0].text;
       expect(contextText).toContain('Fresh start');
-      expect(contextText).toContain('Auto-accept edits');
       expect(contextText).toContain('Auto-accept all');
       expect(contextText).toContain('Ask for each');
       expect(contextText).toContain('Revise plan');
@@ -1327,8 +1321,8 @@ describe('blocks', () => {
 
     it('should return clipboard for todo operations', () => {
       expect(getToolEmoji('Todo')).toBe(':clipboard:');
-      // Note: TodoWrite matches 'write' first, so it returns :memo:
-      expect(getToolEmoji('TodoWrite')).toBe(':memo:');
+      // TodoWrite now correctly gets :clipboard: via exact match in shared formatting
+      expect(getToolEmoji('TodoWrite')).toBe(':clipboard:');
     });
 
     it('should return gear for unknown tools', () => {
@@ -1689,7 +1683,7 @@ describe('blocks', () => {
         expect(contextText).toContain('Plan');
       });
 
-      it('should display Default for default mode', () => {
+      it('should display Ask for default mode', () => {
         const blocks = buildStatusPanelBlocks({
           ...baseParams,
           status: 'starting',
@@ -1697,7 +1691,7 @@ describe('blocks', () => {
         });
 
         const contextText = (blocks[1] as any).elements[0].text;
-        expect(contextText).toContain('Default');
+        expect(contextText).toContain('Ask');
       });
 
       it('should display Bypass for bypassPermissions mode', () => {
@@ -1709,17 +1703,6 @@ describe('blocks', () => {
 
         const contextText = (blocks[1] as any).elements[0].text;
         expect(contextText).toContain('Bypass');
-      });
-
-      it('should display AcceptEdits for acceptEdits mode', () => {
-        const blocks = buildStatusPanelBlocks({
-          ...baseParams,
-          status: 'starting',
-          mode: 'acceptEdits',
-        });
-
-        const contextText = (blocks[1] as any).elements[0].text;
-        expect(contextText).toContain('AcceptEdits');
       });
     });
 
@@ -3486,7 +3469,7 @@ describe('blocks', () => {
 
     it('should not show [new] when isNewSession is false', () => {
       const line = buildUnifiedStatusLine('default', 'claude-sonnet-4', 'existing', false);
-      expect(line).toBe('_default | claude-sonnet-4 | existing_');
+      expect(line).toBe('_ask | claude-sonnet-4 | existing_');
     });
 
     it('should format percentages with one decimal place', () => {
@@ -3526,8 +3509,8 @@ describe('blocks', () => {
     });
 
     it('should show just mode/model/session when no stats', () => {
-      const line = buildUnifiedStatusLine('acceptEdits', 'claude-opus-4', 'sess-abc');
-      expect(line).toBe('_acceptEdits | claude-opus-4 | sess-abc_');
+      const line = buildUnifiedStatusLine('bypassPermissions', 'claude-opus-4', 'sess-abc');
+      expect(line).toBe('_bypass | claude-opus-4 | sess-abc_');
     });
 
     it('should include rate limit warning as suffix', () => {

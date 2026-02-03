@@ -5281,8 +5281,8 @@ app.view('abort_confirmation_modal', async ({ ack, view, client }) => {
 });
 
 // Handle mode selection buttons (/mode command)
-// Matches SDK permission modes: plan, default, bypassPermissions, acceptEdits
-app.action(/^mode_(plan|default|bypassPermissions|acceptEdits)$/, async ({ action, ack, body, client }) => {
+// Matches SDK permission modes: plan, default, bypassPermissions
+app.action(/^mode_(plan|default|bypassPermissions)$/, async ({ action, ack, body, client }) => {
   await ack();
 
   const actionId = 'action_id' in action ? action.action_id : '';
@@ -5546,61 +5546,7 @@ app.action(/^plan_clear_bypass_(.+)$/, async ({ action, ack, body, client }) => 
   });
 });
 
-// Option 2: Accept edits (auto-accept code edits only)
-app.action(/^plan_accept_edits_(.+)$/, async ({ action, ack, body, client }) => {
-  await ack();
-
-  const conversationKey = extractPlanApprovalConversationKey(action, /^plan_accept_edits_(.+)$/);
-  const [channelId, threadTs] = conversationKey.includes('_')
-    ? conversationKey.split('_')
-    : [conversationKey, undefined];
-
-  // Clear pending plan approval state and :eyes: and :question:
-  const pending = pendingPlanApprovals.get(conversationKey);
-  if (pending) {
-    pendingPlanApprovals.delete(conversationKey);
-    const activeQuery = activeQueries.get(conversationKey);
-    const sessionForBusy = threadTs ? getThreadSession(channelId, threadTs) : getSession(channelId);
-    stopSessionProcessing(activeQuery?.processingState?.sessionId ?? sessionForBusy?.sessionId ?? null);
-    // Remove :question: emoji (answer received)
-    await removeReaction(client, pending.channelId, pending.originalTs, 'question');
-    // Remove :eyes: emoji (no longer processing)
-    await removeReaction(client, pending.channelId, pending.originalTs, 'eyes');
-  }
-
-  console.log(`Plan option 2 (accept edits) clicked for: ${conversationKey}`);
-
-  await updateApprovalMessage(body, client, '✅ Proceeding with accept-edits mode...');
-
-  // Set acceptEdits mode (thread-aware)
-  if (threadTs) {
-    await saveThreadSession(channelId, threadTs, { mode: 'acceptEdits' });
-  } else {
-    await saveSession(channelId, { mode: 'acceptEdits' });
-  }
-
-  const bodyWithChannel = body as any;
-  // Get effective thread from button message context (button is already in a thread)
-  const effectiveThreadTs = threadTs || bodyWithChannel.message?.thread_ts || bodyWithChannel.message?.ts;
-
-  // Build activity log with mode_changed entry (plan → acceptEdits)
-  let activityLog = pending?.activityLog ? [...pending.activityLog] : [];
-  activityLog.push({ timestamp: Date.now(), type: 'mode_changed', mode: 'acceptEdits' });
-
-  await handleMessage({
-    channelId,
-    userId: bodyWithChannel.user?.id,
-    userText: 'Yes, proceed with the plan.',
-    originalTs: effectiveThreadTs,
-    threadTs,
-    client,
-    skipConcurrentCheck: true,
-    statusMsgTs: pending?.statusMsgTs,
-    activityLog,
-  });
-});
-
-// Option 3: Bypass permissions (auto-accept all)
+// Option 2: Bypass permissions (auto-accept all)
 app.action(/^plan_bypass_(.+)$/, async ({ action, ack, body, client }) => {
   await ack();
 

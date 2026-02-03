@@ -140,41 +140,7 @@ describe('emoji-indicators integration tests', () => {
       );
     });
 
-    it('option 2 (accept edits): should remove :question: and :eyes: emojis', async () => {
-      const { pendingPlanApprovals } = await import('../../../claude/src/slack-bot.js');
-      const handler = registeredHandlers['action_^plan_accept_edits_(.+)$'];
-      const mockClient = createMockSlackClient();
-      const ack = vi.fn();
-
-      pendingPlanApprovals.set('C123', {
-        originalTs: 'user-msg-123',
-        channelId: 'C123',
-        threadTs: undefined,
-        statusMsgTs: 'status-123',
-        activityLog: [],
-      });
-
-      await handler({
-        action: { action_id: 'plan_accept_edits_C123' },
-        ack,
-        body: {
-          channel: { id: 'C123' },
-          message: { ts: 'approval-msg-123' },
-          user: { id: 'U123' },
-        },
-        client: mockClient,
-      });
-
-      expect(ack).toHaveBeenCalled();
-      expect(mockClient.reactions.remove).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'question' })
-      );
-      expect(mockClient.reactions.remove).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'eyes' })
-      );
-    });
-
-    it('option 3 (bypass): should remove :question: and :eyes: emojis', async () => {
+    it('option 2 (bypass): should remove :question: and :eyes: emojis', async () => {
       const { pendingPlanApprovals } = await import('../../../claude/src/slack-bot.js');
       const handler = registeredHandlers['action_^plan_bypass_(.+)$'];
       const mockClient = createMockSlackClient();
@@ -550,7 +516,7 @@ describe('emoji-indicators integration tests', () => {
   describe('mode picker emoji handling', () => {
     it('mode button click: removes both :question: and :eyes:', async () => {
       const { pendingModeSelections } = await import('../../../claude/src/slack-bot.js');
-      const handler = registeredHandlers['action_^mode_(plan|default|bypassPermissions|acceptEdits)$'];
+      const handler = registeredHandlers['action_^mode_(plan|default|bypassPermissions)$'];
       const mockClient = createMockSlackClient();
       const ack = vi.fn();
 
@@ -593,7 +559,7 @@ describe('emoji-indicators integration tests', () => {
 
     it('mode button click in thread: handles thread-aware emoji cleanup', async () => {
       const { pendingModeSelections } = await import('../../../claude/src/slack-bot.js');
-      const handler = registeredHandlers['action_^mode_(plan|default|bypassPermissions|acceptEdits)$'];
+      const handler = registeredHandlers['action_^mode_(plan|default|bypassPermissions)$'];
       const mockClient = createMockSlackClient();
       const ack = vi.fn();
 

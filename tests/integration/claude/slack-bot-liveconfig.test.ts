@@ -173,7 +173,7 @@ describe('live config updates during query', () => {
 
   it('should call query.setPermissionMode when mode button clicked while busy', async () => {
     const messageHandler = registeredHandlers['event_app_mention'];
-    const modeButtonHandler = registeredHandlers['action_^mode_(plan|default|bypassPermissions|acceptEdits)$'];
+    const modeButtonHandler = registeredHandlers['action_^mode_(plan|default|bypassPermissions)$'];
     const mockClient = createMockSlackClient();
 
     vi.mocked(getSession).mockReturnValue({
@@ -367,7 +367,7 @@ describe('live config updates during query', () => {
 
   it('should handle SDK control method errors gracefully', async () => {
     const messageHandler = registeredHandlers['event_app_mention'];
-    const modeButtonHandler = registeredHandlers['action_^mode_(plan|default|bypassPermissions|acceptEdits)$'];
+    const modeButtonHandler = registeredHandlers['action_^mode_(plan|default|bypassPermissions)$'];
     const mockClient = createMockSlackClient();
 
     vi.mocked(getSession).mockReturnValue({

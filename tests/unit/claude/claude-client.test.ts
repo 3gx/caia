@@ -56,13 +56,13 @@ describe('claude-client', () => {
       );
     });
 
-    it('should pass acceptEdits mode directly to SDK', () => {
-      startClaudeQuery('test prompt', { mode: 'acceptEdits' });
+    it('should pass bypassPermissions mode directly to SDK', () => {
+      startClaudeQuery('test prompt', { mode: 'bypassPermissions' });
 
       expect(query).toHaveBeenCalledWith(
         expect.objectContaining({
           options: expect.objectContaining({
-            permissionMode: 'acceptEdits',
+            permissionMode: 'bypassPermissions',
           }),
         })
       );

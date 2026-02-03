@@ -116,10 +116,10 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':memo:');
     expect(statusLineText).not.toContain(':brain:');
 
-    // Status line SHOULD include mode/model/session/stats
+    // Status line SHOULD include mode/model/session/stats (but NOT sandbox per unified UX)
     expect(statusLineText).toContain('ask');
     expect(statusLineText).toContain('codex-mini [high]');
-    expect(statusLineText).toContain('danger-full-access');
+    expect(statusLineText).not.toContain('danger-full-access'); // Removed per unified UX plan
     expect(statusLineText).toContain('thread-abc');
 
     streaming.stopStreaming(conversationKey);
@@ -176,10 +176,10 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':memo:');
     expect(statusLineText).not.toContain(':brain:');
 
-    // Should show expected metadata
+    // Should show expected metadata (but NOT sandbox per unified UX plan)
     expect(statusLineText).toContain('ask');
     expect(statusLineText).toContain('gpt-5.2-codex [xhigh]');
-    expect(statusLineText).toContain('workspace-write');
+    expect(statusLineText).not.toContain('workspace-write'); // Removed per unified UX plan
     expect(statusLineText).toContain('thread-xyz');
 
     streaming.stopStreaming(conversationKey);
