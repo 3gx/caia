@@ -321,4 +321,11 @@ export class ApprovalHandler {
   get pendingCount(): number {
     return this.pendingApprovals.size;
   }
+
+  /**
+   * Check if a specific approval request is pending.
+   */
+  hasPendingApproval(requestId: number): boolean {
+    return this.pendingApprovals.has(requestId);
+  }
 }
