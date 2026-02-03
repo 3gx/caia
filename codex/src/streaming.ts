@@ -1885,8 +1885,16 @@ export class StreamingManager {
         activityText = `_... ${hidden} earlier entries ..._\n` + activityText;
       }
 
-      // Response preview is now handled by the generating entry in the activity log.
-      // Don't manually append - it causes duplicate "Response" lines.
+      // Add response preview if we have response content
+      // (Generating entry shows "Generating...", this shows final "Response" with preview)
+      if (state.text) {
+        const preview = state.text.slice(0, 200).replace(/\n/g, ' ');
+        const responseLabel = state.responseMessageLink
+          ? `*<${state.responseMessageLink}|Response>*`
+          : '*Response*';
+        const responseLine = `:speech_balloon: ${responseLabel} _[${state.text.length} chars]_`;
+        activityText += `\n${responseLine}\n> ${preview}${state.text.length > 200 ? '...' : ''}`;
+      }
 
       const elapsedMs = Date.now() - context.startTime;
 
