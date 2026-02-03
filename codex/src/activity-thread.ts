@@ -376,9 +376,8 @@ export class ActivityThreadManager {
         return `${emoji} *${label}*${inputSummary}${resultSummary}${outputHint}${duration}${errorFlag}`;
       }
       case 'generating': {
-        // Use "Response" label (Claude-style) instead of "Generating..."
-        const label = linkifyActivityLabel('Response', link);
-        return `:speech_balloon: *${label}*${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
+        const label = linkifyActivityLabel('Generating', link);
+        return `:memo: *${label}*...${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
       }
       case 'error': {
         const label = linkifyActivityLabel('Error', link);

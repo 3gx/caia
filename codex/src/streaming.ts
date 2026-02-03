@@ -838,9 +838,14 @@ export class StreamingManager {
             }
           }
 
-          // NOTE: Do NOT add a generating entry here. The response is posted by
-          // postResponseToThread which includes its own header with duration and char count.
-          // Adding a generating entry here would cause duplicate "Response" lines in the thread.
+          // Add response entry if we have response content
+          if (state.text && status === 'completed') {
+            this.activityManager.addEntry(found.key, {
+              type: 'generating',
+              timestamp: Date.now(),
+              charCount: state.text.length,
+            });
+          }
 
           // Transition emoji based on final status
           const { channelId, originalTs } = found.context;

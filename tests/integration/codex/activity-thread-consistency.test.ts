@@ -42,7 +42,7 @@ describe('Activity Thread Consistency', () => {
       expect(threadFormat).toContain('Analyzing request');
     });
 
-    it('uses :speech_balloon: and Response label for generating entries (Claude-style unified UX)', () => {
+    it('uses :memo: and Generating label for generating entries', () => {
       const entry: ActivityEntry = {
         type: 'generating',
         timestamp: Date.now(),
@@ -56,25 +56,23 @@ describe('Activity Thread Consistency', () => {
       // Thread message format
       const threadFormat = formatThreadActivityEntry(entry);
 
-      // Per unified UX plan: use "Response" (Claude-style) instead of "Generating"
-      expect(mainFormat).toContain(':speech_balloon:');
-      expect(threadFormat).toContain(':speech_balloon:');
-      expect(mainFormat).toContain('Response');
-      expect(threadFormat).toContain('Response');
+      expect(mainFormat).toContain(':memo:');
+      expect(threadFormat).toContain(':memo:');
+      expect(mainFormat).toContain('Generating');
+      expect(threadFormat).toContain('Generating');
     });
 
-    it('uses :speech_balloon: for Response (unified UX with Claude)', () => {
+    it('uses :memo: for Generating in thread', () => {
       const entry: ActivityEntry = {
         type: 'generating',
         timestamp: Date.now(),
         charCount: 100,
       };
 
-      // Thread message format now uses :speech_balloon: for unified UX
       const threadFormat = formatThreadActivityEntry(entry);
 
-      expect(threadFormat).toContain(':speech_balloon:');
-      expect(threadFormat).toContain('Response');
+      expect(threadFormat).toContain(':memo:');
+      expect(threadFormat).toContain('Generating');
     });
 
     it('uses tool emoji for tool_complete in both main and thread', () => {

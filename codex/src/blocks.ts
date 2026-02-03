@@ -1706,9 +1706,8 @@ export function formatThreadActivityEntry(entry: ActivityEntry): string {
       return lines.join('\n');
     }
     case 'generating': {
-      // Use "Response" label (Claude-style) instead of "Generating"
       const duration = entry.durationMs ? ` [${(entry.durationMs / 1000).toFixed(1)}s]` : '';
-      return `:speech_balloon: *Response*${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
+      return `:memo: *Generating*...${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
     }
     case 'error':
       return `:x: *Error:* ${entry.message || 'Unknown error'}`;

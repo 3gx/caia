@@ -381,7 +381,7 @@ describe('buildActivityLogText', () => {
 
     const text = buildActivityLogText(entries);
 
-    expect(text).toContain(':speech_balloon:'); // Response uses speech_balloon emoji (unified UX)
+    expect(text).toContain(':memo:'); // Generating uses memo emoji
     expect(text).toContain('500');
   });
 
@@ -498,8 +498,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      // Unified UX: uses "Response" instead of "Generating"
-      expect(text).toContain(':speech_balloon: *Response*');
+      expect(text).toContain(':memo: *Generating*');
     });
 
     it('formats generating entry with bold linked label', () => {
@@ -514,8 +513,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      // Unified UX: uses "Response" instead of "Generating"
-      expect(text).toContain(':speech_balloon: *<https://slack.com/archives/C123/p123|Response>*');
+      expect(text).toContain(':memo: *<https://slack.com/archives/C123/p123|Generating>*');
     });
 
     it('formats error entry with bold label', () => {
