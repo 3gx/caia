@@ -685,23 +685,17 @@ export function getEffectiveApprovalPolicy(
 
 /**
  * Get effective thread ID for a session.
- * Falls back to channel session if thread session has no threadId.
- * This ensures main channel @bot mentions share the same Codex thread.
+ * NOTE: We no longer fall back to the channel session to avoid sharing a Codex
+ * thread across multiple Slack threads. Each Slack thread should have its own
+ * Codex thread ID to keep fork points unambiguous.
  */
 export function getEffectiveThreadId(
   channelId: string,
   threadTs?: string
 ): string | null {
-  // First try thread-specific session
-  if (threadTs) {
-    const threadSession = getThreadSession(channelId, threadTs);
-    if (threadSession?.threadId) {
-      return threadSession.threadId;
-    }
-    // Thread session exists but has no threadId, or doesn't exist - fallback to channel
+  if (!threadTs) {
+    return null;
   }
-
-  // Fallback to channel session
-  const session = getSession(channelId);
-  return session?.threadId ?? null;
+  const threadSession = getThreadSession(channelId, threadTs);
+  return threadSession?.threadId ?? null;
 }

@@ -718,16 +718,21 @@ export class CodexClient extends EventEmitter {
       return index;
     }
 
-    // Handle format mismatch: turnId from turn:started is "0", "1", etc.
-    // but thread/read returns "turn-1", "turn-2", etc.
-    // Convert "0" -> "turn-1", "1" -> "turn-2", etc.
+    // Handle format mismatch: turnId from turn:started can be numeric.
+    // Some app-server versions emit 0-based ("0","1"), others appear 1-based ("1","2").
+    // thread/read returns "turn-1", "turn-2", etc.
+    // Try both mappings for robustness:
+    // - 0-based: "0" -> "turn-1", "1" -> "turn-2"
+    // - 1-based: "1" -> "turn-1", "2" -> "turn-2"
     const numericId = parseInt(turnId, 10);
     if (!isNaN(numericId)) {
-      const convertedId = `turn-${numericId + 1}`;
-      index = turns.findIndex((t) => t.id === convertedId);
-      if (index >= 0) {
-        console.log(`[codex-client] findTurnIndex: converted "${turnId}" to "${convertedId}", found at index ${index}`);
-        return index;
+      const candidates = [`turn-${numericId + 1}`, `turn-${numericId}`];
+      for (const convertedId of candidates) {
+        index = turns.findIndex((t) => t.id === convertedId);
+        if (index >= 0) {
+          console.log(`[codex-client] findTurnIndex: converted "${turnId}" to "${convertedId}", found at index ${index}`);
+          return index;
+        }
       }
     }
 
