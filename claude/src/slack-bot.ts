@@ -1650,7 +1650,7 @@ async function createForkFromMessage(params: {
     forkedFrom: sourceSessionId,
     forkedFromThreadTs: sourceThreadTs,
     workingDir: mainSession?.workingDir ?? process.cwd(),
-    mode: mainSession?.mode ?? 'default',
+    mode: mainSession?.mode ?? 'bypassPermissions',
     model: mainSession?.model,
     createdAt: Date.now(),
     lastActiveAt: Date.now(),
@@ -1809,7 +1809,7 @@ async function createForkToChannel(params: {
   await saveSession(newChannelId, {
     sessionId: forkedSessionId,
     workingDir: mainSession?.workingDir ?? process.cwd(),
-    mode: mainSession?.mode ?? 'default',
+    mode: mainSession?.mode ?? 'bypassPermissions',
     model: mainSession?.model,
     createdAt: Date.now(),
     lastActiveAt: Date.now(),

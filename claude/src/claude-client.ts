@@ -44,7 +44,7 @@ export function startClaudeQuery(
   options: StreamOptions
 ): ClaudeQuery {
   // Pass permission mode directly to SDK (we use SDK mode names)
-  const permissionMode = options.mode || 'default';
+  const permissionMode = options.mode || 'bypassPermissions';
 
   const queryOptions: Record<string, unknown> = {
     outputFormat: 'stream-json',

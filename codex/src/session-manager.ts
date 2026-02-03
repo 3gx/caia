@@ -17,7 +17,7 @@ import type { ApprovalPolicy, ReasoningEffort } from './codex-client.js';
 /**
  * Default unified mode.
  */
-export const DEFAULT_MODE: UnifiedMode = 'ask';
+export const DEFAULT_MODE: UnifiedMode = 'bypass';
 
 /**
  * Usage data from the last query (for /status and /context commands).

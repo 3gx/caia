@@ -147,8 +147,33 @@ describe('session-manager', () => {
       const writtenData = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
 
       expect(writtenData.channels['C123'].sessionId).toBe('new-sess');
-      expect(writtenData.channels['C123'].mode).toBe('default');
+      expect(writtenData.channels['C123'].mode).toBe('bypassPermissions');
       expect(writtenData.channels['C123'].lastActiveAt).toBeDefined();
+    });
+
+    it('should default to bypassPermissions mode for new sessions', async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+
+      await saveSession('C123', { sessionId: 'test' });
+
+      const writtenData = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+      expect(writtenData.channels['C123'].mode).toBe('bypassPermissions');
+    });
+
+    it('should persist mode changes across save/load', async () => {
+      // First save with mode change
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      await saveSession('C123', { mode: 'plan' });
+
+      const savedData = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0][1] as string);
+      expect(savedData.channels['C123'].mode).toBe('plan');
+
+      // Simulate reload by mocking read to return saved data
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(savedData));
+
+      const reloadedSession = getSession('C123');
+      expect(reloadedSession?.mode).toBe('plan');
     });
 
     it('should merge with existing session', async () => {

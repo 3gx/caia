@@ -33,6 +33,13 @@ describe('Session Manager', () => {
     vi.restoreAllMocks();
   });
 
+  describe('DEFAULT_MODE', () => {
+    it('should be bypass (not ask)', () => {
+      // Default mode is bypass for auto-execution without prompting
+      expect(DEFAULT_MODE).toBe('bypass');
+    });
+  });
+
   describe('loadSessions', () => {
     it('returns empty store when file does not exist', () => {
       mockFs.existsSync.mockReturnValue(false);

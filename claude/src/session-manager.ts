@@ -258,7 +258,7 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       sessionId: existing?.sessionId ?? null,
       previousSessionIds: existing?.previousSessionIds ?? [],  // Preserve previous session history
       workingDir: existing?.workingDir ?? process.cwd(),
-      mode: existing?.mode ?? 'default',
+      mode: existing?.mode ?? 'bypassPermissions',
       model: existing?.model,  // Preserve selected model
       createdAt: existing?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
@@ -315,7 +315,7 @@ export async function saveThreadSession(
       store.channels[channelId] = {
         sessionId: null,
         workingDir: process.cwd(),
-        mode: 'default',
+        mode: 'bypassPermissions',
         createdAt: Date.now(),
         lastActiveAt: Date.now(),
         pathConfigured: false,
