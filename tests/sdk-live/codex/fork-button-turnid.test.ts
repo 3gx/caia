@@ -566,4 +566,149 @@ describe.skipIf(SKIP_LIVE)('Fork Button turnId Verification', { timeout: 120000 
 
     console.log('==========================================\n');
   });
+
+  // CRITICAL: CLI-continue scenario test
+  // Verifies: store turnIndex, user continues in CLI (adds more turns), fork still works correctly
+  it('CLI-continue: store turnIndex, add more turns, fork at stored index', async () => {
+    notifications.length = 0;
+
+    console.log('\n=== CLI Continue Scenario Test ===');
+    console.log('Scenario:');
+    console.log('1. Bot creates turns 0,1,2 (a=42, b=84, c=840)');
+    console.log('2. Store turnIndex=2 (simulating fork button for turn 2)');
+    console.log('3. User continues in CLI: adds turns 3,4 (d=184, e=500)');
+    console.log('4. Fork using stored turnIndex=2');
+    console.log('5. Verify fork has ONLY a,b,c (not d,e)\n');
+
+    // 1. Create thread
+    const threadResult = await rpc<{ thread: ThreadInfo }>('thread/start', {
+      workingDirectory: process.cwd(),
+    });
+    const threadId = threadResult.thread.id;
+    console.log(`Thread: ${threadId}`);
+
+    // 2. Create turns 0, 1, 2 (simulating bot usage)
+    const botVariables = [
+      { name: 'a', value: 42 },
+      { name: 'b', value: 84 },
+      { name: 'c', value: 840 },
+    ];
+
+    for (let i = 0; i < botVariables.length; i++) {
+      notifications.length = 0;
+      const { name, value } = botVariables[i];
+      await rpc('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: `Assume variable ${name} has value ${value}. Just confirm by saying "${name} = ${value}".` }],
+      });
+      await waitForTurnComplete();
+      console.log(`Turn ${i} (${name}=${value}): completed`);
+    }
+
+    // 3. STORE turnIndex=2 at this moment (simulating fork button creation)
+    // This is what the bot would store in the fork button value
+    const storedTurnIndex = 2;
+    console.log(`\n--- Fork Button Created ---`);
+    console.log(`Stored turnIndex: ${storedTurnIndex} (for turn c=840)`);
+
+    // 4. User continues in CLI - adds MORE turns (d=184, e=500)
+    console.log(`\n--- User Continues in CLI ---`);
+    const cliVariables = [
+      { name: 'd', value: 184 },
+      { name: 'e', value: 500 },
+    ];
+
+    for (let i = 0; i < cliVariables.length; i++) {
+      notifications.length = 0;
+      const { name, value } = cliVariables[i];
+      await rpc('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: `Assume variable ${name} has value ${value}. Just confirm by saying "${name} = ${value}".` }],
+      });
+      await waitForTurnComplete();
+      console.log(`CLI Turn ${3 + i} (${name}=${value}): completed`);
+    }
+
+    // Verify thread now has 5 turns
+    const readResult = await rpc<{ thread: ThreadInfo }>('thread/read', {
+      threadId,
+      includeTurns: true,
+    });
+    const totalTurns = readResult.thread.turns?.length ?? 0;
+    console.log(`\nThread now has ${totalTurns} turns (was 3 when button created)`);
+    expect(totalTurns).toBe(5);
+
+    // 5. User comes back to bot, clicks fork button with stored turnIndex=2
+    console.log(`\n--- User Clicks Fork Button (stored turnIndex=${storedTurnIndex}) ---`);
+
+    // Fork using the STORED index, not querying current count
+    const forkResult = await rpc<{ thread: ThreadInfo }>('thread/fork', { threadId });
+    const forkedThreadId = forkResult.thread.id;
+    console.log(`Forked thread: ${forkedThreadId}`);
+
+    // Rollback to stored index
+    const turnsToRollback = totalTurns - (storedTurnIndex + 1);
+    console.log(`Rolling back ${turnsToRollback} turns to keep only 0, 1, 2`);
+
+    if (turnsToRollback > 0) {
+      await rpc('thread/rollback', {
+        threadId: forkedThreadId,
+        numTurns: turnsToRollback,
+      });
+    }
+
+    // 6. VERIFY: Fork has a, b, c but NOT d, e
+    console.log(`\n--- Content Verification ---`);
+    notifications.length = 0;
+    await rpc('turn/start', {
+      threadId: forkedThreadId,
+      input: [{ type: 'text', text: 'List all the variables I asked you to assume and their values.' }],
+    });
+    await waitForTurnComplete();
+
+    // Extract response text
+    let responseText = '';
+    for (const n of notifications) {
+      const params = n.params as Record<string, unknown>;
+      const msg = params.msg as Record<string, unknown> | undefined;
+      const textContent =
+        (typeof params.delta === 'string' ? params.delta : null) ||
+        (typeof params.text === 'string' ? params.text : null) ||
+        (typeof params.content === 'string' ? params.content : null) ||
+        (msg && typeof msg.delta === 'string' ? msg.delta : null) ||
+        (msg && typeof msg.text === 'string' ? msg.text : null) ||
+        (msg && typeof msg.content === 'string' ? msg.content : null);
+      if (textContent) {
+        responseText += textContent;
+      }
+    }
+
+    console.log(`\nForked thread response: "${responseText.slice(0, 500)}..."`);
+
+    // Check for variable values
+    const has42 = responseText.includes('42');
+    const has840 = responseText.includes('840');
+    const has184 = responseText.includes('184');
+    const has500 = responseText.includes('500');
+
+    console.log(`\n=== CONTENT VERIFICATION ===`);
+    console.log(`Contains 42 (a): ${has42} (expected: true)`);
+    console.log(`Contains 840 (c): ${has840} (expected: true)`);
+    console.log(`Contains 184 (d): ${has184} (expected: FALSE - added after button created)`);
+    console.log(`Contains 500 (e): ${has500} (expected: FALSE - added after button created)`);
+
+    // CRITICAL assertions
+    expect(has42, `Fork should contain a=42. Response: "${responseText.slice(0, 300)}..."`).toBe(true);
+    expect(has840, `Fork should contain c=840. Response: "${responseText.slice(0, 300)}..."`).toBe(true);
+    expect(has184, `Fork must NOT contain d=184 (CLI-added). Response: "${responseText.slice(0, 300)}..."`).toBe(false);
+    expect(has500, `Fork must NOT contain e=500 (CLI-added). Response: "${responseText.slice(0, 300)}..."`).toBe(false);
+
+    if (has42 && has840 && !has184 && !has500) {
+      console.log('\n✓ VERIFIED: CLI-continue scenario works - fork at stored index ignores later CLI turns');
+    } else {
+      console.log('\n✗ FAILED: Fork content incorrect');
+    }
+
+    console.log('==========================================\n');
+  });
 });
