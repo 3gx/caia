@@ -1,0 +1,92 @@
+/**
+ * SDK Live Tests: Message Content Types
+ *
+ * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
+ */
+import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { createOpencode, OpencodeClient } from '@opencode-ai/sdk';
+
+const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
+
+const MINIMAL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+
+describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
+  let client: OpencodeClient;
+  let server: { close(): void; url: string };
+  let testPort: number;
+
+  beforeAll(async () => {
+    const buffer = inject('portCounter') as SharedArrayBuffer;
+    const basePort = inject('basePort') as number;
+    const counter = new Int32Array(buffer);
+    testPort = basePort + Atomics.add(counter, 0, 1);
+
+    const result = await createOpencode({ port: testPort });
+    client = result.client;
+    server = result.server;
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it('CANARY: text content type works', async () => {
+    const session = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    const result = await client.session.prompt({
+      path: { id: session.data!.id },
+      body: { parts: [{ type: 'text', text: 'Hello' }] },
+    });
+
+    expect(result.data).toBeDefined();
+  });
+
+  it('CANARY: image content type works', async () => {
+    const session = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    const result = await client.session.prompt({
+      path: { id: session.data!.id },
+      body: {
+        parts: [
+          { type: 'text', text: 'Describe this image:' },
+          {
+            type: 'file',
+            mime: 'image/png',
+            filename: 'test.png',
+            url: `data:image/png;base64,${MINIMAL_PNG_BASE64}`,
+          },
+        ],
+      },
+    });
+
+    expect(result.data).toBeDefined();
+  });
+
+  it('CANARY: mixed content (text + image) works', async () => {
+    const session = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    const result = await client.session.prompt({
+      path: { id: session.data!.id },
+      body: {
+        parts: [
+          { type: 'text', text: 'What do you see?' },
+          {
+            type: 'file',
+            mime: 'image/png',
+            filename: 'test.png',
+            url: `data:image/png;base64,${MINIMAL_PNG_BASE64}`,
+          },
+          { type: 'text', text: 'Be brief.' },
+        ],
+      },
+    });
+
+    expect(result.data).toBeDefined();
+  });
+});

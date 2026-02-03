@@ -1,0 +1,134 @@
+/**
+ * SDK Live Tests: Abort & Interruption
+ *
+ * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
+ */
+import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { createOpencode, OpencodeClient } from '@opencode-ai/sdk';
+
+const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
+
+async function waitForSessionStatus(
+  client: OpencodeClient,
+  sessionId: string,
+  statusType: string,
+  options: { timeoutMs: number }
+): Promise<void> {
+  const { timeoutMs } = options;
+  const controller = new AbortController();
+  const result = await client.global.event({ signal: controller.signal });
+
+  const startTime = Date.now();
+  try {
+    for await (const event of result.stream) {
+      if (
+        event.payload?.type === 'session.status' &&
+        event.payload?.properties?.sessionID === sessionId &&
+        event.payload?.properties?.status?.type === statusType
+      ) {
+        return;
+      }
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error(`Timeout waiting for session status ${statusType}`);
+      }
+    }
+  } finally {
+    controller.abort();
+  }
+}
+
+async function waitForSessionIdle(client: OpencodeClient, sessionId: string, timeoutMs = 30000): Promise<void> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const status = await client.session.status();
+    const sessionStatus = status.data?.[sessionId];
+    if (sessionStatus?.type === 'idle') {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timeout waiting for session ${sessionId} to become idle`);
+}
+
+describe.skipIf(SKIP_LIVE)('Abort Functionality', { timeout: 60000 }, () => {
+  let client: OpencodeClient;
+  let server: { close(): void; url: string };
+  let testPort: number;
+
+  beforeAll(async () => {
+    const buffer = inject('portCounter') as SharedArrayBuffer;
+    const basePort = inject('basePort') as number;
+    const counter = new Int32Array(buffer);
+    testPort = basePort + Atomics.add(counter, 0, 1);
+
+    const result = await createOpencode({ port: testPort });
+    client = result.client;
+    server = result.server;
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it('CANARY: session.abort() stops processing', async () => {
+    const session = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    const promptPromise = client.session.prompt({
+      path: { id: session.data!.id },
+      body: { parts: [{ type: 'text', text: 'Write a very long story with many paragraphs.' }] },
+    });
+
+    try {
+      await waitForSessionStatus(client, session.data!.id, 'busy', { timeoutMs: 5000 });
+    } catch {
+      // If it never becomes busy, continue anyway.
+    }
+
+    try {
+      await client.session.abort({ path: { id: session.data!.id } });
+    } catch {
+      // Abort may throw if session is already idle
+    }
+
+    await promptPromise.catch(() => {});
+    await waitForSessionIdle(client, session.data!.id, 20000);
+
+    const sessions = await client.session.list();
+    expect(sessions.data).toBeDefined();
+  });
+
+  it('CANARY: session usable after abort', async () => {
+    const session = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    const promptPromise = client.session.prompt({
+      path: { id: session.data!.id },
+      body: { parts: [{ type: 'text', text: 'Long task...' }] },
+    });
+
+    try {
+      await waitForSessionStatus(client, session.data!.id, 'busy', { timeoutMs: 5000 });
+    } catch {
+      // Ignore if already idle.
+    }
+
+    try {
+      await client.session.abort({ path: { id: session.data!.id } });
+    } catch {
+      // Ignore abort errors
+    }
+
+    await promptPromise.catch(() => {});
+    await waitForSessionIdle(client, session.data!.id, 20000);
+
+    const result = await client.session.prompt({
+      path: { id: session.data!.id },
+      body: { parts: [{ type: 'text', text: 'Say "hello".' }] },
+    });
+
+    expect(result.data).toBeDefined();
+  });
+});

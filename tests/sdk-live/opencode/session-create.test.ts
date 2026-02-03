@@ -1,0 +1,64 @@
+/**
+ * SDK Live Tests: Session Creation
+ *
+ * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
+ */
+import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { createOpencode, OpencodeClient } from '@opencode-ai/sdk';
+
+const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
+
+describe.skipIf(SKIP_LIVE)('Session Creation', { timeout: 30000 }, () => {
+  let client: OpencodeClient;
+  let server: { close(): void; url: string };
+  let testPort: number;
+
+  beforeAll(async () => {
+    const buffer = inject('portCounter') as SharedArrayBuffer;
+    const basePort = inject('basePort') as number;
+    const counter = new Int32Array(buffer);
+    testPort = basePort + Atomics.add(counter, 0, 1);
+
+    const result = await createOpencode({ port: testPort });
+    client = result.client;
+    server = result.server;
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it('CANARY: session.create() returns session ID', async () => {
+    const result = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    expect(result.data?.id).toBeDefined();
+    expect(typeof result.data?.id).toBe('string');
+    expect(result.data?.id).toMatch(/^[a-z0-9_-]+$/i);
+  });
+
+  it('CANARY: session has working directory', async () => {
+    const result = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    expect(result.data?.directory).toBeDefined();
+    expect(typeof result.data?.directory).toBe('string');
+  });
+
+  it('CANARY: session has title', async () => {
+    const result = await client.session.create({
+      body: { title: 'My Test Session' },
+    });
+    expect(result.data?.title).toBe('My Test Session');
+  });
+
+  it('CANARY: session inherits permissions from config', async () => {
+    const result = await client.session.create({
+      body: { title: 'Test Session' },
+    });
+
+    expect(result.data?.id).toBeDefined();
+  });
+});

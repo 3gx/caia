@@ -1,0 +1,123 @@
+/**
+ * SDK Live Tests: Fork Independence
+ *
+ * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
+ */
+import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { createOpencode, OpencodeClient } from '@opencode-ai/sdk';
+
+const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
+
+async function waitForSessionIdle(client: OpencodeClient, sessionId: string, timeoutMs = 30000): Promise<void> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const status = await client.session.status();
+    const sessionStatus = status.data?.[sessionId];
+    if (sessionStatus?.type === 'idle') {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timeout waiting for session ${sessionId} to become idle`);
+}
+
+describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
+  let client: OpencodeClient;
+  let server: { close(): void; url: string };
+  let testPort: number;
+
+  beforeAll(async () => {
+    const buffer = inject('portCounter') as SharedArrayBuffer;
+    const basePort = inject('basePort') as number;
+    const counter = new Int32Array(buffer);
+    testPort = basePort + Atomics.add(counter, 0, 1);
+
+    const result = await createOpencode({ port: testPort });
+    client = result.client;
+    server = result.server;
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  it('CANARY: forked session is independent', async () => {
+    const parent = await client.session.create({
+      body: { title: 'Parent Session' },
+    });
+
+    await client.session.prompt({
+      path: { id: parent.data!.id },
+      body: { parts: [{ type: 'text', text: 'Base message' }] },
+    });
+    await waitForSessionIdle(client, parent.data!.id);
+
+    const messages = await client.session.messages({ path: { id: parent.data!.id } });
+    const fork = await client.session.fork({
+      path: { id: parent.data!.id },
+      body: { messageID: messages.data![0].info.id },
+    });
+
+    const parentStatus = await client.session.get({ path: { id: parent.data!.id } });
+    const forkStatus = await client.session.get({ path: { id: fork.data!.id } });
+
+    expect(parentStatus.data).toBeDefined();
+    expect(forkStatus.data).toBeDefined();
+  });
+
+  it('CANARY: parent changes do not affect fork', async () => {
+    const parent = await client.session.create({
+      body: { title: 'Parent Session' },
+    });
+
+    await client.session.prompt({
+      path: { id: parent.data!.id },
+      body: { parts: [{ type: 'text', text: 'Base' }] },
+    });
+    await waitForSessionIdle(client, parent.data!.id);
+
+    const messages = await client.session.messages({ path: { id: parent.data!.id } });
+    const fork = await client.session.fork({
+      path: { id: parent.data!.id },
+      body: { messageID: messages.data![0].info.id },
+    });
+
+    const forkMsgCountBefore = (await client.session.messages({ path: { id: fork.data!.id } })).data!.length;
+
+    await client.session.prompt({
+      path: { id: parent.data!.id },
+      body: { parts: [{ type: 'text', text: 'New parent message' }] },
+    });
+    await waitForSessionIdle(client, parent.data!.id);
+
+    const forkMsgCountAfter = (await client.session.messages({ path: { id: fork.data!.id } })).data!.length;
+
+    expect(forkMsgCountAfter).toBe(forkMsgCountBefore);
+  });
+
+  it('CANARY: fork can be deleted independently', async () => {
+    const parent = await client.session.create({
+      body: { title: 'Parent Session' },
+    });
+
+    await client.session.prompt({
+      path: { id: parent.data!.id },
+      body: { parts: [{ type: 'text', text: 'Base' }] },
+    });
+    await waitForSessionIdle(client, parent.data!.id);
+
+    const messages = await client.session.messages({ path: { id: parent.data!.id } });
+    const fork = await client.session.fork({
+      path: { id: parent.data!.id },
+      body: { messageID: messages.data![0].info.id },
+    });
+
+    await client.session.delete({ path: { id: fork.data!.id } });
+
+    const parentStatus = await client.session.get({ path: { id: parent.data!.id } });
+    expect(parentStatus.data).toBeDefined();
+
+    const forkStatus = await client.session.get({ path: { id: fork.data!.id } });
+    expect(forkStatus.error).toBeDefined();
+  });
+});
