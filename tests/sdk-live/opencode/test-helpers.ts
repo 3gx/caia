@@ -69,7 +69,8 @@ export interface OpencodeTestServer {
   port: number;
   /**
    * Clean up the server AND its spawned processes.
-   * This is necessary because server.close() doesn't terminate the child process.
+   * NOTE: Sessions are NOT automatically deleted because parallel tests
+   * share session storage and cleanup would cause race conditions.
    */
   cleanup: () => Promise<void>;
 }
@@ -104,7 +105,11 @@ export async function createOpencodeWithCleanup(port: number): Promise<OpencodeT
     server: result.server,
     port,
     cleanup: async () => {
-      // First try graceful close
+      // NOTE: We do NOT delete sessions here because parallel tests share
+      // session storage. Deleting sessions would cause race conditions.
+      // Sessions can be cleaned up manually: opencode session list | xargs -I{} opencode session delete {}
+
+      // Try graceful close
       result.server.close();
 
       // Give it a moment to close gracefully
