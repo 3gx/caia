@@ -114,9 +114,9 @@ function getUpdateMutex(key: string): Mutex {
 /**
  * Extract the bot user ID from an app mention.
  */
-function extractBotMention(text: string, botUserId: string): string {
-  const mentionPattern = new RegExp(`<@${botUserId}>\\s*`, 'g');
-  return text.replace(mentionPattern, '').trim();
+function extractBotMention(text: string, _botUserId: string): string {
+  // Strip all mentions (matching claude behavior), not just this bot's
+  return text.replace(/<@[A-Z0-9]+>\s*/g, '').trim();
 }
 
 export function getAppMentionRejection(
@@ -234,6 +234,7 @@ function setupEventHandlers(): void {
       const userId: string = event.user || '';
       const botUserId = (await client.auth.test()).user_id as string;
       const text: string = extractBotMention(event.text, botUserId);
+      console.log(`Received mention from ${event.user}: ${text}`);
 
       if (!text) {
         await say({
@@ -288,6 +289,7 @@ function setupEventHandlers(): void {
     if (!text.trim() || !userId) {
       return;
     }
+    console.log(`Received DM from ${userId}: ${text}`);
 
     try {
       await handleUserMessage(channelId, threadTs, userId, text, messageTs, msg.files);
