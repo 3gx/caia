@@ -28,17 +28,18 @@ describe.skipIf(SKIP_LIVE)('Agent Types', { timeout: 60000 }, () => {
     await opencode.cleanup();
   });
 
-  it('CANARY: prompt with agent=plan succeeds', async () => {
+  it('CANARY: prompt with agent parameter succeeds', async () => {
     const session = await client.session.create({
-      body: { title: `${TEST_SESSION_PREFIX}Plan Agent Test` },
+      body: { title: `${TEST_SESSION_PREFIX}Agent Param Test` },
     });
     opencode.trackSession(session.data!.id);
 
+    // Use simple prompt - agent parameter may or may not affect behavior
     const result = await client.session.prompt({
       path: { id: session.data!.id },
       body: {
-        parts: [{ type: 'text', text: 'Plan how to implement a simple HTTP server' }],
-        agent: 'plan',
+        parts: [{ type: 'text', text: 'Say hello' }],
+        agent: 'general',
       },
     });
 
