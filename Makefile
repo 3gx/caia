@@ -1,6 +1,19 @@
-.PHONY: build clean test sdk-test claude-test codex-test opencode-test claude-sdk-test codex-sdk-test opencode-sdk-test
+.PHONY: help build clean test sdk-test claude-test codex-test opencode-test claude-sdk-test codex-sdk-test opencode-sdk-test
 
 JOBS ?= 4
+
+help:
+	@echo "Targets:"
+	@echo "  build              Build all packages"
+	@echo "  clean              Remove build artifacts"
+	@echo "  test               Run unit + integration tests"
+	@echo "  sdk-test           Run live SDK tests for all providers"
+	@echo "  claude-test        Run Claude unit + integration tests"
+	@echo "  codex-test         Run Codex unit + integration tests"
+	@echo "  opencode-test      Run OpenCode unit + integration tests"
+	@echo "  claude-sdk-test    Run Claude live SDK tests"
+	@echo "  codex-sdk-test     Run Codex live SDK tests"
+	@echo "  opencode-sdk-test  Run OpenCode live SDK tests"
 
 build:
 	npm run build
