@@ -1,25 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import './slack-bot-mocks-real-blocks.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
-
-let setupBot: () => Promise<void>;
-let teardownBot: () => Promise<void>;
-let registeredHandlers: Record<string, any>;
+import { registeredHandlers, resetMockState } from './slack-bot-mocks-real-blocks.js';
+import { startBot, stopBot } from '../../../opencode/src/slack-bot.js';
 
 describe('status-block-content', () => {
   beforeEach(async () => {
-    vi.resetModules();
-    process.env.OPENCODE_TEST_REAL_BLOCKS = '1';
-
-    ({ registeredHandlers } = await import('./slack-bot-mocks.js'));
-    ({ setupBot, teardownBot } = await import('./slack-bot-test-utils.js'));
-
-    await setupBot();
+    resetMockState();
+    process.env.SLACK_BOT_TOKEN = 'xoxb-test';
+    process.env.SLACK_APP_TOKEN = 'xapp-test';
+    process.env.SLACK_SIGNING_SECRET = 'secret';
+    await startBot();
   });
 
   afterEach(async () => {
-    await teardownBot();
-    delete process.env.OPENCODE_TEST_REAL_BLOCKS;
-    vi.resetModules();
+    await stopBot();
   });
 
   it('renders combined status blocks with activity, spinner, status line, and abort', async () => {
