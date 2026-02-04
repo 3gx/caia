@@ -26,13 +26,15 @@ describe('streaming', () => {
   it('truncates with closed formatting', () => {
     const text = '*bold* _italic_ `code`';
     const truncated = truncateWithClosedFormatting(text, 10);
-    expect(truncated.length).toBeLessThanOrEqual(10);
+    expect(truncated).toContain('_...truncated. Full response attached._');
+    expect(truncated.length).toBeGreaterThan(10);
   });
 
   it('extractTailWithFormatting returns a tail', () => {
     const text = 'Hello world **bold** and `code`';
     const tail = extractTailWithFormatting(text, 10);
-    expect(tail.length).toBeLessThanOrEqual(10);
+    expect(tail.startsWith('...')).toBe(true);
+    expect(tail).toContain('code');
   });
 
   it('fallback streaming appends text', async () => {

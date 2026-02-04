@@ -125,8 +125,7 @@ export async function syncMessagesFromSession(
       continue;
     }
 
-    const prefix = msg.info.role === 'user' ? '*User:*
-' : '';
+    const prefix = msg.info.role === 'user' ? '*User:*\n' : '';
     const postedTs = await postText(state, `${prefix}${text}`, Boolean(state.threadTs), charLimit);
 
     if (postedTs) {

@@ -1,7 +1,7 @@
 import './slack-bot-mocks-real-blocks.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
-import { registeredHandlers, resetMockState, eventSubscribers } from './slack-bot-mocks-real-blocks.js';
+import { registeredHandlers, resetMockState, eventSubscribers, lastAppClient } from './slack-bot-mocks-real-blocks.js';
 import { startBot, stopBot } from '../../../opencode/src/slack-bot.js';
 
 describe('status-block-content', () => {
@@ -84,10 +84,11 @@ describe('status-block-content', () => {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const updateCalls = client.chat.update.mock.calls;
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
     const completionCall = updateCalls.find((call: any) =>
-      JSON.stringify(call[0]?.blocks || []).includes('Complete')
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
     );
 
     expect(completionCall).toBeDefined();

@@ -1,6 +1,10 @@
 import { vi } from 'vitest';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 
+const { conversationBusy } = vi.hoisted(() => ({
+  conversationBusy: new Set<string>(),
+}));
+
 export let registeredHandlers: Record<string, any> = {};
 export let lastAppClient: ReturnType<typeof createMockWebClient> | null = null;
 export const eventSubscribers: Array<(event: any) => void> = [];
@@ -9,19 +13,13 @@ export let lastStreamingSession: { appendText: any; finish: any; error: any; mes
 
 export const resetHandlers = () => { registeredHandlers = {}; };
 export const resetMockState = () => {
+  vi.clearAllMocks();
   resetHandlers();
   eventSubscribers.length = 0;
   eventUnsubscribers.length = 0;
   lastAppClient = null;
-  lastServerPool = null;
   lastStreamingSession = null;
-  const maybeMock = mockWrapper as any;
-  for (const key of Object.keys(maybeMock)) {
-    const value = maybeMock[key];
-    if (value && typeof value.mockClear === 'function') {
-      value.mockClear();
-    }
-  }
+  conversationBusy.clear();
 };
 
 class MockApp {
@@ -94,10 +92,9 @@ vi.mock('../../../opencode/src/server-pool.js', () => {
 
 vi.mock('../../../slack/src/session/conversation-tracker.js', () => ({
   ConversationTracker: class {
-    private busy = new Set<string>();
-    startProcessing(id: string) { if (this.busy.has(id)) return false; this.busy.add(id); return true; }
-    stopProcessing(id: string) { this.busy.delete(id); }
-    isBusy(id: string) { return this.busy.has(id); }
+    startProcessing(id: string) { if (conversationBusy.has(id)) return false; conversationBusy.add(id); return true; }
+    stopProcessing(id: string) { conversationBusy.delete(id); }
+    isBusy(id: string) { return conversationBusy.has(id); }
   },
 }));
 

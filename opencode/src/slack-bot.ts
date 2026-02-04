@@ -53,7 +53,7 @@ import { buildMessageContent } from './content-builder.js';
 import { withSlackRetry } from '../../slack/src/retry.js';
 import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
 import { syncMessagesFromSession } from './message-sync.js';
-import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId } from './model-cache.js';
+import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId, isModelAvailable } from './model-cache.js';
 import { postThinkingToThread } from './activity-thread.js';
 
 const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];

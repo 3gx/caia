@@ -15,23 +15,23 @@ const baseSession: Session = {
 describe('commands', () => {
   it('parses /mode', () => {
     const result = parseCommand('/mode plan', baseSession);
-    expect(result.command).toBe('mode');
-    expect(result.mode).toBe('plan');
+    expect(result.handled).toBe(true);
+    expect(result.sessionUpdate?.mode).toBe('plan');
   });
 
   it('parses /model', () => {
     const result = parseCommand('/model provider/model', baseSession);
-    expect(result.command).toBe('model');
-    expect(result.model).toBe('provider/model');
+    expect(result.handled).toBe(true);
+    expect(result.showModelSelection).toBe(true);
   });
 
   it('extracts inline mode', () => {
-    const res = extractInlineMode('!plan please');
+    const res = extractInlineMode('/mode plan please');
     expect(res.mode).toBe('plan');
   });
 
   it('extracts mention mode', () => {
-    const res = extractMentionMode('<@BOT> !ask hello', 'BOT');
+    const res = extractMentionMode('<@BOT> /mode ask hello', 'BOT');
     expect(res.mode).toBe('default');
   });
 });

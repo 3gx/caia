@@ -25,6 +25,8 @@ describe('server crash recovery', () => {
 
     // Fast-forward health interval (30s default)
     await vi.advanceTimersByTimeAsync(30000);
+    // Fast-forward restart backoff (1s for first attempt)
+    await vi.advanceTimersByTimeAsync(1000);
 
     expect(instance.client.restart).toHaveBeenCalled();
     vi.useRealTimers();

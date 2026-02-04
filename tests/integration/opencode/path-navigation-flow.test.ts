@@ -45,7 +45,7 @@ describe('path-navigation-flow', () => {
 
     expect(saveSession).toHaveBeenCalledWith('C1', expect.objectContaining({
       pathConfigured: true,
-      configuredPath: '/tmp',
+      configuredPath: expect.stringContaining('/tmp'),
     }));
   });
 

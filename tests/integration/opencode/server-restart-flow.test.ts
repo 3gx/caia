@@ -1,6 +1,6 @@
 import './slack-bot-mocks.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { registeredHandlers, lastServerPool, mockWrapper } from './slack-bot-mocks.js';
+import { registeredHandlers, lastServerPool, mockWrapper, eventSubscribers } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 
@@ -10,6 +10,11 @@ describe('server-restart-flow', () => {
   });
 
   afterEach(async () => {
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
     await teardownBot();
   });
 

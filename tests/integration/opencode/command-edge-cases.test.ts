@@ -140,9 +140,9 @@ describe('command-edge-cases', () => {
       'C1',
       'PLAN CONTENT',
       expect.stringContaining('Current Plan'),
-      undefined,
+      '1.0',
       'U1',
-      expect.any(Number)
+      500
     );
 
     readSpy.mockRestore();

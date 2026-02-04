@@ -5,7 +5,9 @@ vi.mock('../../../slack/src/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
 }));
 
-const addSyncedMessageUuid = vi.fn().mockResolvedValue(undefined);
+const { addSyncedMessageUuid } = vi.hoisted(() => ({
+  addSyncedMessageUuid: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('../../../opencode/src/session-manager.js', () => ({
   getSyncedMessageUuids: vi.fn(() => new Set(['m1'])),

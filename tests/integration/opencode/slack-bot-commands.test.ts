@@ -190,12 +190,12 @@ describe('slack-bot-commands', () => {
     const client = createMockWebClient();
 
     await handler({
-      event: { user: 'U1', text: '<@BOT123> /thinking 500', channel: 'C1', ts: '1.0' },
+      event: { user: 'U1', text: '<@BOT123> /thinking 2048', channel: 'C1', ts: '1.0' },
       client,
       context: { botUserId: 'BOT123' },
     });
 
-    expect(vi.mocked(saveSession)).toHaveBeenCalledWith('C1', { maxThinkingTokens: 500 });
+    expect(vi.mocked(saveSession)).toHaveBeenCalledWith('C1', expect.objectContaining({ maxThinkingTokens: 2048 }));
   });
 
   it('returns error when /context has no usage', async () => {

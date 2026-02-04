@@ -36,9 +36,16 @@ describe('SessionEventStream', () => {
     const stream = new SessionEventStream(client, { baseDelayMs: 1, maxDelayMs: 1 });
     const received: string[] = [];
 
-    stream.subscribe((event) => received.push(event.type));
+    const unsubscribe = stream.subscribe((event) => {
+      received.push(event.type);
+      if (received.length >= 1) {
+        unsubscribe();
+      }
+    });
 
-    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
 
     expect(received).toContain('session.idle');
   });
@@ -54,9 +61,17 @@ describe('SessionEventStream', () => {
 
     const stream = new SessionEventStream(client, { baseDelayMs: 1, maxDelayMs: 1 });
     const received: string[] = [];
-    stream.subscribe((event) => received.push(event.type));
+    const unsubscribe = stream.subscribe((event) => {
+      received.push(event.type);
+      if (received.length >= 1) {
+        unsubscribe();
+      }
+    });
 
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(2);
+    await Promise.resolve();
 
     expect(received).toContain('session.busy');
     expect(client.global.event).toHaveBeenCalledTimes(2);
@@ -73,7 +88,8 @@ describe('SessionEventStream', () => {
     const unsubscribe = stream.subscribe(() => {});
     unsubscribe();
 
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
 
     // Should not keep reconnecting when no listeners
     expect(client.global.event).toHaveBeenCalledTimes(1);

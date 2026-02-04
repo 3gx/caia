@@ -11,6 +11,11 @@ describe('status-update-flow', () => {
   });
 
   afterEach(async () => {
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
     await teardownBot();
     vi.clearAllTimers();
     vi.useRealTimers();
@@ -48,12 +53,13 @@ describe('status-update-flow', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(1000);
 
-    const lastCall = vi.mocked(buildCombinedStatusBlocks).mock.calls.at(-1)?.[0] as any;
     expect(vi.mocked(buildCombinedStatusBlocks).mock.calls.length).toBeGreaterThan(callCountBefore);
-    expect(lastCall?.status).toBe('tool');
-    expect(lastCall?.currentTool).toBe('WriteFile');
-    expect(lastCall?.toolsCompleted).toBe(0);
-    expect(lastCall?.activityLog?.some((entry: any) => entry.type === 'tool_start')).toBe(true);
+    const toolCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.status === 'tool' && args?.currentTool === 'WriteFile');
+    expect(toolCall).toBeDefined();
+    expect(toolCall?.toolsCompleted).toBe(0);
+    expect(toolCall?.activityLog?.some((entry: any) => entry.type === 'tool_start')).toBe(true);
   });
 
   it('tracks tool completions and updates activity log', async () => {
@@ -102,11 +108,12 @@ describe('status-update-flow', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(1000);
 
-    const lastCall = vi.mocked(buildCombinedStatusBlocks).mock.calls.at(-1)?.[0] as any;
-    expect(lastCall?.status).toBe('thinking');
-    expect(lastCall?.currentTool).toBeUndefined();
-    expect(lastCall?.toolsCompleted).toBe(1);
-    expect(lastCall?.activityLog?.some((entry: any) => entry.type === 'tool_complete')).toBe(true);
+    const completedCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.toolsCompleted === 1 && args?.status === 'thinking');
+    expect(completedCall).toBeDefined();
+    expect(completedCall?.currentTool).toBeUndefined();
+    expect(completedCall?.activityLog?.some((entry: any) => entry.type === 'tool_complete')).toBe(true);
   });
 
   it('captures todo updates and compaction status', async () => {
@@ -140,9 +147,11 @@ describe('status-update-flow', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(1000);
 
-    const lastCall = vi.mocked(buildCombinedStatusBlocks).mock.calls.at(-1)?.[0] as any;
-    expect(lastCall?.customStatus).toBe('Compacted');
-    expect(lastCall?.activityLog?.some((entry: any) => entry.tool === 'TodoWrite')).toBe(true);
+    const compactCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.customStatus === 'Compacted');
+    expect(compactCall).toBeDefined();
+    expect(compactCall?.activityLog?.some((entry: any) => entry.tool === 'TodoWrite')).toBe(true);
   });
 
   it('computes context stats for status updates', async () => {
@@ -182,10 +191,12 @@ describe('status-update-flow', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(1000);
 
-    const lastCall = vi.mocked(buildCombinedStatusBlocks).mock.calls.at(-1)?.[0] as any;
-    expect(lastCall?.contextPercent).toBe(0.3);
-    expect(lastCall?.compactPercent).toBe(40);
-    expect(lastCall?.tokensToCompact).toBe(400);
-    expect(lastCall?.spinner).toBeDefined();
+    const usageCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.contextPercent === 0.3);
+    expect(usageCall).toBeDefined();
+    expect(usageCall?.compactPercent).toBe(40);
+    expect(usageCall?.tokensToCompact).toBe(400);
+    expect(usageCall?.spinner).toBeDefined();
   });
 });

@@ -28,9 +28,16 @@ describe('event reconnection', () => {
 
     const stream = new SessionEventStream(client, { baseDelayMs: 1, maxDelayMs: 1 });
     const received: string[] = [];
-    stream.subscribe((evt) => received.push(evt.type));
+    const unsubscribe = stream.subscribe((evt) => {
+      received.push(evt.type);
+      if (received.length >= 1) {
+        unsubscribe();
+      }
+    });
 
-    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
 
     expect(client.global.event).toHaveBeenCalledTimes(2);
     expect(received).toContain('session.idle');

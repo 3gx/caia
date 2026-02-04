@@ -23,7 +23,7 @@ const usage = {
 
 describe('blocks', () => {
   it('builds status blocks', () => {
-    const blocks = buildStatusBlocks('processing', { statusMsgTs: '1.0', usage });
+    const blocks = buildStatusBlocks({ status: 'processing', messageTs: '1.0' });
     expect(blocks.length).toBeGreaterThan(0);
   });
 
@@ -62,7 +62,7 @@ describe('blocks', () => {
     ];
     const blocks = buildModelSelectionBlocks(models, 'm1');
     expect(blocks.length).toBeGreaterThan(0);
-    const deprecated = buildModelDeprecatedBlocks(models, 'm2');
+    const deprecated = buildModelDeprecatedBlocks('m2', models);
     expect(deprecated.length).toBeGreaterThan(0);
   });
 });

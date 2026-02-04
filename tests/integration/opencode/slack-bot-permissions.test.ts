@@ -22,7 +22,7 @@ describe('slack-bot-permissions', () => {
     const mentionHandler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
 
-    vi.mocked(getSession).mockReturnValueOnce({
+    const bypassSession = {
       sessionId: 'sess_mock',
       workingDir: '/tmp',
       mode: 'bypassPermissions',
@@ -31,7 +31,11 @@ describe('slack-bot-permissions', () => {
       pathConfigured: false,
       configuredPath: null,
       previousSessionIds: [],
-    } as any);
+    } as any;
+
+    vi.mocked(getSession)
+      .mockReturnValueOnce(bypassSession)
+      .mockReturnValueOnce(bypassSession);
 
     await mentionHandler({
       event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '1.0' },

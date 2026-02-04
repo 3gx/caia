@@ -23,7 +23,7 @@ describe('slack-bot-mention', () => {
     const client = createMockWebClient();
 
     await handler({
-      event: { user: 'U1', text: '<@BOT123> !plan make a plan', channel: 'C1', ts: '1.0' },
+      event: { user: 'U1', text: '<@BOT123> /mode plan make a plan', channel: 'C1', ts: '1.0' },
       client,
       context: { botUserId: 'BOT123' },
     });
