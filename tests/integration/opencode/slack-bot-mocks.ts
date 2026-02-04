@@ -4,12 +4,14 @@ import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js'
 export let registeredHandlers: Record<string, any> = {};
 export let lastAppClient: ReturnType<typeof createMockWebClient> | null = null;
 export const eventSubscribers: Array<(event: any) => void> = [];
+export const eventUnsubscribers: Array<ReturnType<typeof vi.fn>> = [];
 export let lastStreamingSession: { appendText: any; finish: any; error: any; messageTs: string | null } | null = null;
 
 export const resetHandlers = () => { registeredHandlers = {}; };
 export const resetMockState = () => {
   resetHandlers();
   eventSubscribers.length = 0;
+  eventUnsubscribers.length = 0;
   lastAppClient = null;
   lastServerPool = null;
   lastStreamingSession = null;
@@ -58,7 +60,9 @@ class MockWrapper {
   abort = vi.fn().mockResolvedValue(undefined);
   subscribeToEvents = vi.fn((cb: (event: any) => void) => {
     eventSubscribers.push(cb);
-    return () => undefined;
+    const unsubscribe = vi.fn();
+    eventUnsubscribers.push(unsubscribe);
+    return unsubscribe;
   });
   getServer() { return { url: 'http://localhost:60000', close: vi.fn() }; }
 }

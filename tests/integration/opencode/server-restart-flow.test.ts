@@ -1,6 +1,6 @@
 import './slack-bot-mocks.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { registeredHandlers, lastServerPool } from './slack-bot-mocks.js';
+import { registeredHandlers, lastServerPool, mockWrapper } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 
@@ -28,5 +28,26 @@ describe('server-restart-flow', () => {
     });
 
     expect(lastServerPool?.getOrCreate).toHaveBeenCalledWith('C1');
+  });
+
+  it('allows a new request after prompt failure', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    mockWrapper.promptAsync.mockRejectedValueOnce(new Error('fail once'));
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> first', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> second', channel: 'C1', ts: '2.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    expect(mockWrapper.promptAsync).toHaveBeenCalledTimes(2);
   });
 });

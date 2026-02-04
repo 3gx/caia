@@ -144,4 +144,48 @@ describe('status-update-flow', () => {
     expect(lastCall?.customStatus).toBe('Compacted');
     expect(lastCall?.activityLog?.some((entry: any) => entry.tool === 'TodoWrite')).toBe(true);
   });
+
+  it('computes context stats for status updates', async () => {
+    vi.useFakeTimers();
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> usage', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-2',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: {
+              input: 400,
+              output: 50,
+              reasoning: 0,
+              cache: { read: 100, write: 100 },
+            },
+            cost: 0.02,
+          },
+          parts: [],
+        },
+      },
+    });
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const lastCall = vi.mocked(buildCombinedStatusBlocks).mock.calls.at(-1)?.[0] as any;
+    expect(lastCall?.contextPercent).toBe(0.3);
+    expect(lastCall?.compactPercent).toBe(40);
+    expect(lastCall?.tokensToCompact).toBe(400);
+    expect(lastCall?.spinner).toBeDefined();
+  });
 });
