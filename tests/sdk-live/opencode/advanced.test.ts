@@ -79,24 +79,21 @@ describe.skipIf(SKIP_LIVE)('Advanced Scenarios', { timeout: 180000 }, () => {
     });
     opencode.trackSession(session.data!.id);
 
+    // Attach .catch() immediately to prevent unhandled rejection if timeout fires during prompts
     const compactPromise = waitForEvent(
       client,
       event => event.payload?.type === 'session.compacted',
       { timeoutMs: 15000, description: 'session.compacted event' },
-    );
+    ).catch(() => null);  // Compaction is not guaranteed; timeout is expected
 
     for (let i = 0; i < 5; i++) {
       await client.session.prompt({
         path: { id: session.data!.id },
         body: { parts: [{ type: 'text', text: `Long message ${i} with content to increase context window` }] },
       });
-      // prompt() blocks until completion
     }
-    try {
-      await compactPromise;
-    } catch {
-      // Compaction is not guaranteed; ignore timeout.
-    }
+
+    await compactPromise;  // Safe - rejection already handled
 
     expect(true).toBe(true);
   });
