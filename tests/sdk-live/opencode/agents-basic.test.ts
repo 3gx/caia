@@ -28,27 +28,34 @@ describe.skipIf(SKIP_LIVE)('Agent Types', { timeout: 60000 }, () => {
     await opencode.cleanup();
   });
 
-  it('CANARY: prompt with agent parameter succeeds', async () => {
+  it('CANARY: prompt with agent=plan returns plan mode response', async () => {
     const session = await client.session.create({
-      body: { title: `${TEST_SESSION_PREFIX}Agent Param Test` },
+      body: { title: `${TEST_SESSION_PREFIX}Plan Agent Test` },
     });
     opencode.trackSession(session.data!.id);
 
-    // Use simple prompt - agent parameter may or may not affect behavior
+    // Simple task that plan agent can handle quickly
     const result = await client.session.prompt({
       path: { id: session.data!.id },
       body: {
-        parts: [{ type: 'text', text: 'Say hello' }],
-        agent: 'general',
+        parts: [{ type: 'text', text: 'create a plan to write "hello world" to file hello-world.txt' }],
+        agent: 'plan',
       },
     });
 
     expect(result).toBeDefined();
+    expect(result.data).toBeDefined();
 
-    // Verify session has messages after prompt
-    const messages = await client.session.messages({ path: { id: session.data!.id } });
-    expect(messages.data).toBeDefined();
-    expect(messages.data!.length).toBeGreaterThan(0);
+    // Verify plan mode indicators
+    expect(result.data!.info.agent).toBe('plan');
+    expect(result.data!.info.mode).toBe('plan');
+
+    // Verify plan-specific parts exist
+    const parts = result.data!.parts || [];
+    const partTypes = parts.map((p: any) => p.type);
+    expect(partTypes).toContain('step-start');
+    expect(partTypes).toContain('text');
+    expect(partTypes).toContain('step-finish');
   });
 
   it('CANARY: prompt with agent=build succeeds', async () => {
