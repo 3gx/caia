@@ -15,7 +15,12 @@
     "test": "vitest run",
     "test:claude": "vitest run tests/sdk-live/claude --config vitest.config.sdk-live.ts --reporter=verbose",
     "test:codex": "vitest run tests/sdk-live/codex --config vitest.config.sdk-live.ts --reporter=verbose",
-    "test:opencode": "vitest run --config vitest.config.sdk-opencode.ts --reporter=verbose"
+    "test:opencode": "vitest run --config vitest.config.sdk-opencode.ts --reporter=verbose",
+    "test:unit:opencode": "vitest run --config vitest.config.opencode.ts --reporter=verbose tests/unit/opencode",
+    "test:integration:opencode": "vitest run --config vitest.config.opencode.ts --reporter=verbose tests/integration/opencode",
+    "test:opencode:all": "vitest run --config vitest.config.opencode.ts --reporter=verbose",
+    "test:opencode:failure": "vitest run --config vitest.config.opencode.ts --reporter=verbose tests/unit/opencode/*recovery*.test.ts tests/unit/opencode/*collision*.test.ts tests/unit/opencode/*startup*.test.ts tests/integration/opencode/*recovery*.test.ts tests/integration/opencode/*restart*.test.ts tests/integration/opencode/*reconnect*.test.ts",
+    "test:opencode:coverage": "vitest run --config vitest.config.opencode.ts --coverage"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "latest",

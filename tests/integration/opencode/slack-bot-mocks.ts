@@ -1,0 +1,169 @@
+import { vi } from 'vitest';
+import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
+
+export let registeredHandlers: Record<string, any> = {};
+export const resetHandlers = () => { registeredHandlers = {}; };
+
+class MockApp {
+  client = createMockWebClient();
+  constructor() {}
+  event(name: string, handler: any) { registeredHandlers[`event_${name}`] = handler; }
+  message(handler: any) { registeredHandlers['message'] = handler; }
+  action(pattern: RegExp, handler: any) { registeredHandlers[`action_${pattern.source}`] = handler; }
+  view(pattern: string, handler: any) { registeredHandlers[`view_${pattern}`] = handler; }
+  async start() { return Promise.resolve(); }
+  async stop() { return Promise.resolve(); }
+}
+
+vi.mock('@slack/bolt', () => ({
+  App: MockApp,
+  LogLevel: { DEBUG: 'debug', INFO: 'info' },
+}));
+
+vi.mock('../../../opencode/src/server-pool.js', () => {
+  class MockWrapper {
+    private client = {
+      session: {
+        messages: vi.fn().mockResolvedValue({ data: [] }),
+      },
+    } as any;
+    getClient() { return this.client; }
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn().mockResolvedValue(undefined);
+    restart = vi.fn().mockResolvedValue(undefined);
+    healthCheck = vi.fn().mockResolvedValue(true);
+    createSession = vi.fn().mockResolvedValue('sess_mock');
+    forkSession = vi.fn().mockResolvedValue('fork_sess');
+    promptAsync = vi.fn().mockResolvedValue(undefined);
+    respondToPermission = vi.fn().mockResolvedValue(undefined);
+    abort = vi.fn().mockResolvedValue(undefined);
+    getServer() { return { url: 'http://localhost:60000', close: vi.fn() }; }
+  }
+  class ServerPool {
+    getOrCreate = vi.fn().mockResolvedValue({
+      client: new MockWrapper(),
+      server: { url: 'http://localhost:60000', close: vi.fn() },
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      channelId: 'C1',
+      restartAttempts: 0,
+      refCount: 1,
+      channelIds: new Set(['C1']),
+    });
+    attachChannel = vi.fn();
+    shutdown = vi.fn().mockResolvedValue(undefined);
+    shutdownAll = vi.fn().mockResolvedValue(undefined);
+  }
+  return { ServerPool };
+});
+
+vi.mock('../../../slack/src/session/conversation-tracker.js', () => ({
+  ConversationTracker: class {
+    private busy = new Set<string>();
+    startProcessing(id: string) { if (this.busy.has(id)) return false; this.busy.add(id); return true; }
+    stopProcessing(id: string) { this.busy.delete(id); }
+    isBusy(id: string) { return this.busy.has(id); }
+  },
+}));
+
+vi.mock('../../../opencode/src/session-manager.js', () => ({
+  getSession: vi.fn().mockReturnValue({
+    sessionId: 'sess_mock',
+    workingDir: '/tmp',
+    mode: 'default',
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+    pathConfigured: false,
+    configuredPath: null,
+    previousSessionIds: [],
+  }),
+  saveSession: vi.fn(),
+  getThreadSession: vi.fn(),
+  saveThreadSession: vi.fn(),
+  getOrCreateThreadSession: vi.fn().mockResolvedValue({
+    session: { sessionId: 'sess_thread', forkedFrom: 'sess_mock', workingDir: '/tmp', mode: 'default', createdAt: Date.now(), lastActiveAt: Date.now(), pathConfigured: false, configuredPath: null },
+    isNewFork: false,
+  }),
+  saveMessageMapping: vi.fn(),
+  findForkPointMessageId: vi.fn().mockReturnValue(null),
+  addSlackOriginatedUserUuid: vi.fn(),
+  clearSyncedMessageUuids: vi.fn(),
+  clearSlackOriginatedUserUuids: vi.fn(),
+}));
+
+vi.mock('../../../opencode/src/blocks.js', () => ({
+  buildCombinedStatusBlocks: vi.fn().mockReturnValue([]),
+  buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
+  buildModelSelectionBlocks: vi.fn().mockReturnValue([]),
+  buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
+  buildForkToChannelModalView: vi.fn().mockReturnValue({}),
+  buildAbortConfirmationModalView: vi.fn().mockReturnValue({}),
+  buildModeSelectionBlocks: vi.fn().mockReturnValue([]),
+  DEFAULT_CONTEXT_WINDOW: 200000,
+  computeAutoCompactThreshold: vi.fn().mockReturnValue(1000),
+}));
+
+vi.mock('../../../opencode/src/streaming.js', () => ({
+  startStreamingSession: vi.fn().mockResolvedValue({
+    appendText: vi.fn(),
+    finish: vi.fn(),
+    error: vi.fn(),
+    messageTs: '1.0',
+  }),
+  makeConversationKey: vi.fn().mockReturnValue('C1'),
+  uploadMarkdownAndPngWithResponse: vi.fn().mockResolvedValue({ ts: '1.0' }),
+}));
+
+vi.mock('../../../opencode/src/errors.js', () => ({
+  toUserMessage: vi.fn().mockReturnValue('Error'),
+}));
+
+vi.mock('../../../opencode/src/emoji-reactions.js', () => ({
+  markProcessingStart: vi.fn().mockResolvedValue(undefined),
+  markApprovalWait: vi.fn().mockResolvedValue(undefined),
+  markApprovalDone: vi.fn().mockResolvedValue(undefined),
+  markError: vi.fn().mockResolvedValue(undefined),
+  markAborted: vi.fn().mockResolvedValue(undefined),
+  removeProcessingEmoji: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../../opencode/src/dm-notifications.js', () => ({
+  sendDmNotification: vi.fn().mockResolvedValue(undefined),
+  clearDmDebounce: vi.fn(),
+}));
+
+vi.mock('../../../slack/src/file-handler.js', () => ({
+  processSlackFiles: vi.fn().mockResolvedValue({ files: [], warnings: [] }),
+}));
+
+vi.mock('../../../opencode/src/content-builder.js', () => ({
+  buildMessageContent: vi.fn().mockReturnValue([{ type: 'text', text: 'hello' }]),
+}));
+
+vi.mock('../../../slack/src/retry.js', () => ({
+  withSlackRetry: (fn: any) => fn(),
+}));
+
+vi.mock('../../../opencode/src/terminal-watcher.js', () => ({
+  startWatching: vi.fn().mockReturnValue({ success: true }),
+  isWatching: vi.fn().mockReturnValue(false),
+  updateWatchRate: vi.fn().mockReturnValue(true),
+  stopAllWatchers: vi.fn(),
+  onSessionCleared: vi.fn(),
+}));
+
+vi.mock('../../../opencode/src/message-sync.js', () => ({
+  syncMessagesFromSession: vi.fn().mockResolvedValue({ syncedCount: 0, totalToSync: 0, wasAborted: false, allSucceeded: true }),
+}));
+
+vi.mock('../../../opencode/src/model-cache.js', () => ({
+  getAvailableModels: vi.fn().mockResolvedValue([]),
+  getModelInfo: vi.fn().mockResolvedValue(undefined),
+  encodeModelId: vi.fn().mockReturnValue('p:m'),
+  decodeModelId: vi.fn().mockReturnValue({ providerID: 'p', modelID: 'm' }),
+  isModelAvailable: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock('../../../opencode/src/activity-thread.js', () => ({
+  postThinkingToThread: vi.fn().mockResolvedValue(undefined),
+}));
