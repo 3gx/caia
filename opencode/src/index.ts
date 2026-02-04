@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { startBot, stopBot } from './slack-bot.js';
 
 async function shutdown(signal: string): Promise<void> {
