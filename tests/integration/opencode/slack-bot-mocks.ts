@@ -124,6 +124,8 @@ vi.mock('../../../opencode/src/session-manager.js', () => ({
 
 vi.mock('../../../opencode/src/blocks.js', () => ({
   buildCombinedStatusBlocks: vi.fn().mockReturnValue([]),
+  buildStatusDisplayBlocks: vi.fn().mockReturnValue([]),
+  buildContextDisplayBlocks: vi.fn().mockReturnValue([]),
   buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
   buildModelSelectionBlocks: vi.fn().mockReturnValue([]),
   buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
