@@ -2,11 +2,31 @@ import { vi } from 'vitest';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 
 export let registeredHandlers: Record<string, any> = {};
+export let lastAppClient: ReturnType<typeof createMockWebClient> | null = null;
+export const eventSubscribers: Array<(event: any) => void> = [];
+export let lastStreamingSession: { appendText: any; finish: any; error: any; messageTs: string | null } | null = null;
+
 export const resetHandlers = () => { registeredHandlers = {}; };
+export const resetMockState = () => {
+  resetHandlers();
+  eventSubscribers.length = 0;
+  lastAppClient = null;
+  lastServerPool = null;
+  lastStreamingSession = null;
+  const maybeMock = mockWrapper as any;
+  for (const key of Object.keys(maybeMock)) {
+    const value = maybeMock[key];
+    if (value && typeof value.mockClear === 'function') {
+      value.mockClear();
+    }
+  }
+};
 
 class MockApp {
   client = createMockWebClient();
-  constructor() {}
+  constructor() {
+    lastAppClient = this.client;
+  }
   event(name: string, handler: any) { registeredHandlers[`event_${name}`] = handler; }
   message(handler: any) { registeredHandlers['message'] = handler; }
   action(pattern: RegExp, handler: any) { registeredHandlers[`action_${pattern.source}`] = handler; }
@@ -20,28 +40,39 @@ vi.mock('@slack/bolt', () => ({
   LogLevel: { DEBUG: 'debug', INFO: 'info' },
 }));
 
+class MockWrapper {
+  private client = {
+    session: {
+      messages: vi.fn().mockResolvedValue({ data: [] }),
+    },
+  } as any;
+  getClient() { return this.client; }
+  start = vi.fn().mockResolvedValue(undefined);
+  stop = vi.fn().mockResolvedValue(undefined);
+  restart = vi.fn().mockResolvedValue(undefined);
+  healthCheck = vi.fn().mockResolvedValue(true);
+  createSession = vi.fn().mockResolvedValue('sess_mock');
+  forkSession = vi.fn().mockResolvedValue('fork_sess');
+  promptAsync = vi.fn().mockResolvedValue(undefined);
+  respondToPermission = vi.fn().mockResolvedValue(undefined);
+  abort = vi.fn().mockResolvedValue(undefined);
+  subscribeToEvents = vi.fn((cb: (event: any) => void) => {
+    eventSubscribers.push(cb);
+    return () => undefined;
+  });
+  getServer() { return { url: 'http://localhost:60000', close: vi.fn() }; }
+}
+
+export const mockWrapper = new MockWrapper();
+export let lastServerPool: any = null;
+
 vi.mock('../../../opencode/src/server-pool.js', () => {
-  class MockWrapper {
-    private client = {
-      session: {
-        messages: vi.fn().mockResolvedValue({ data: [] }),
-      },
-    } as any;
-    getClient() { return this.client; }
-    start = vi.fn().mockResolvedValue(undefined);
-    stop = vi.fn().mockResolvedValue(undefined);
-    restart = vi.fn().mockResolvedValue(undefined);
-    healthCheck = vi.fn().mockResolvedValue(true);
-    createSession = vi.fn().mockResolvedValue('sess_mock');
-    forkSession = vi.fn().mockResolvedValue('fork_sess');
-    promptAsync = vi.fn().mockResolvedValue(undefined);
-    respondToPermission = vi.fn().mockResolvedValue(undefined);
-    abort = vi.fn().mockResolvedValue(undefined);
-    getServer() { return { url: 'http://localhost:60000', close: vi.fn() }; }
-  }
   class ServerPool {
+    constructor() {
+      lastServerPool = this;
+    }
     getOrCreate = vi.fn().mockResolvedValue({
-      client: new MockWrapper(),
+      client: mockWrapper,
       server: { url: 'http://localhost:60000', close: vi.fn() },
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
@@ -104,11 +135,14 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
 }));
 
 vi.mock('../../../opencode/src/streaming.js', () => ({
-  startStreamingSession: vi.fn().mockResolvedValue({
-    appendText: vi.fn(),
-    finish: vi.fn(),
-    error: vi.fn(),
-    messageTs: '1.0',
+  startStreamingSession: vi.fn().mockImplementation(async () => {
+    lastStreamingSession = {
+      appendText: vi.fn(),
+      finish: vi.fn(),
+      error: vi.fn(),
+      messageTs: '1.0',
+    };
+    return lastStreamingSession;
   }),
   makeConversationKey: vi.fn().mockReturnValue('C1'),
   uploadMarkdownAndPngWithResponse: vi.fn().mockResolvedValue({ ts: '1.0' }),
