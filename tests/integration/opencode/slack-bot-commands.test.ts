@@ -73,6 +73,26 @@ describe('slack-bot-commands', () => {
     expect(client.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Session cleared') }));
   });
 
+  it('blocks /clear when session is busy', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> first', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> /clear', channel: 'C1', ts: '2.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    const texts = client.chat.postMessage.mock.calls.map((call: any) => call[0]?.text || '');
+    expect(texts.some((t: string) => t.includes('Cannot clear while a request is running'))).toBe(true);
+  });
+
   it('handles /watch by starting watcher', async () => {
     const handler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
