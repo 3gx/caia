@@ -126,19 +126,29 @@ vi.mock('../../../opencode/src/session-manager.js', () => ({
   clearSlackOriginatedUserUuids: vi.fn(),
 }));
 
-vi.mock('../../../opencode/src/blocks.js', () => ({
-  buildCombinedStatusBlocks: vi.fn().mockReturnValue([]),
-  buildStatusDisplayBlocks: vi.fn().mockReturnValue([]),
-  buildContextDisplayBlocks: vi.fn().mockReturnValue([]),
-  buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
-  buildModelSelectionBlocks: vi.fn().mockReturnValue([]),
-  buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
-  buildForkToChannelModalView: vi.fn().mockReturnValue({}),
-  buildAbortConfirmationModalView: vi.fn().mockReturnValue({}),
-  buildModeSelectionBlocks: vi.fn().mockReturnValue([]),
-  DEFAULT_CONTEXT_WINDOW: 200000,
-  computeAutoCompactThreshold: vi.fn().mockReturnValue(1000),
-}));
+const useRealBlocks = process.env.OPENCODE_TEST_REAL_BLOCKS === '1';
+
+vi.mock('../../../opencode/src/blocks.js', async () => {
+  if (useRealBlocks) {
+    return await vi.importActual<typeof import('../../../opencode/src/blocks.js')>(
+      '../../../opencode/src/blocks.js'
+    );
+  }
+
+  return {
+    buildCombinedStatusBlocks: vi.fn().mockReturnValue([]),
+    buildStatusDisplayBlocks: vi.fn().mockReturnValue([]),
+    buildContextDisplayBlocks: vi.fn().mockReturnValue([]),
+    buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
+    buildModelSelectionBlocks: vi.fn().mockReturnValue([]),
+    buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
+    buildForkToChannelModalView: vi.fn().mockReturnValue({}),
+    buildAbortConfirmationModalView: vi.fn().mockReturnValue({}),
+    buildModeSelectionBlocks: vi.fn().mockReturnValue([]),
+    DEFAULT_CONTEXT_WINDOW: 200000,
+    computeAutoCompactThreshold: vi.fn().mockReturnValue(1000),
+  };
+});
 
 vi.mock('../../../opencode/src/streaming.js', () => ({
   startStreamingSession: vi.fn().mockImplementation(async () => {
