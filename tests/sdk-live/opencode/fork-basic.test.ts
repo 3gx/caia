@@ -117,9 +117,8 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
 
     await client.session.prompt({
       path: { id: parent.data!.id },
-      body: { parts: [{ type: 'text', text: 'Remember X=1' }] },
+      body: { parts: [{ type: 'text', text: 'Assume variable a has value 1111. Just confirm by saying "a = 1111".' }] },
     });
-    // prompt() blocks until completion
 
     const messages = await client.session.messages({ path: { id: parent.data!.id } });
     const messageId = messages.data?.[0]?.info.id;
@@ -132,15 +131,13 @@ describe.skipIf(SKIP_LIVE)('Fork - Basic', { timeout: 120000 }, () => {
 
     await client.session.prompt({
       path: { id: parent.data!.id },
-      body: { parts: [{ type: 'text', text: 'Add Y=2' }] },
+      body: { parts: [{ type: 'text', text: 'Assume variable b has value 2222. Just confirm by saying "b = 2222".' }] },
     });
-    // prompt() blocks until completion
 
     await client.session.prompt({
       path: { id: fork.data!.id },
-      body: { parts: [{ type: 'text', text: 'Add Z=3' }] },
+      body: { parts: [{ type: 'text', text: 'Assume variable c has value 3333. Just confirm by saying "c = 3333".' }] },
     });
-    // prompt() blocks until completion
 
     const parentMsgs = await client.session.messages({ path: { id: parent.data!.id } });
     const forkMsgs = await client.session.messages({ path: { id: fork.data!.id } });

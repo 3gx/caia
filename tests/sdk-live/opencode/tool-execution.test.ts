@@ -76,12 +76,12 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
           event.payload?.properties?.sessionID === session.data!.id
         );
       },
-      { timeoutMs: 20000, description: 'tool execution events' },
+      { timeoutMs: 45000, description: 'tool execution events' },
     );
 
     await client.session.prompt({
       path: { id: session.data!.id },
-      body: { parts: [{ type: 'text', text: 'List files in current directory' }] },
+      body: { parts: [{ type: 'text', text: 'what is the output of "/bin/ls | head -n 3" in this folder' }] },
     });
     await checkPromise;
 
