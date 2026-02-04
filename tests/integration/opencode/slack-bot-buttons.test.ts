@@ -4,6 +4,7 @@ import { registeredHandlers, mockWrapper } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 import { saveSession } from '../../../opencode/src/session-manager.js';
+import { getModelInfo } from '../../../opencode/src/model-cache.js';
 
 describe('slack-bot-buttons', () => {
   beforeEach(async () => {
@@ -48,6 +49,24 @@ describe('slack-bot-buttons', () => {
 
     expect(vi.mocked(saveSession)).toHaveBeenCalledWith('C1', { model: 'provider:model' });
     expect(client.chat.update).toHaveBeenCalled();
+  });
+
+  it('uses model display name when available', async () => {
+    const handler = registeredHandlers['action_^model_select_(.+)$'];
+    const client = createMockWebClient();
+
+    vi.mocked(getModelInfo).mockResolvedValueOnce({ displayName: 'Fancy Model' } as any);
+
+    await handler({
+      action: { action_id: 'model_select_provider:model' },
+      ack: async () => undefined,
+      body: { channel: { id: 'C1' }, message: { ts: '1.0' } },
+      client,
+    });
+
+    expect(client.chat.update).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Model set to Fancy Model',
+    }));
   });
 
   it('opens abort confirmation modal when abort action clicked', async () => {

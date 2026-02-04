@@ -28,4 +28,16 @@ describe('slack-bot-questions', () => {
 
     expect(mockWrapper.promptAsync).not.toHaveBeenCalled();
   });
+
+  it('routes direct messages to prompt', async () => {
+    const handler = registeredHandlers['event_message'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { channel: 'D1', channel_type: 'im', user: 'U1', text: 'hi', ts: '1.0' },
+      client,
+    });
+
+    expect(mockWrapper.promptAsync).toHaveBeenCalled();
+  });
 });
