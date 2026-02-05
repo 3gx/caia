@@ -412,7 +412,9 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
     state.toolsCompleted += 1;
     state.status = 'thinking';
 
-    const output = typeof part.state?.output === 'string' ? part.state?.output : '';
+    const output = status === 'completed' && part.state && 'output' in part.state && typeof part.state.output === 'string'
+      ? part.state.output
+      : '';
     const truncated = output.length > 50000;
     const outputSlice = truncated ? output.slice(0, 50000) : output;
 
@@ -426,7 +428,9 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
       toolOutputPreview: outputSlice ? outputSlice.slice(0, 300) : undefined,
       toolOutputTruncated: truncated,
       toolIsError: status === 'error',
-      toolErrorMessage: status === 'error' ? part.state?.error : undefined,
+      toolErrorMessage: status === 'error' && part.state && 'error' in part.state
+        ? (part.state as { error?: string }).error
+        : undefined,
     };
 
     if (part.state?.time?.start && part.state?.time?.end) {
@@ -860,11 +864,12 @@ async function handleUserMessage(params: {
     : extractInlineMode(userText);
 
   if (inlineResult.error) {
+    const errorText = inlineResult.error ?? 'Invalid mode.';
     await withSlackRetry(() =>
       client.chat.postMessage({
         channel: channelId,
         thread_ts: postingThreadTs,
-        text: inlineResult.error,
+        text: errorText,
       })
     );
     return;
