@@ -18,7 +18,7 @@ import type {
  */
 export type PermissionMode = 'plan' | 'default' | 'bypassPermissions';
 
-export type AgentType = 'plan' | 'build' | 'explore';
+export type AgentType = 'plan' | 'build';
 
 export type MessagePartInput =
   | TextPartInput
@@ -53,7 +53,6 @@ export interface Session {
   workingDir: string;
   mode: PermissionMode;
   model?: string;
-  agent?: AgentType;
   createdAt: number;
   lastActiveAt: number;
   pathConfigured: boolean;
@@ -82,7 +81,6 @@ export interface ThreadSession {
   workingDir: string;
   mode: PermissionMode;
   model?: string;
-  agent?: AgentType;
   createdAt: number;
   lastActiveAt: number;
   pathConfigured: boolean;

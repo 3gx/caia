@@ -157,8 +157,7 @@ function getSessionIdFromPayload(payload: any): string | null {
   return null;
 }
 
-function resolveAgent(session: Session): 'plan' | 'build' | 'explore' | undefined {
-  if (session.agent) return session.agent;
+function resolveAgent(session: Session): 'plan' | 'build' {
   if (session.mode === 'plan') return 'plan';
   return 'build';
 }
@@ -845,7 +844,6 @@ async function handleUserMessage(params: {
         workingDir: process.cwd(),
         mode: 'bypassPermissions',
         model: undefined,
-        agent: 'build',
         createdAt: Date.now(),
         lastActiveAt: Date.now(),
         pathConfigured: false,
@@ -1532,7 +1530,6 @@ function registerActionHandlers(appInstance: App): void {
         workingDir: sourceSession?.workingDir ?? process.cwd(),
         mode: sourceSession?.mode ?? 'default',
         model: sourceSession?.model,
-        agent: sourceSession?.agent,
         createdAt: Date.now(),
         lastActiveAt: Date.now(),
         pathConfigured: sourceSession?.pathConfigured ?? false,

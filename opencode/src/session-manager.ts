@@ -8,7 +8,7 @@ import { SessionStoreManager } from '../../slack/src/session/base-session-manage
  */
 export type PermissionMode = 'plan' | 'default' | 'bypassPermissions';
 
-export type AgentType = 'plan' | 'build' | 'explore';
+export type AgentType = 'plan' | 'build';
 
 /**
  * All available permission modes for UI display.
@@ -37,7 +37,6 @@ export interface Session {
   mode: PermissionMode;
   model?: string;  // Selected model ID (provider:model)
   recentModels?: string[];  // Last 5 unique model values for quick selection
-  agent?: AgentType;
   createdAt: number;
   lastActiveAt: number;
   // Path configuration fields (immutable once set)
@@ -86,7 +85,6 @@ export interface ThreadSession {
   workingDir: string;
   mode: PermissionMode;
   model?: string;  // Selected model ID (inherited from channel)
-  agent?: AgentType;
   createdAt: number;
   lastActiveAt: number;
   // Path configuration fields (inherited from channel)
@@ -264,7 +262,6 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       mode: existing?.mode ?? 'bypassPermissions',
       model: existing?.model,  // Preserve selected model
       recentModels: existing?.recentModels,  // Preserve recent models for quick selection
-      agent: existing?.agent,
       createdAt: existing?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
       pathConfigured: existing?.pathConfigured ?? false,
@@ -322,7 +319,6 @@ export async function saveThreadSession(
         sessionId: null,
         workingDir: process.cwd(),
         mode: 'bypassPermissions',
-        agent: 'build',
         createdAt: Date.now(),
         lastActiveAt: Date.now(),
         pathConfigured: false,
@@ -345,7 +341,6 @@ export async function saveThreadSession(
       workingDir: existingThread?.workingDir ?? store.channels[channelId].workingDir,
       mode: existingThread?.mode ?? store.channels[channelId].mode,
       model: existingThread?.model ?? store.channels[channelId].model,  // Inherit model from channel
-      agent: existingThread?.agent ?? store.channels[channelId].agent,
       createdAt: existingThread?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
       // INHERIT path configuration from channel
@@ -413,7 +408,6 @@ export async function getOrCreateThreadSession(
     workingDir: mainSession?.workingDir ?? process.cwd(),
     mode: mainSession?.mode ?? 'default',
     model: mainSession?.model,  // Inherit model from main session
-    agent: mainSession?.agent ?? 'build',
     createdAt: Date.now(),
     lastActiveAt: Date.now(),
     // Inherit path configuration from main session
@@ -789,7 +783,6 @@ export async function addSlackOriginatedUserUuid(
           forkedFrom: null,
           workingDir: channelSession.workingDir,
           mode: channelSession.mode,
-          agent: channelSession.agent,
           createdAt: Date.now(),
           lastActiveAt: Date.now(),
           pathConfigured: channelSession.pathConfigured,

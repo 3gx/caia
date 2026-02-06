@@ -7,7 +7,7 @@ describe('types', () => {
   });
 
   it('AgentType matches expected union', () => {
-    expectTypeOf<AgentType>().toMatchTypeOf<'plan' | 'build' | 'explore'>();
+    expectTypeOf<AgentType>().toMatchTypeOf<'plan' | 'build'>();
   });
 
   it('LastUsage includes model and tokens', () => {

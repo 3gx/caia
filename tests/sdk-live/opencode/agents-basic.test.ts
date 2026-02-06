@@ -80,28 +80,6 @@ describe.skipIf(SKIP_LIVE)('Agent Types', { timeout: 60000 }, () => {
     expect(messages.data!.length).toBeGreaterThan(0);
   });
 
-  it('CANARY: prompt with agent=explore succeeds', async () => {
-    const session = await client.session.create({
-      body: { title: `${TEST_SESSION_PREFIX}Explore Agent Test` },
-    });
-    opencode.trackSession(session.data!.id);
-
-    const result = await client.session.prompt({
-      path: { id: session.data!.id },
-      body: {
-        parts: [{ type: 'text', text: 'Describe the concept of dependency injection' }],
-        agent: 'explore',
-      },
-    });
-
-    expect(result).toBeDefined();
-
-    // Verify session has messages after prompt
-    const messages = await client.session.messages({ path: { id: session.data!.id } });
-    expect(messages.data).toBeDefined();
-    expect(messages.data!.length).toBeGreaterThan(0);
-  });
-
   it('CANARY: app.agents() returns list of available agents', async () => {
     // Check if agents API exists
     if (typeof client.app?.agents === 'function') {
