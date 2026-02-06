@@ -139,6 +139,7 @@ interface ProcessingState {
   messageRoles: Map<string, 'user' | 'assistant'>;
   pendingMessageParts: Map<string, Array<{ part: Part; delta?: string }>>;
   finalizingResponseSegment: Promise<void> | null;
+  seenMessagePartMessageIds: Set<string>;
 
   // Activity thread batch infrastructure
   activityThreadMsgTs: string | null;
@@ -259,30 +260,45 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
 }
 
 async function handleMessageUpdated(properties: any, state: ProcessingState): Promise<void> {
-  const info = properties?.info as { id?: string; role?: string; sessionID?: string; tokens?: any; cost?: number; modelID?: string; providerID?: string; } | undefined;
+  const info = properties?.info as {
+    id?: string;
+    role?: 'user' | 'assistant' | string;
+    sessionID?: string;
+    tokens?: any;
+    cost?: number;
+    modelID?: string;
+    providerID?: string;
+    time?: { completed?: number };
+  } | undefined;
   const parts = properties?.parts as Part[] | undefined;
-
-  if (parts && Array.isArray(parts)) {
-    for (const part of parts) {
-      await handleMessagePartUpdated(part, undefined, state);
-    }
-  }
 
   if (!info) return;
 
-  const assistantCompleted = Boolean(info.id && info.role === 'assistant' && info.time?.completed);
+  const assistantCompleted = Boolean(info?.id && info.role === 'assistant' && info.time?.completed);
 
-  if (info.id && info.role) {
-    state.messageRoles.set(info.id, info.role);
+  if (info?.id && info.role) {
+    if (info.role === 'assistant' || info.role === 'user') {
+      state.messageRoles.set(info.id, info.role);
+    }
     if (info.role === 'assistant') {
       await flushPendingParts(state, info.id);
-    } else {
+    } else if (info.role === 'user') {
       state.pendingMessageParts.delete(info.id);
     }
   }
 
   if (info.role === 'user' && info.id) {
     await addSlackOriginatedUserUuid(state.channelId, info.id, state.sessionThreadTs);
+  }
+
+  if (parts && Array.isArray(parts)) {
+    const messageId = info?.id;
+    const shouldProcessParts = !messageId || !state.seenMessagePartMessageIds.has(messageId);
+    if (shouldProcessParts) {
+      for (const part of parts) {
+        await handleMessagePartUpdated(part, undefined, state);
+      }
+    }
   }
 
   if (info.role === 'assistant' && info.id) {
@@ -346,6 +362,7 @@ async function handleMessagePartUpdated(part: Part | undefined, delta: string | 
   const messageId = (part as Part & { messageID?: string }).messageID;
 
   if (messageId) {
+    state.seenMessagePartMessageIds.add(messageId);
     const knownRole = state.messageRoles.get(messageId);
     if (knownRole === 'user') return;
 
@@ -1728,6 +1745,7 @@ async function handleUserMessage(params: {
     messageRoles: new Map(),
     pendingMessageParts: new Map(),
     finalizingResponseSegment: null,
+    seenMessagePartMessageIds: new Set(),
 
     // Activity thread batch infrastructure
     activityThreadMsgTs: null,

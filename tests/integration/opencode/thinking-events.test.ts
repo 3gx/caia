@@ -145,4 +145,72 @@ describe('thinking-events', () => {
     const thinkingPlaceholders = calls.filter((call) => call[0]?.text?.includes('Thinking...'));
     expect(thinkingPlaceholders).toHaveLength(1);
   });
+
+  it('does not duplicate thinking on message.updated parts when part events already streamed', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'reasoning',
+            id: 'r1',
+            messageID: 'assistant_msg_1',
+            sessionID: 'sess_mock',
+            text: 'short',
+            time: { start: 0, end: 1 },
+          },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant_msg_1',
+            sessionID: 'sess_mock',
+            role: 'assistant',
+            time: { created: 0, completed: 1 },
+            parentID: 'user_msg_1',
+            modelID: 'm',
+            providerID: 'p',
+            mode: 'build',
+            path: { cwd: '/', root: '/' },
+            cost: 0,
+            tokens: {
+              input: 0,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+          },
+          parts: [{
+            type: 'reasoning',
+            id: 'r1',
+            messageID: 'assistant_msg_1',
+            sessionID: 'sess_mock',
+            text: 'short',
+            time: { start: 0, end: 1 },
+          }],
+        },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const calls = lastAppClient?.chat.postMessage.mock.calls || [];
+    const thinkingPlaceholders = calls.filter((call) => call[0]?.text?.includes('Thinking...'));
+    expect(thinkingPlaceholders).toHaveLength(1);
+  });
 });
