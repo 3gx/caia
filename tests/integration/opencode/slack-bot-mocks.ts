@@ -204,7 +204,21 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
   buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
   buildForkToChannelModalView: vi.fn().mockReturnValue({}),
   buildAbortConfirmationModalView: vi.fn().mockReturnValue({}),
-  buildModeSelectionBlocks: vi.fn().mockReturnValue([]),
+  buildModeSelectionBlocks: vi.fn().mockImplementation((currentMode: string) => [
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Select Permission Mode*\nCurrent: \`${currentMode}\`` },
+    },
+    {
+      type: 'actions',
+      block_id: 'mode_selection',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: ':clipboard: plan' }, action_id: 'mode_plan', value: 'plan', ...(currentMode === 'plan' ? { style: 'primary' } : {}) },
+        { type: 'button', text: { type: 'plain_text', text: ':question: ask' }, action_id: 'mode_default', value: 'default', ...(currentMode === 'default' ? { style: 'primary' } : {}) },
+        { type: 'button', text: { type: 'plain_text', text: ':rocket: bypass' }, action_id: 'mode_bypassPermissions', value: 'bypassPermissions', ...(currentMode === 'bypassPermissions' ? { style: 'primary' } : {}) },
+      ],
+    },
+  ]),
   buildWatchingStatusSection: vi.fn().mockReturnValue({ type: 'context', elements: [] }),
   DEFAULT_CONTEXT_WINDOW: 200000,
   computeAutoCompactThreshold: vi.fn().mockReturnValue(1000),

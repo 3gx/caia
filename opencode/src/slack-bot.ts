@@ -915,7 +915,7 @@ async function handleUserMessage(params: {
         })
       ) as { ts?: string };
       if (originalTs && response.ts) {
-        pendingModeSelections.set(response.ts, { originalTs, channelId, threadTs: postingThreadTs });
+        pendingModeSelections.set(response.ts, { originalTs, channelId, threadTs: postingThreadTs, sessionThreadTs });
         await markApprovalWait(client, channelId, originalTs);
       }
       return;
@@ -1267,9 +1267,12 @@ function registerActionHandlers(appInstance: App): void {
 
     if (!channelId || !msgTs) return;
 
-    const threadTs = (body as any).message?.thread_ts;
-    if (threadTs) {
-      await saveThreadSession(channelId, threadTs, { mode });
+    // Get pending selection to know which session type to save to
+    const pending = pendingModeSelections.get(msgTs);
+    const sessionThreadTs = pending?.sessionThreadTs;
+
+    if (sessionThreadTs) {
+      await saveThreadSession(channelId, sessionThreadTs, { mode });
     } else {
       await saveSession(channelId, { mode });
     }
@@ -1278,11 +1281,10 @@ function registerActionHandlers(appInstance: App): void {
       (client as WebClient).chat.update({
         channel: channelId,
         ts: msgTs,
-        text: `Mode set to ${mode}`,
+        text: `Mode set to \`${mode}\``,
       })
     );
 
-    const pending = pendingModeSelections.get(msgTs);
     if (pending) {
       await markApprovalDone(client as WebClient, pending.channelId, pending.originalTs);
       pendingModeSelections.delete(msgTs);
