@@ -2322,8 +2322,27 @@ function registerActionHandlers(appInstance: App): void {
 
       await (client as WebClient).chat.postMessage({
         channel: newChannelId,
-        text: `:twisted_rightwards_arrows: Forked from <https://slack.com/archives/${metadata.sourceChannelId}/p${metadata.sourceMessageTs.replace('.', '')}|this message>. Send a message to continue.`,
+        text: `:twisted_rightwards_arrows: Forked from <https://slack.com/archives/${metadata.sourceChannelId}/p${(metadata.threadTs ?? metadata.sourceMessageTs).replace('.', '')}|source conversation>. Send a message to continue.`,
       });
+
+      if (metadata.sourceChannelId && metadata.sourceMessageTs) {
+        try {
+          await updateSourceMessageWithForkLink(
+            client,
+            metadata.sourceChannelId,
+            metadata.sourceMessageTs,
+            newChannelId,
+            {
+              threadTs: metadata.threadTs,
+              conversationKey: metadata.conversationKey,
+              sdkMessageId: messageId,
+              sessionId,
+            }
+          );
+        } catch (updateError) {
+          console.warn('[opencode] Failed to update source message after fork:', updateError);
+        }
+      }
     } catch (error) {
       console.error('[opencode] Fork to channel failed:', error);
       if (metadata.sourceChannelId && userId) {
@@ -2334,6 +2353,319 @@ function registerActionHandlers(appInstance: App): void {
         });
       }
     }
+  });
+
+  // Refresh fork button -> restore Fork here if channel deleted
+  appInstance.action(/^refresh_fork_(.+)$/, async ({ action, ack, client }) => {
+    await ack();
+    const actionId = (action as { action_id: string }).action_id;
+    const conversationKey = actionId.replace('refresh_fork_', '');
+    const valueStr = (action as { value?: string }).value || '{}';
+    let forkInfo: {
+      sourceChannelId?: string;
+      sourceMessageTs?: string;
+      threadTs?: string;
+      forkChannelId?: string;
+      conversationKey?: string;
+      sdkMessageId?: string;
+      sessionId?: string;
+    };
+    try {
+      forkInfo = JSON.parse(valueStr);
+    } catch {
+      return;
+    }
+
+    const forkChannelId = forkInfo.forkChannelId;
+    if (forkChannelId) {
+      try {
+        await withSlackRetry(() => (client as WebClient).conversations.info({ channel: forkChannelId }));
+        return;
+      } catch {
+        // Channel missing, restore fork button below
+      }
+    }
+
+    if (!forkInfo.sourceChannelId || !forkInfo.sourceMessageTs) return;
+
+    await restoreForkHereButton(client, {
+      sourceChannelId: forkInfo.sourceChannelId,
+      sourceMessageTs: forkInfo.sourceMessageTs,
+      threadTs: forkInfo.threadTs,
+      conversationKey: forkInfo.conversationKey || conversationKey,
+      sdkMessageId: forkInfo.sdkMessageId,
+      sessionId: forkInfo.sessionId,
+    });
+  });
+}
+
+interface SlackMessageSummary {
+  ts?: string;
+  text?: string;
+  blocks?: any[];
+}
+
+interface SlackMessagesResult {
+  messages?: SlackMessageSummary[];
+}
+
+async function updateSourceMessageWithForkLink(
+  client: any,
+  channelId: string,
+  messageTs: string,
+  forkChannelId: string,
+  forkInfo?: {
+    threadTs?: string;
+    conversationKey?: string;
+    sdkMessageId?: string;
+    sessionId?: string;
+  }
+): Promise<void> {
+  const threadTs = forkInfo?.threadTs;
+  const isThreadReply = Boolean(threadTs && threadTs !== messageTs);
+  const mutexKey = `${channelId}_${messageTs}`;
+  const mutex = getUpdateMutex(mutexKey);
+
+  await mutex.runExclusive(async () => {
+    let historyResult: SlackMessagesResult | undefined;
+
+    if (isThreadReply) {
+      historyResult = (await withSlackRetry(
+        () =>
+          client.conversations.replies({
+            channel: channelId,
+            ts: threadTs,
+          }),
+        'fork.replies'
+      )) as SlackMessagesResult;
+    } else {
+      historyResult = (await withSlackRetry(
+        () =>
+          client.conversations.history({
+            channel: channelId,
+            latest: messageTs,
+            inclusive: true,
+            limit: 1,
+          }),
+        'fork.history'
+      )) as SlackMessagesResult;
+    }
+
+    let messages = historyResult?.messages || [];
+    let msg = isThreadReply ? messages.find((m) => m.ts === messageTs) : messages[0];
+    if (!msg && threadTs && threadTs !== messageTs) {
+      const repliesResult = (await withSlackRetry(
+        () =>
+          client.conversations.replies({
+            channel: channelId,
+            ts: threadTs,
+          }),
+        'fork.replies.fallback'
+      )) as SlackMessagesResult;
+      messages = repliesResult?.messages || [];
+      msg = messages.find((m) => m.ts === messageTs);
+    }
+
+    if (!msg?.blocks) {
+      console.warn('[Fork] Source message blocks not found; skipping update');
+      return;
+    }
+
+    const updatedBlocks: any[] = [];
+    let forkContextAdded = false;
+    let refreshButtonAdded = false;
+    let actionsBlockIndex = -1;
+
+    const refreshButton =
+      forkInfo?.conversationKey
+        ? {
+            type: 'button',
+            text: { type: 'plain_text', text: '🔄 Refresh fork', emoji: true },
+            action_id: `refresh_fork_${forkInfo.conversationKey}`,
+            value: JSON.stringify({
+              forkChannelId,
+              sourceChannelId: channelId,
+              sourceMessageTs: messageTs,
+              threadTs: forkInfo.threadTs,
+              conversationKey: forkInfo.conversationKey,
+              sdkMessageId: forkInfo.sdkMessageId,
+              sessionId: forkInfo.sessionId,
+            }),
+          }
+        : undefined;
+
+    for (const block of msg.blocks) {
+      if (block.type === 'actions' && Array.isArray(block.elements)) {
+        actionsBlockIndex = updatedBlocks.length;
+        const remainingElements = block.elements.filter(
+          (el: any) =>
+            !(typeof el.action_id === 'string' && el.action_id.startsWith('fork_here_')) &&
+            !(typeof el.action_id === 'string' && el.action_id.startsWith('refresh_fork_'))
+        );
+        if (!forkContextAdded) {
+          updatedBlocks.push({
+            type: 'context',
+            elements: [
+              {
+                type: 'mrkdwn',
+                text: `:twisted_rightwards_arrows: Forked to <#${forkChannelId}>`,
+              },
+            ],
+          });
+          forkContextAdded = true;
+        }
+        if (refreshButton) {
+          remainingElements.push(refreshButton);
+          refreshButtonAdded = true;
+        }
+        updatedBlocks.push({ ...block, elements: remainingElements });
+        continue;
+      }
+      updatedBlocks.push(block);
+    }
+
+    if (!forkContextAdded) {
+      updatedBlocks.push({
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `:twisted_rightwards_arrows: Forked to <#${forkChannelId}>`,
+          },
+        ],
+      });
+    }
+
+    if (refreshButton && !refreshButtonAdded) {
+      const actionsBlock = {
+        type: 'actions',
+        block_id: `fork_${messageTs}`,
+        elements: [refreshButton],
+      };
+      if (actionsBlockIndex >= 0) {
+        updatedBlocks.splice(actionsBlockIndex + 1, 0, actionsBlock);
+      } else {
+        updatedBlocks.push(actionsBlock);
+      }
+    }
+
+    await withSlackRetry(
+      () =>
+        client.chat.update({
+          channel: channelId,
+          ts: messageTs,
+          blocks: updatedBlocks,
+          text: msg.text,
+        }),
+      'fork.update'
+    );
+  });
+}
+
+async function restoreForkHereButton(
+  client: any,
+  forkInfo: {
+    sourceChannelId: string;
+    sourceMessageTs: string;
+    threadTs?: string;
+    conversationKey?: string;
+    sdkMessageId?: string;
+    sessionId?: string;
+  }
+): Promise<void> {
+  const { sourceChannelId, sourceMessageTs, threadTs, conversationKey, sdkMessageId, sessionId } = forkInfo;
+
+  if (!conversationKey) return;
+
+  const mutexKey = `${sourceChannelId}_${sourceMessageTs}`;
+  const mutex = getUpdateMutex(mutexKey);
+
+  await mutex.runExclusive(async () => {
+    const historyResult = threadTs
+      ? (await withSlackRetry(
+          () =>
+            client.conversations.replies({
+              channel: sourceChannelId,
+              ts: threadTs,
+            }),
+          'refresh.replies'
+        )) as SlackMessagesResult
+      : (await withSlackRetry(
+          () =>
+            client.conversations.history({
+              channel: sourceChannelId,
+              latest: sourceMessageTs,
+              inclusive: true,
+              limit: 1,
+            }),
+          'refresh.history'
+        )) as SlackMessagesResult;
+
+    const msg = threadTs
+      ? historyResult.messages?.find((m) => m.ts === sourceMessageTs)
+      : historyResult.messages?.[0];
+    if (!msg?.blocks) {
+      console.warn('[RestoreForkHere] Source message blocks not found; skipping update');
+      return;
+    }
+
+    const updatedBlocks: any[] = [];
+    let actionsBlockIndex = -1;
+
+    for (const block of msg.blocks) {
+      if (
+        block.type === 'context' &&
+        block.elements?.[0]?.text &&
+        (block.elements[0].text.includes('Forked to') || block.elements[0].text.includes('Fork:'))
+      ) {
+        continue;
+      }
+
+      if (block.type === 'actions' && Array.isArray(block.elements)) {
+        actionsBlockIndex = updatedBlocks.length;
+        const filteredElements = block.elements.filter(
+          (el: any) =>
+            !(typeof el.action_id === 'string' && el.action_id.startsWith('refresh_fork_')) &&
+            !(typeof el.action_id === 'string' && el.action_id.startsWith('fork_here_'))
+        );
+        updatedBlocks.push({ ...block, elements: filteredElements });
+        continue;
+      }
+
+      updatedBlocks.push(block);
+    }
+
+    const forkButton = {
+      type: 'button',
+      text: { type: 'plain_text', text: ':twisted_rightwards_arrows: Fork here', emoji: true },
+      action_id: `fork_here_${conversationKey}`,
+      value: JSON.stringify({
+        threadTs,
+        sdkMessageId,
+        sessionId,
+      }),
+    };
+
+    if (actionsBlockIndex >= 0) {
+      updatedBlocks[actionsBlockIndex].elements.push(forkButton);
+    } else {
+      updatedBlocks.push({
+        type: 'actions',
+        block_id: `fork_${sourceMessageTs}`,
+        elements: [forkButton],
+      });
+    }
+
+    await withSlackRetry(
+      () =>
+        client.chat.update({
+          channel: sourceChannelId,
+          ts: sourceMessageTs,
+          blocks: updatedBlocks,
+          text: msg.text,
+        }),
+      'refresh.update'
+    );
   });
 }
 
