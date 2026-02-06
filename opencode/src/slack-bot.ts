@@ -22,6 +22,7 @@ import {
   addSlackOriginatedUserUuid,
   clearSyncedMessageUuids,
   clearSlackOriginatedUserUuids,
+  deleteSession,
   type Session,
   type ThreadSession,
   type ActivityEntry,
@@ -2777,6 +2778,16 @@ function registerMessageHandlers(appInstance: App): void {
       client: client as WebClient,
       files: msg.files,
     });
+  });
+
+  // Handle channel deletion - clean up session store for this channel
+  appInstance.event('channel_deleted', async ({ event }) => {
+    try {
+      console.log(`[channel-deleted] Channel deleted: ${event.channel}`);
+      await deleteSession(event.channel);
+    } catch (error) {
+      console.error('[channel-deleted] Error handling channel deletion:', error);
+    }
   });
 }
 

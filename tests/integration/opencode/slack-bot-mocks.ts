@@ -124,6 +124,7 @@ vi.mock('../../../opencode/src/session-manager.js', () => ({
   addSlackOriginatedUserUuid: vi.fn(),
   clearSyncedMessageUuids: vi.fn(),
   clearSlackOriginatedUserUuids: vi.fn(),
+  deleteSession: vi.fn(),
 }));
 
 vi.mock('../../../opencode/src/blocks.js', () => ({
