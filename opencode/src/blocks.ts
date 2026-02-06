@@ -770,21 +770,32 @@ function getCurrentModelDisplay(models: ModelInfo[], currentModel: string): stri
 /**
  * Build model selection UI from dynamic model list.
  * Uses static_select dropdown with option_groups for provider categorization.
+ * Shows Recent status in context block (always visible), and Recent group in dropdown only when populated.
+ * Includes a Cancel button.
  */
 export function buildModelSelectionBlocks(
   models: ModelInfo[],
-  currentModel?: string
+  currentModel?: string,
+  recentModels?: string[]
 ): Block[] {
   // Group models by provider for option_groups
   const providerGroups = groupModelsByProvider(models);
 
-  const optionGroups = providerGroups.map(group => ({
+  const providerOptionGroups = providerGroups.map(group => ({
     label: { type: 'plain_text' as const, text: group.provider },
     options: group.models.map(model => ({
       text: { type: 'plain_text' as const, text: model.displayName.split(' / ')[1] || model.displayName },
       value: model.value,
     })),
   }));
+
+  // Build "Recent" option group (only if has items - Slack requires ≥1 option per group)
+  const recentGroup = buildRecentModelsGroup(models, recentModels);
+
+  // Combine option groups: Recent first (if exists), then providers
+  const optionGroups = recentGroup
+    ? [recentGroup, ...providerOptionGroups]
+    : providerOptionGroups;
 
   // Build initial_option if currentModel is set and valid
   let initialOption: { text: { type: 'plain_text'; text: string }; value: string } | undefined;
@@ -796,13 +807,31 @@ export function buildModelSelectionBlocks(
     };
   }
 
+  // Get current model display name for header
+  const currentModelDisplay = currentModel
+    ? models.find(m => m.value === currentModel)?.displayName || currentModel
+    : 'not set';
+
+  // Build Recent status text for context block (always shown)
+  const recentStatusText = recentGroup
+    ? `Recent: ${recentGroup.options.map(o => o.text.text).join(', ')}`
+    : 'Recent: _(none yet)_';
+
   return [
+    {
+      type: 'context',
+      block_id: 'model_recent_status',
+      elements: [{
+        type: 'mrkdwn',
+        text: recentStatusText,
+      }],
+    },
     {
       type: 'section',
       block_id: 'model_selection',
       text: {
         type: 'mrkdwn',
-        text: `*Select Model*\nCurrent: \`${currentModel || 'default (SDK chooses)'}\``,
+        text: `*Select Model*\nCurrent: \`${currentModelDisplay}\``,
       },
       accessory: {
         type: 'static_select',
@@ -812,7 +841,43 @@ export function buildModelSelectionBlocks(
         ...(initialOption ? { initial_option: initialOption } : {}),
       },
     },
+    {
+      type: 'actions',
+      block_id: 'model_actions',
+      elements: [{
+        type: 'button',
+        text: { type: 'plain_text' as const, text: 'Cancel', emoji: true },
+        action_id: 'model_cancel',
+      }],
+    },
   ];
+}
+
+/**
+ * Build the "Recent" option group for recently used models.
+ * Returns undefined if no valid recent models exist (Slack requires at least 1 option per group).
+ */
+function buildRecentModelsGroup(
+  availableModels: ModelInfo[],
+  recentModels?: string[]
+): { label: { type: 'plain_text'; text: string }; options: { text: { type: 'plain_text'; text: string }; value: string }[] } | undefined {
+  if (!recentModels || recentModels.length === 0) return undefined;
+
+  // Filter to models that still exist in available list
+  const validRecent = recentModels
+    .map(value => availableModels.find(m => m.value === value))
+    .filter((m): m is ModelInfo => m !== undefined);
+
+  // Slack requires at least 1 option per option_group
+  if (validRecent.length === 0) return undefined;
+
+  return {
+    label: { type: 'plain_text' as const, text: 'Recent' },
+    options: validRecent.map(model => ({
+      text: { type: 'plain_text' as const, text: model.displayName.split(' / ')[1] || model.displayName },
+      value: model.value,
+    })),
+  };
 }
 
 /**

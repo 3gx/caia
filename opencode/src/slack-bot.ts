@@ -68,6 +68,8 @@ interface PendingSelection {
   originalTs: string;
   channelId: string;
   threadTs?: string;
+  /** The thread ts for the SESSION (undefined = channel session, set = thread session) */
+  sessionThreadTs?: string;
 }
 
 interface PendingPermission {
@@ -924,7 +926,7 @@ async function handleUserMessage(params: {
       const models = await getAvailableModels(instance.client.getClient());
       const blocks = session!.model && !(await isModelAvailable(instance.client.getClient(), session!.model))
         ? buildModelDeprecatedBlocks(session!.model, models)
-        : buildModelSelectionBlocks(models, session!.model);
+        : buildModelSelectionBlocks(models, session!.model, (session as Session).recentModels);
 
       const response = await withSlackRetry(() =>
         client.chat.postMessage({
@@ -936,7 +938,7 @@ async function handleUserMessage(params: {
       ) as { ts?: string };
 
       if (originalTs && response.ts) {
-        pendingModelSelections.set(response.ts, { originalTs, channelId, threadTs: postingThreadTs });
+        pendingModelSelections.set(response.ts, { originalTs, channelId, threadTs: postingThreadTs, sessionThreadTs });
         await markApprovalWait(client, channelId, originalTs);
       }
       return;
@@ -1296,14 +1298,25 @@ function registerActionHandlers(appInstance: App): void {
     const modelValue = selectedOption.value;
     const channelId = (body as any).channel?.id;
     const msgTs = (body as any).message?.ts;
-    const threadTs = (body as any).message?.thread_ts;
 
     if (!channelId || !msgTs) return;
 
-    if (threadTs) {
-      await saveThreadSession(channelId, threadTs, { model: modelValue });
+    // Get pending selection to know which session type to save to
+    const pending = pendingModelSelections.get(msgTs);
+    const sessionThreadTs = pending?.sessionThreadTs;
+
+    if (sessionThreadTs) {
+      // Save to thread session
+      await saveThreadSession(channelId, sessionThreadTs, { model: modelValue });
     } else {
-      await saveSession(channelId, { model: modelValue });
+      // Save to channel session with recent models tracking
+      const session = getSession(channelId);
+      const recent = (session?.recentModels ?? []).filter(m => m !== modelValue);
+      recent.unshift(modelValue);
+      await saveSession(channelId, {
+        model: modelValue,
+        recentModels: recent.slice(0, 5),
+      });
     }
 
     const info = await getModelInfo((await serverPool.getOrCreate(channelId)).client.getClient(), modelValue);
@@ -1317,11 +1330,34 @@ function registerActionHandlers(appInstance: App): void {
       })
     );
 
+    if (pending) {
+      await markApprovalDone(client as WebClient, pending.channelId, pending.originalTs);
+      pendingModelSelections.delete(msgTs);
+    }
+  });
+
+  // Model selection cancel button
+  appInstance.action('model_cancel', async ({ ack, body, client }) => {
+    await ack();
+    const channelId = (body as any).channel?.id;
+    const msgTs = (body as any).message?.ts;
+
+    if (!channelId || !msgTs) return;
+
+    // Remove pending model selection tracking
     const pending = pendingModelSelections.get(msgTs);
     if (pending) {
       await markApprovalDone(client as WebClient, pending.channelId, pending.originalTs);
       pendingModelSelections.delete(msgTs);
     }
+
+    // Delete the model selection message
+    await withSlackRetry(() =>
+      (client as WebClient).chat.delete({
+        channel: channelId,
+        ts: msgTs,
+      })
+    );
   });
 
   // Tool approval

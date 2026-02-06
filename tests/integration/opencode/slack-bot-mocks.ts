@@ -131,7 +131,7 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
   buildStatusDisplayBlocks: vi.fn().mockReturnValue([]),
   buildContextDisplayBlocks: vi.fn().mockReturnValue([]),
   buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
-  buildModelSelectionBlocks: vi.fn().mockImplementation((models: any[], currentModel?: string) => {
+  buildModelSelectionBlocks: vi.fn().mockImplementation((models: any[], currentModel?: string, recentModels?: string[]) => {
     // Group models by provider for option_groups (same logic as real implementation)
     const groups = new Map<string, any[]>();
     for (const model of models) {
@@ -139,24 +139,67 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
       if (!groups.has(provider)) groups.set(provider, []);
       groups.get(provider)!.push(model);
     }
-    const optionGroups = Array.from(groups.entries()).map(([provider, models]) => ({
+    const providerOptionGroups = Array.from(groups.entries()).map(([provider, models]) => ({
       label: { type: 'plain_text', text: provider },
       options: models.map((m: any) => ({
         text: { type: 'plain_text', text: m.displayName?.split(' / ')[1] || m.displayName },
         value: m.value,
       })),
     }));
-    return [{
-      type: 'section',
-      block_id: 'model_selection',
-      text: { type: 'mrkdwn', text: `*Select Model*\nCurrent: \`${currentModel || 'default (SDK chooses)'}\`` },
-      accessory: {
-        type: 'static_select',
-        action_id: 'model_select',
-        placeholder: { type: 'plain_text', text: 'Choose a model...' },
-        option_groups: optionGroups,
+
+    // Build Recent group (only if has items - Slack requires ≥1 option per group)
+    const validRecent = (recentModels || [])
+      .map(value => models.find((m: any) => m.value === value))
+      .filter((m: any) => m !== undefined);
+
+    const recentGroup = validRecent.length > 0 ? {
+      label: { type: 'plain_text', text: 'Recent' },
+      options: validRecent.map((m: any) => ({
+        text: { type: 'plain_text', text: m.displayName?.split(' / ')[1] || m.displayName },
+        value: m.value,
+      })),
+    } : null;
+
+    const optionGroups = recentGroup
+      ? [recentGroup, ...providerOptionGroups]
+      : providerOptionGroups;
+
+    const currentModelDisplay = currentModel
+      ? models.find((m: any) => m.value === currentModel)?.displayName || currentModel
+      : 'not set';
+
+    // Recent status text for context block (always shown)
+    const recentStatusText = recentGroup
+      ? `Recent: ${recentGroup.options.map((o: any) => o.text.text).join(', ')}`
+      : 'Recent: _(none yet)_';
+
+    return [
+      {
+        type: 'context',
+        block_id: 'model_recent_status',
+        elements: [{ type: 'mrkdwn', text: recentStatusText }],
       },
-    }];
+      {
+        type: 'section',
+        block_id: 'model_selection',
+        text: { type: 'mrkdwn', text: `*Select Model*\nCurrent: \`${currentModelDisplay}\`` },
+        accessory: {
+          type: 'static_select',
+          action_id: 'model_select',
+          placeholder: { type: 'plain_text', text: 'Choose a model...' },
+          option_groups: optionGroups,
+        },
+      },
+      {
+        type: 'actions',
+        block_id: 'model_actions',
+        elements: [{
+          type: 'button',
+          text: { type: 'plain_text', text: 'Cancel', emoji: true },
+          action_id: 'model_cancel',
+        }],
+      },
+    ];
   }),
   buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
   buildForkToChannelModalView: vi.fn().mockReturnValue({}),

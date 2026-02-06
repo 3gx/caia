@@ -36,6 +36,7 @@ export interface Session {
   workingDir: string;
   mode: PermissionMode;
   model?: string;  // Selected model ID (provider:model)
+  recentModels?: string[];  // Last 5 unique model values for quick selection
   agent?: AgentType;
   createdAt: number;
   lastActiveAt: number;

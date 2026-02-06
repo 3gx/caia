@@ -99,13 +99,18 @@ describe('groupModelsByProvider', () => {
 });
 
 describe('buildModelSelectionBlocks (static_select)', () => {
-  it('returns section with static_select accessory', () => {
+  // Block structure: [0] = context (Recent status), [1] = section (dropdown), [2] = actions (Cancel)
+
+  it('returns context, section with static_select, and actions blocks', () => {
     const models = [
       { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
     ];
     const blocks = buildModelSelectionBlocks(models, undefined);
-    expect(blocks[0].type).toBe('section');
-    expect((blocks[0] as any).accessory.type).toBe('static_select');
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0].type).toBe('context');  // Recent status
+    expect(blocks[1].type).toBe('section');  // Dropdown
+    expect((blocks[1] as any).accessory.type).toBe('static_select');
+    expect(blocks[2].type).toBe('actions');  // Cancel button
   });
 
   it('uses option_groups for provider categorization', () => {
@@ -114,9 +119,11 @@ describe('buildModelSelectionBlocks (static_select)', () => {
       { value: 'p2:m1', displayName: 'ProviderB / Model2', description: 'd2' },
     ];
     const blocks = buildModelSelectionBlocks(models, undefined);
-    const select = (blocks[0] as any).accessory;
+    const select = (blocks[1] as any).accessory;
+    // Only provider groups when no recent (Slack requires ≥1 option per group)
     expect(select.option_groups).toHaveLength(2);
     expect(select.option_groups[0].label.text).toBe('ProviderA');
+    expect(select.option_groups[1].label.text).toBe('ProviderB');
   });
 
   it('sets initial_option when currentModel provided', () => {
@@ -124,13 +131,13 @@ describe('buildModelSelectionBlocks (static_select)', () => {
       { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
     ];
     const blocks = buildModelSelectionBlocks(models, 'p:m');
-    expect((blocks[0] as any).accessory.initial_option).toBeDefined();
-    expect((blocks[0] as any).accessory.initial_option.value).toBe('p:m');
+    expect((blocks[1] as any).accessory.initial_option).toBeDefined();
+    expect((blocks[1] as any).accessory.initial_option.value).toBe('p:m');
   });
 
-  it('shows default text when no currentModel', () => {
+  it('shows "not set" text when no currentModel', () => {
     const blocks = buildModelSelectionBlocks([], undefined);
-    expect((blocks[0] as any).text.text).toContain('default (SDK chooses)');
+    expect((blocks[1] as any).text.text).toContain('not set');
   });
 
   it('uses action_id model_select for static_select', () => {
@@ -138,6 +145,76 @@ describe('buildModelSelectionBlocks (static_select)', () => {
       { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
     ];
     const blocks = buildModelSelectionBlocks(models, undefined);
-    expect((blocks[0] as any).accessory.action_id).toBe('model_select');
+    expect((blocks[1] as any).accessory.action_id).toBe('model_select');
+  });
+
+  it('includes Cancel button with model_cancel action_id', () => {
+    const models = [
+      { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
+    ];
+    const blocks = buildModelSelectionBlocks(models, undefined);
+    const actions = blocks[2] as any;
+    expect(actions.type).toBe('actions');
+    expect(actions.elements[0].type).toBe('button');
+    expect(actions.elements[0].action_id).toBe('model_cancel');
+    expect(actions.elements[0].text.text).toBe('Cancel');
+  });
+
+  it('shows Recent group in dropdown when recentModels populated', () => {
+    const models = [
+      { value: 'p1:m1', displayName: 'ProviderA / Model1', description: 'd1' },
+      { value: 'p2:m1', displayName: 'ProviderB / Model2', description: 'd2' },
+    ];
+    const blocks = buildModelSelectionBlocks(models, undefined, ['p1:m1']);
+    const select = (blocks[1] as any).accessory;
+    expect(select.option_groups[0].label.text).toBe('Recent');
+    expect(select.option_groups[0].options).toHaveLength(1);
+    expect(select.option_groups[0].options[0].value).toBe('p1:m1');
+  });
+
+  it('filters out invalid recent models', () => {
+    const models = [
+      { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
+    ];
+    const blocks = buildModelSelectionBlocks(models, undefined, ['invalid:model', 'p:m']);
+    const select = (blocks[1] as any).accessory;
+    expect(select.option_groups[0].label.text).toBe('Recent');
+    expect(select.option_groups[0].options).toHaveLength(1);
+    expect(select.option_groups[0].options[0].value).toBe('p:m');
+  });
+
+  it('shows Recent status in context block even when empty', () => {
+    const models = [
+      { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
+    ];
+    const blocks = buildModelSelectionBlocks(models, undefined, []);
+    // Context block shows "Recent: _(none yet)_"
+    expect(blocks[0].type).toBe('context');
+    expect((blocks[0] as any).elements[0].text).toContain('Recent:');
+    expect((blocks[0] as any).elements[0].text).toContain('(none yet)');
+    // Dropdown does NOT have Recent group when empty (Slack requires ≥1 option)
+    const select = (blocks[1] as any).accessory;
+    expect(select.option_groups[0].label.text).toBe('Provider');
+  });
+
+  it('shows Recent status with model names when populated', () => {
+    const models = [
+      { value: 'p1:m1', displayName: 'ProviderA / Model1', description: 'd1' },
+      { value: 'p2:m1', displayName: 'ProviderB / Model2', description: 'd2' },
+    ];
+    const blocks = buildModelSelectionBlocks(models, undefined, ['p1:m1', 'p2:m1']);
+    // Context block shows "Recent: Model1, Model2"
+    expect(blocks[0].type).toBe('context');
+    expect((blocks[0] as any).elements[0].text).toContain('Recent:');
+    expect((blocks[0] as any).elements[0].text).toContain('Model1');
+    expect((blocks[0] as any).elements[0].text).toContain('Model2');
+  });
+
+  it('shows full displayName for current model', () => {
+    const models = [
+      { value: 'p:m', displayName: 'Provider / Model', description: 'desc' },
+    ];
+    const blocks = buildModelSelectionBlocks(models, 'p:m');
+    expect((blocks[1] as any).text.text).toContain('Provider / Model');
   });
 });

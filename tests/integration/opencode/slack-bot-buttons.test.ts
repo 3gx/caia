@@ -18,6 +18,7 @@ describe('slack-bot-buttons', () => {
   it('registers button handlers', () => {
     expect(registeredHandlers['action_^mode_(plan|default|bypassPermissions)$']).toBeDefined();
     expect(registeredHandlers['action_model_select']).toBeDefined();  // Now uses static_select (string action_id)
+    expect(registeredHandlers['action_model_cancel']).toBeDefined();  // Cancel button
     expect(registeredHandlers['action_^abort_query_(.+)$']).toBeDefined();
   });
 
@@ -51,7 +52,10 @@ describe('slack-bot-buttons', () => {
       client,
     });
 
-    expect(vi.mocked(saveSession)).toHaveBeenCalledWith('C1', { model: 'provider:model' });
+    // saveSession now includes recentModels tracking
+    expect(vi.mocked(saveSession)).toHaveBeenCalledWith('C1', expect.objectContaining({
+      model: 'provider:model',
+    }));
     expect(client.chat.update).toHaveBeenCalled();
   });
 
