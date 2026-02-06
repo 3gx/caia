@@ -127,6 +127,7 @@ export interface ActivityEntry {
   thinkingContent?: string;     // Full content (stored for modal/download)
   thinkingTruncated?: string;   // First 500 chars (for live display)
   thinkingInProgress?: boolean; // True while thinking is streaming (for rolling window)
+  thinkingPartId?: string;      // Provider reasoning part id for retry matching
   // For generating (text streaming)
   generatingChunks?: number;    // Number of text chunks received
   generatingChars?: number;     // Total characters generated

@@ -1115,6 +1115,7 @@ export interface ActivityEntry {
   thinkingContent?: string;
   thinkingTruncated?: string;
   thinkingInProgress?: boolean; // True while thinking is streaming (for rolling window)
+  thinkingPartId?: string;      // Provider reasoning part id for retry matching
   // For generating (text streaming)
   generatingChunks?: number;    // Number of text chunks received
   generatingChars?: number;     // Total characters generated
