@@ -132,6 +132,8 @@ interface ProcessingState {
   pendingPermissions: Set<string>;
   updateRateSeconds: number;
   lastThinkingUpdateTime: number;
+  currentThinkingPartId?: string;
+  completedThinkingPartIds: Set<string>;
 
   // Activity thread batch infrastructure
   activityThreadMsgTs: string | null;
@@ -433,7 +435,7 @@ async function updateThinkingMessageWithRetry(
   return false;
 }
 
-async function startThinkingEntry(state: ProcessingState): Promise<void> {
+async function startThinkingEntry(state: ProcessingState, startTime?: number): Promise<void> {
   if (state.activityBatch.length > 0 && state.threadParentTs) {
     await flushActivityBatch(
       state,
@@ -445,16 +447,24 @@ async function startThinkingEntry(state: ProcessingState): Promise<void> {
     );
   }
 
-  const elapsedMs = Date.now() - state.startTime;
-  state.thinkingEntry = {
-    timestamp: Date.now(),
+  const now = Date.now();
+  const elapsedMs = now - state.startTime;
+  const entryTimestamp = typeof startTime === 'number' && startTime > 0 ? startTime : now;
+  const entry: ActivityEntry = {
+    timestamp: entryTimestamp,
     type: 'thinking',
     thinkingContent: '',
     thinkingTruncated: '',
     thinkingInProgress: true,
     durationMs: elapsedMs,
   };
-  state.activityLog.push(state.thinkingEntry);
+  state.thinkingEntry = entry;
+  const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
+  if (generatingIndex >= 0) {
+    state.activityLog.splice(generatingIndex, 0, entry);
+  } else {
+    state.activityLog.push(entry);
+  }
   state.status = 'thinking';
   state.lastThinkingUpdateTime = 0;
 
@@ -651,6 +661,9 @@ async function appendReasoningDelta(
   state: ProcessingState
 ): Promise<void> {
   const key = partId || 'thinking';
+  if (state.completedThinkingPartIds.has(key)) {
+    return;
+  }
   const previous = state.reasoningParts.get(key) || '';
   let next = previous;
 
@@ -662,8 +675,9 @@ async function appendReasoningDelta(
 
   state.reasoningParts.set(key, next);
 
-  if (!state.thinkingEntry || !state.thinkingEntry.thinkingInProgress) {
-    await startThinkingEntry(state);
+  if (state.currentThinkingPartId !== key) {
+    state.currentThinkingPartId = key;
+    await startThinkingEntry(state, startTime);
   }
 
   state.status = 'thinking';
@@ -686,6 +700,8 @@ async function appendReasoningDelta(
       state.thinkingEntry.durationMs = Math.max(0, endTime - startTime);
     }
     await finalizeThinkingEntry(state, next);
+    state.completedThinkingPartIds.add(key);
+    state.currentThinkingPartId = undefined;
   }
 }
 
@@ -1609,6 +1625,8 @@ async function handleUserMessage(params: {
     pendingPermissions: new Set(),
     updateRateSeconds: session.updateRateSeconds ?? UPDATE_RATE_DEFAULT,
     lastThinkingUpdateTime: 0,
+    currentThinkingPartId: undefined,
+    completedThinkingPartIds: new Set(),
 
     // Activity thread batch infrastructure
     activityThreadMsgTs: null,

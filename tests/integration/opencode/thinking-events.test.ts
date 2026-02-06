@@ -110,4 +110,39 @@ describe('thinking-events', () => {
 
     expect(uploadFilesToThread).toHaveBeenCalled();
   });
+
+  it('does not post duplicate thinking placeholders for repeated end events', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    const payload = {
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'reasoning',
+            id: 'r1',
+            text: 'done',
+            time: { start: 0, end: 1 },
+          },
+          sessionID: 'sess_mock',
+        },
+      },
+    };
+
+    eventSubscribers[0]?.(payload);
+    eventSubscribers[0]?.(payload);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const calls = lastAppClient?.chat.postMessage.mock.calls || [];
+    const thinkingPlaceholders = calls.filter((call) => call[0]?.text?.includes('Thinking...'));
+    expect(thinkingPlaceholders).toHaveLength(1);
+  });
 });
