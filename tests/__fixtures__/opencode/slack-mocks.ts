@@ -22,6 +22,7 @@ export function createMockWebClient() {
       create: vi.fn().mockResolvedValue({ ok: true, channel: { id: 'CNEW', name: 'new-channel' } }),
       invite: vi.fn().mockResolvedValue({ ok: true }),
       info: vi.fn().mockResolvedValue({ ok: true, channel: { id: 'C123' } }),
+      list: vi.fn().mockResolvedValue({ ok: true, channels: [], response_metadata: { next_cursor: '' } }),
     },
     views: {
       open: vi.fn().mockResolvedValue({ ok: true }),

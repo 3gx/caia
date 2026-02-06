@@ -2236,7 +2236,37 @@ function registerActionHandlers(appInstance: App): void {
     try {
       const channelInfo = await (client as WebClient).conversations.info({ channel: channelId });
       const name = (channelInfo as any).channel?.name;
-      if (name) suggestedName = `${name}-fork`;
+      if (name) {
+        const baseForkName = `${name}-fork`;
+        const existingNames = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const listResult = await (client as WebClient).conversations.list({
+            types: 'public_channel,private_channel',
+            exclude_archived: false,
+            limit: 200,
+            cursor,
+          });
+          if ((listResult as any).ok && (listResult as any).channels) {
+            for (const ch of (listResult as any).channels) {
+              if (ch.name?.startsWith(baseForkName)) {
+                existingNames.add(ch.name);
+              }
+            }
+          }
+          cursor = (listResult as any).response_metadata?.next_cursor;
+        } while (cursor);
+
+        if (!existingNames.has(baseForkName)) {
+          suggestedName = baseForkName;
+        } else {
+          let num = 1;
+          while (existingNames.has(`${baseForkName}-${num}`)) {
+            num++;
+          }
+          suggestedName = `${baseForkName}-${num}`;
+        }
+      }
     } catch {
       // ignore
     }

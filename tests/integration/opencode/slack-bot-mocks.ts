@@ -131,6 +131,11 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
   buildStatusDisplayBlocks: vi.fn().mockReturnValue([]),
   buildContextDisplayBlocks: vi.fn().mockReturnValue([]),
   buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
+  buildForkToChannelModalView: vi.fn().mockImplementation((params: any) => ({
+    type: 'modal',
+    private_metadata: JSON.stringify(params),
+    blocks: [],
+  })),
   buildModelSelectionBlocks: vi.fn().mockImplementation((models: any[], currentModel?: string, recentModels?: string[]) => {
     // Group models by provider for option_groups (same logic as real implementation)
     const groups = new Map<string, any[]>();
@@ -202,7 +207,6 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
     ];
   }),
   buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
-  buildForkToChannelModalView: vi.fn().mockReturnValue({}),
   buildAbortConfirmationModalView: vi.fn().mockReturnValue({}),
   buildModeSelectionBlocks: vi.fn().mockImplementation((currentMode: string) => [
     {
