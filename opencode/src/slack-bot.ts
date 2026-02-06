@@ -10,7 +10,7 @@ import fs from 'fs';
 
 import { ServerPool } from './server-pool.js';
 import type { OpencodeClientWrapper } from './opencode-client.js';
-import { ConversationTracker, type ActiveContext } from '../../slack/src/session/conversation-tracker.js';
+import { ConversationTracker, type ActiveContext } from '../../slack/dist/session/conversation-tracker.js';
 import {
   getSession,
   saveSession,
@@ -54,9 +54,9 @@ import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentio
 import { toUserMessage } from './errors.js';
 import { markProcessingStart, markApprovalWait, markApprovalDone, markError, markAborted, removeProcessingEmoji } from './emoji-reactions.js';
 import { sendDmNotification, clearDmDebounce } from './dm-notifications.js';
-import { processSlackFiles, type SlackFile } from '../../slack/src/file-handler.js';
+import { processSlackFiles, type SlackFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
-import { withSlackRetry, sleep } from '../../slack/src/retry.js';
+import { withSlackRetry, sleep } from '../../slack/dist/retry.js';
 import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
 import { syncMessagesFromSession } from './message-sync.js';
 import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId, isModelAvailable } from './model-cache.js';

@@ -9,8 +9,8 @@
  */
 
 import fs from 'fs';
-import { SessionStoreManager } from '../../slack/src/session/base-session-manager.js';
-import type { UnifiedMode } from '../../slack/src/session/types.js';
+import { SessionStoreManager } from '../../slack/dist/session/base-session-manager.js';
+import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import type { ApprovalPolicy, ReasoningEffort } from './codex-client.js';
 
 

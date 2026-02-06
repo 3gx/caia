@@ -4,7 +4,7 @@
  */
 
 import type { ReasoningEffort, SandboxMode } from './codex-client.js';
-import type { UnifiedMode } from '../../slack/src/session/types.js';
+import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import {
   markdownToSlack,
   stripMarkdownCodeFence,

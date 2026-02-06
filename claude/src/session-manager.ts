@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import * as crypto from 'crypto';
-import { SessionStoreManager } from '../../slack/src/session/base-session-manager.js';
+import { SessionStoreManager } from '../../slack/dist/session/base-session-manager.js';
 
 /**
  * SDK Permission Mode type - matches @anthropic-ai/claude-agent-sdk.

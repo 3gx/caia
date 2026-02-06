@@ -25,7 +25,7 @@ import {
   JsonRpcNotification,
   JsonRpcRequest,
 } from './json-rpc.js';
-import { Errors } from '../../slack/src/errors.js';
+import { Errors } from '../../slack/dist/errors.js';
 
 // Approval policy types (maps to Codex config)
 export type ApprovalPolicy = 'never' | 'on-request' | 'on-failure' | 'untrusted';

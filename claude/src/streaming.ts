@@ -1,7 +1,7 @@
 import { WebClient } from '@slack/web-api';
 import { markdownToSlack, stripMarkdownCodeFence } from './utils.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
-import { markdownToPng } from '../../slack/src/markdown-png.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
+import { markdownToPng } from '../../slack/dist/markdown-png.js';
 import { saveMessageMapping } from './session-manager.js';
 import { MESSAGE_SIZE_DEFAULT } from './commands.js';
 

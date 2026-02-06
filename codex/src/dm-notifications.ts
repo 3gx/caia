@@ -6,7 +6,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import { withSlackRetry } from '../../slack/src/retry.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
 
 // Debounce tracking: debounceKey -> lastNotificationTime
 // Use conversationKey + title to debounce per-turn and per-notification type

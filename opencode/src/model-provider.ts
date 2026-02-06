@@ -1,4 +1,4 @@
-import type { IModelProvider, ModelInfo } from '../../slack/src/types.js';
+import type { IModelProvider, ModelInfo } from '../../slack/dist/types.js';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import {
   getAvailableModels,

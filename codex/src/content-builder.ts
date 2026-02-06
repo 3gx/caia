@@ -2,7 +2,7 @@
  * Content builder for Codex messages with file attachments.
  */
 
-import { ProcessedFile, formatFileSize } from '../../slack/src/file-handler.js';
+import { ProcessedFile, formatFileSize } from '../../slack/dist/file-handler.js';
 import { TurnContent } from './codex-client.js';
 
 /**

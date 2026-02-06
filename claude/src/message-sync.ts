@@ -27,8 +27,8 @@ import {
   ActivityEntry,
 } from './session-event-stream.js';
 import { buildLiveActivityBlocks, formatThreadActivityBatch } from './blocks.js';
-import { withSlackRetry, withInfiniteRetry, sleep } from '../../slack/src/retry.js';
-import { getSessionsFilePath } from '../../slack/src/session/base-session-manager.js';
+import { withSlackRetry, withInfiniteRetry, sleep } from '../../slack/dist/retry.js';
+import { getSessionsFilePath } from '../../slack/dist/session/base-session-manager.js';
 import { truncateWithClosedFormatting, uploadMarkdownWithResponse } from './streaming.js';
 import { MESSAGE_SIZE_DEFAULT } from './commands.js';
 import { postActivityToThread, postThinkingToThread } from './activity-thread.js';

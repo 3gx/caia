@@ -1,4 +1,4 @@
-import type { AgentCapabilities, IAgent } from '../../slack/src/types.js';
+import type { AgentCapabilities, IAgent } from '../../slack/dist/types.js';
 import { startBot, stopBot } from './slack-bot.js';
 
 const capabilities: AgentCapabilities = {

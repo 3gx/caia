@@ -15,7 +15,7 @@
 
 import type { WebClient } from '@slack/web-api';
 import type { CodexClient, ReasoningEffort } from './codex-client.js';
-import type { UnifiedMode } from '../../slack/src/session/types.js';
+import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import {
   getSession,
   saveSession,

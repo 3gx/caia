@@ -3,7 +3,7 @@
  */
 
 import type { OpencodeClient } from '@opencode-ai/sdk';
-import type { ModelInfo } from '../../slack/src/types.js';
+import type { ModelInfo } from '../../slack/dist/types.js';
 
 export type { ModelInfo };
 

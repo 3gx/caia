@@ -15,7 +15,7 @@ import {
   formatThreadErrorMessage,
 } from './blocks.js';
 import { uploadMarkdownAndPngWithResponse } from './streaming.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
 
 /**
  * Default character limit for thread messages before truncation + attachment.

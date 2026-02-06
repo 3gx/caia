@@ -3,7 +3,7 @@
  * Builds content blocks compatible with Claude's multi-modal API.
  */
 
-import { ProcessedFile, formatFileSize } from '../../slack/src/file-handler.js';
+import { ProcessedFile, formatFileSize } from '../../slack/dist/file-handler.js';
 
 /**
  * Content block types for Claude messages.

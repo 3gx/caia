@@ -6,12 +6,12 @@
  */
 
 import { App, LogLevel } from '@slack/bolt';
-import type { UnifiedMode } from '../../slack/src/session/types.js';
+import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import { Mutex } from 'async-mutex';
 import { ApprovalRequestWithId, TurnContent, ReasoningEffort } from './codex-client.js';
 import { makeConversationKey, StreamingContext } from './streaming.js';
 import { CodexPool } from './codex-pool.js';
-import { ConversationTracker, type ActiveContext } from '../../slack/src/session/conversation-tracker.js';
+import { ConversationTracker, type ActiveContext } from '../../slack/dist/session/conversation-tracker.js';
 import {
   handleCommand,
   CommandContext,
@@ -54,11 +54,11 @@ import {
   buildPathSetupBlocks,
   Block,
 } from './blocks.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
-import { toUserMessage } from '../../slack/src/errors.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
+import { toUserMessage } from '../../slack/dist/errors.js';
 import { markProcessingStart, markApprovalWait, removeProcessingEmoji } from './emoji-reactions.js';
 import { markAborted } from './abort-tracker.js';
-import { processSlackFiles, SlackFile, writeTempFile } from '../../slack/src/file-handler.js';
+import { processSlackFiles, SlackFile, writeTempFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
 import { uploadFilesToThread, uploadMarkdownAndPngWithResponse, getMessagePermalink, type ActivityEntry } from './activity-thread.js';
 import { THINKING_MESSAGE_SIZE } from './commands.js';

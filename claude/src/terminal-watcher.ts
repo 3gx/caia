@@ -14,7 +14,7 @@ import {
   SessionFileMessage,
 } from './session-reader.js';
 import { markdownToSlack, stripMarkdownCodeFence } from './utils.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
 import { truncateWithClosedFormatting, uploadMarkdownAndPngWithResponse, uploadMarkdownWithResponse } from './streaming.js';
 import { syncMessagesFromOffset, MessageSyncState } from './message-sync.js';
 import { MESSAGE_SIZE_DEFAULT, UPDATE_RATE_DEFAULT } from './commands.js';

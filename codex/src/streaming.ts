@@ -16,7 +16,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import type { UnifiedMode } from '../../slack/src/session/types.js';
+import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import { Mutex } from 'async-mutex';
 import type {
   CodexClient,
@@ -60,7 +60,7 @@ import {
   postErrorToThread,
 } from './activity-thread.js';
 import { buildActivityEntryActionParams } from './blocks.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
 import { sendDmNotification } from './dm-notifications.js';
 import { THINKING_MESSAGE_SIZE } from './commands.js';
 

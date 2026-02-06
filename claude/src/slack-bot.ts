@@ -2,7 +2,7 @@ import { App } from '@slack/bolt';
 import { WebClient } from '@slack/web-api';
 import { Mutex } from 'async-mutex';
 import { startClaudeQuery, ClaudeQuery, PermissionResult } from './claude-client.js';
-import { ConversationTracker, type ActiveContext } from '../../slack/src/session/conversation-tracker.js';
+import { ConversationTracker, type ActiveContext } from '../../slack/dist/session/conversation-tracker.js';
 import {
   getSession,
   saveSession,
@@ -61,10 +61,10 @@ import { markAborted, isAborted, clearAborted } from './abort-tracker.js';
 import { markFfAborted, isFfAborted, clearFfAborted } from './ff-abort-tracker.js';
 import { markdownToSlack, formatTimeRemaining, stripMarkdownCodeFence } from './utils.js';
 import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentionId, UPDATE_RATE_DEFAULT, MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
-import { toUserMessage, SlackBotError, Errors } from '../../slack/src/errors.js';
-import { processSlackFiles, SlackFile } from '../../slack/src/file-handler.js';
+import { toUserMessage, SlackBotError, Errors } from '../../slack/dist/errors.js';
+import { processSlackFiles, SlackFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent, ContentBlock } from './content-builder.js';
-import { withSlackRetry, withRetry } from '../../slack/src/retry.js';
+import { withSlackRetry, withRetry } from '../../slack/dist/retry.js';
 import {
   startWatching,
   stopWatching,

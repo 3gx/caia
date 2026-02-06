@@ -1,4 +1,4 @@
-import { SessionStoreManager } from '../../slack/src/session/base-session-manager.js';
+import { SessionStoreManager } from '../../slack/dist/session/base-session-manager.js';
 
 /**
  * SDK Permission Mode type - matches OpenCode semantics.

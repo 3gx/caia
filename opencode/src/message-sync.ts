@@ -8,7 +8,7 @@ import type { OpencodeClient, Part } from '@opencode-ai/sdk';
 import { markdownToSlack } from './utils.js';
 import { truncateWithClosedFormatting, uploadMarkdownWithResponse } from './streaming.js';
 import { MESSAGE_SIZE_DEFAULT } from './commands.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
+import { withSlackRetry } from '../../slack/dist/retry.js';
 import {
   getSyncedMessageUuids,
   addSyncedMessageUuid,

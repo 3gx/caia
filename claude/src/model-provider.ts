@@ -1,4 +1,4 @@
-import type { IModelProvider, ModelInfo } from '../../slack/src/types.js';
+import type { IModelProvider, ModelInfo } from '../../slack/dist/types.js';
 import {
   getAvailableModels,
   refreshModelCache,

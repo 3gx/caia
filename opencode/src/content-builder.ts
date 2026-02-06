@@ -2,7 +2,7 @@
  * Content builder for OpenCode messages with file attachments.
  */
 
-import { ProcessedFile, formatFileSize } from '../../slack/src/file-handler.js';
+import { ProcessedFile, formatFileSize } from '../../slack/dist/file-handler.js';
 import type { MessagePartInput } from './types.js';
 
 /**
