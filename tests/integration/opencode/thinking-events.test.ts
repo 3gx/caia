@@ -1,9 +1,9 @@
 import './slack-bot-mocks.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { registeredHandlers, eventSubscribers } from './slack-bot-mocks.js';
+import { registeredHandlers, eventSubscribers, lastAppClient } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
-import { postThinkingToThread } from '../../../opencode/src/activity-thread.js';
+import { uploadFilesToThread } from '../../../opencode/src/streaming.js';
 
 describe('thinking-events', () => {
   beforeEach(async () => {
@@ -18,7 +18,69 @@ describe('thinking-events', () => {
     expect(registeredHandlers['event_app_mention']).toBeDefined();
   });
 
-  it('posts thinking to thread on reasoning completion', async () => {
+  it('posts thinking placeholder on reasoning start', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'reasoning',
+            id: 'r1',
+            text: 'short',
+            time: { start: 0 },
+          },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const calls = lastAppClient?.chat.postMessage.mock.calls || [];
+    const hasPlaceholder = calls.some((call) => call[0]?.text?.includes('Thinking...'));
+    expect(hasPlaceholder).toBe(true);
+  });
+
+  it('updates thinking message on completion for short content', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'reasoning',
+            id: 'r1',
+            text: 'short',
+            time: { start: 0, end: 1 },
+          },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(lastAppClient?.chat.update).toHaveBeenCalled();
+  });
+
+  it('uploads thinking attachment for long content', async () => {
     const handler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
 
@@ -46,6 +108,6 @@ describe('thinking-events', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(postThinkingToThread).toHaveBeenCalled();
+    expect(uploadFilesToThread).toHaveBeenCalled();
   });
 });

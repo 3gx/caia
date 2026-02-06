@@ -2356,6 +2356,7 @@ export interface AttachThinkingButtonValue {
   threadParentTs: string;
   channelId: string;
   sessionId: string;
+  workingDir: string;
   thinkingTimestamp: number;
   thinkingCharCount: number;
   activityMsgTs: string;
@@ -2369,6 +2370,7 @@ export interface AttachThinkingButtonValue {
  * @param threadParentTs - Thread parent ts for uploading files
  * @param channelId - Channel ID
  * @param sessionId - Session ID for looking up thinking content
+ * @param workingDir - Working directory for session lookup
  * @param thinkingTimestamp - entry.timestamp for session file lookup
  * @param thinkingCharCount - content.length for verification
  * @returns Actions block with retry button
@@ -2378,6 +2380,7 @@ export function buildAttachThinkingFileButton(
   threadParentTs: string,
   channelId: string,
   sessionId: string,
+  workingDir: string,
   thinkingTimestamp: number,
   thinkingCharCount: number
 ): Block {
@@ -2385,6 +2388,7 @@ export function buildAttachThinkingFileButton(
     threadParentTs,
     channelId,
     sessionId,
+    workingDir,
     thinkingTimestamp,
     thinkingCharCount,
     activityMsgTs,

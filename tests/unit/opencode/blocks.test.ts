@@ -9,6 +9,7 @@ import {
   buildModelSelectionBlocks,
   buildModelDeprecatedBlocks,
   groupModelsByProvider,
+  buildAttachThinkingFileButton,
 } from '../../../opencode/src/blocks.js';
 
 const usage = {
@@ -65,6 +66,12 @@ describe('blocks', () => {
     expect(blocks.length).toBeGreaterThan(0);
     const deprecated = buildModelDeprecatedBlocks('m2', models);
     expect(deprecated.length).toBeGreaterThan(0);
+  });
+
+  it('includes workingDir in attach thinking button payload', () => {
+    const block = buildAttachThinkingFileButton('1.0', '2.0', 'C1', 'sess1', '/tmp', 123, 456) as any;
+    const value = JSON.parse(block.elements[0].value);
+    expect(value.workingDir).toBe('/tmp');
   });
 });
 

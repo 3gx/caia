@@ -219,6 +219,8 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
       ],
     },
   ]),
+  buildAttachThinkingFileButton: vi.fn().mockReturnValue({ type: 'actions', elements: [] }),
+  formatThreadThinkingMessage: vi.fn().mockReturnValue(':bulb: *Thinking*'),
   buildWatchingStatusSection: vi.fn().mockReturnValue({ type: 'context', elements: [] }),
   DEFAULT_CONTEXT_WINDOW: 200000,
   computeAutoCompactThreshold: vi.fn().mockReturnValue(1000),
@@ -236,6 +238,8 @@ vi.mock('../../../opencode/src/streaming.js', () => ({
   }),
   makeConversationKey: vi.fn().mockReturnValue('C1'),
   uploadMarkdownAndPngWithResponse: vi.fn().mockResolvedValue({ ts: '1.0' }),
+  uploadFilesToThread: vi.fn().mockResolvedValue({ success: true, fileMessageTs: '2.0' }),
+  extractTailWithFormatting: vi.fn((text: string, maxChars: number) => text.slice(-maxChars)),
 }));
 
 vi.mock('../../../opencode/src/errors.js', () => ({
@@ -266,6 +270,7 @@ vi.mock('../../../opencode/src/content-builder.js', () => ({
 
 vi.mock('../../../slack/src/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
+  sleep: (ms: number) => Promise.resolve(ms),
 }));
 
 vi.mock('../../../opencode/src/terminal-watcher.js', () => ({
@@ -300,5 +305,11 @@ vi.mock('../../../opencode/src/model-cache.js', () => ({
 }));
 
 vi.mock('../../../opencode/src/activity-thread.js', () => ({
+  flushActivityBatch: vi.fn().mockResolvedValue(undefined),
   postThinkingToThread: vi.fn().mockResolvedValue(undefined),
+  postStartingToThread: vi.fn().mockResolvedValue(undefined),
+  postErrorToThread: vi.fn().mockResolvedValue(undefined),
+  postResponseToThread: vi.fn().mockResolvedValue({ ts: '2.0', permalink: 'https://example.slack.com/archives/C123/p2' }),
+  updatePostedBatch: vi.fn().mockResolvedValue(undefined),
+  getMessagePermalink: vi.fn().mockResolvedValue('https://example.slack.com/archives/C123/p1'),
 }));

@@ -5,7 +5,7 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { Mutex } from 'async-mutex';
-import type { GlobalEvent, Part, ToolPart, Todo } from '@opencode-ai/sdk';
+import type { GlobalEvent, OpencodeClient, Part, ToolPart, Todo } from '@opencode-ai/sdk';
 import fs from 'fs';
 
 import { ServerPool } from './server-pool.js';
@@ -38,11 +38,15 @@ import {
   buildModeSelectionBlocks,
   DEFAULT_CONTEXT_WINDOW,
   computeAutoCompactThreshold,
+  buildAttachThinkingFileButton,
+  formatThreadThinkingMessage,
 } from './blocks.js';
 import {
   startStreamingSession,
   makeConversationKey,
   uploadMarkdownAndPngWithResponse,
+  uploadFilesToThread,
+  extractTailWithFormatting,
 } from './streaming.js';
 import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentionId, UPDATE_RATE_DEFAULT, MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
 import { toUserMessage } from './errors.js';
@@ -50,11 +54,19 @@ import { markProcessingStart, markApprovalWait, markApprovalDone, markError, mar
 import { sendDmNotification, clearDmDebounce } from './dm-notifications.js';
 import { processSlackFiles, type SlackFile } from '../../slack/src/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
-import { withSlackRetry } from '../../slack/src/retry.js';
+import { withSlackRetry, sleep } from '../../slack/src/retry.js';
 import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
 import { syncMessagesFromSession } from './message-sync.js';
 import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId, isModelAvailable } from './model-cache.js';
-import { postThinkingToThread } from './activity-thread.js';
+import {
+  flushActivityBatch,
+  postThinkingToThread,
+  postStartingToThread,
+  postErrorToThread,
+  postResponseToThread,
+  updatePostedBatch,
+  getMessagePermalink,
+} from './activity-thread.js';
 
 const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const STATUS_UPDATE_INTERVAL_MS = 1000;
@@ -92,6 +104,7 @@ interface ProcessingState {
   sessionThreadTs?: string;
   postingThreadTs?: string;
   sessionId: string;
+  workingDir: string;
   statusMsgTs: string;
   streamingMessageTs: string | null;
   streamingSession: Awaited<ReturnType<typeof startStreamingSession>>;
@@ -117,6 +130,19 @@ interface ProcessingState {
   statusUpdateTimer?: NodeJS.Timeout;
   customStatus?: string;
   pendingPermissions: Set<string>;
+  updateRateSeconds: number;
+  lastThinkingUpdateTime: number;
+
+  // Activity thread batch infrastructure
+  activityThreadMsgTs: string | null;
+  activityBatch: ActivityEntry[];
+  activityBatchStartIndex: number;
+  lastActivityPostTime: number;
+  threadParentTs: string | null;
+  charLimit: number;
+  postedBatchTs: string | null;
+  postedBatchToolUseIds: Set<string>;
+  pendingThinkingUpdate: Promise<void> | null;
 }
 
 const serverPool = new ServerPool();
@@ -331,6 +357,291 @@ async function appendTextDelta(partId: string | undefined, text: string | undefi
   await state.streamingSession.appendText(chunk);
 }
 
+async function getThinkingContentFromSession(
+  client: OpencodeClient,
+  sessionId: string,
+  thinkingTimestamp: number,
+  thinkingCharCount: number,
+  workingDir: string
+): Promise<string | null> {
+  try {
+    const response = await client.session.messages({
+      path: { id: sessionId },
+      query: { directory: workingDir },
+    });
+    const messages = response.data ?? [];
+    for (const msg of messages) {
+      if (msg.info?.role !== 'assistant') continue;
+      const parts = msg.parts ?? [];
+      for (const part of parts) {
+        if (part.type !== 'reasoning' || !part.text) continue;
+        const timeValue = part.time?.end ?? part.time?.start ?? 0;
+        const timeMatch = Math.abs(timeValue - thinkingTimestamp) < 1000;
+        const charMatch = part.text.length === thinkingCharCount;
+        if (timeMatch && charMatch) {
+          return part.text;
+        }
+      }
+    }
+    console.error('[getThinkingContentFromSession] No matching thinking entry found');
+    return null;
+  } catch (error) {
+    console.error('[getThinkingContentFromSession] Failed:', error);
+    return null;
+  }
+}
+
+async function updateThinkingMessageWithRetry(
+  client: WebClient,
+  channelId: string,
+  messageTs: string,
+  text: string,
+  maxAttempts: number,
+  mainChannelId: string
+): Promise<boolean> {
+  const permanentErrors = ['message_not_found', 'channel_not_found', 'msg_too_long', 'no_permission'];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await client.chat.update({ channel: channelId, ts: messageTs, text });
+      return true;
+    } catch (error: any) {
+      const errorCode = error?.data?.error || error?.code;
+      if (permanentErrors.includes(errorCode)) {
+        console.error(`[updateThinkingMessageWithRetry] Permanent error: ${errorCode}`);
+        break;
+      }
+      if (attempt === maxAttempts) {
+        break;
+      }
+      console.log(`[updateThinkingMessageWithRetry] Attempt ${attempt} failed, retrying... (${errorCode})`);
+      await sleep(1000 * attempt);
+    }
+  }
+
+  try {
+    const msgLink = await getMessagePermalink(client, channelId, messageTs);
+    await client.chat.postMessage({
+      channel: mainChannelId,
+      text: `:warning: Failed to update thinking message. File was uploaded but <${msgLink}|message> could not be updated.`,
+    });
+  } catch {
+    await client.chat.postMessage({
+      channel: mainChannelId,
+      text: ':warning: Failed to update thinking message. File was uploaded but message could not be updated.',
+    });
+  }
+  return false;
+}
+
+async function startThinkingEntry(state: ProcessingState): Promise<void> {
+  if (state.activityBatch.length > 0 && state.threadParentTs) {
+    await flushActivityBatch(
+      state,
+      app!.client as WebClient,
+      state.channelId,
+      state.charLimit,
+      'long_content',
+      state.userId
+    );
+  }
+
+  const elapsedMs = Date.now() - state.startTime;
+  state.thinkingEntry = {
+    timestamp: Date.now(),
+    type: 'thinking',
+    thinkingContent: '',
+    thinkingTruncated: '',
+    thinkingInProgress: true,
+    durationMs: elapsedMs,
+  };
+  state.activityLog.push(state.thinkingEntry);
+  state.status = 'thinking';
+  state.lastThinkingUpdateTime = 0;
+
+  if (state.threadParentTs) {
+    try {
+      const result = await (app!.client as WebClient).chat.postMessage({
+        channel: state.channelId,
+        thread_ts: state.threadParentTs,
+        text: ':bulb: *Thinking...*',
+        mrkdwn: true,
+      });
+      if (result.ts) {
+        state.activityThreadMsgTs = result.ts as string;
+      }
+    } catch (err) {
+      console.error('[Activity Thread] Failed to post thinking placeholder:', err);
+    }
+  }
+}
+
+function updateThinkingEntryInThread(state: ProcessingState, content: string): void {
+  if (!state.activityThreadMsgTs) return;
+  const now = Date.now();
+  const intervalMs = state.updateRateSeconds * 1000;
+  if (now - state.lastThinkingUpdateTime < intervalMs) return;
+
+  const elapsedSec = Math.floor((now - state.startTime) / 1000);
+  const preview = content.length > THINKING_MESSAGE_SIZE
+    ? extractTailWithFormatting(content, THINKING_MESSAGE_SIZE)
+    : content;
+
+  state.pendingThinkingUpdate = (app!.client as WebClient).chat.update({
+    channel: state.channelId,
+    ts: state.activityThreadMsgTs,
+    text: `:bulb: *Thinking...* [${elapsedSec}s] _${content.length} chars_\n> ${preview}`,
+  })
+    .then(() => {})
+    .catch((err) => {
+      console.error('[Activity Thread] Failed to update thinking in-place:', err);
+    })
+    .finally(() => {
+      state.pendingThinkingUpdate = null;
+    });
+
+  state.lastThinkingUpdateTime = now;
+}
+
+async function finalizeThinkingEntry(state: ProcessingState, content: string): Promise<void> {
+  const entry = state.thinkingEntry;
+  if (!entry || !state.threadParentTs) return;
+
+  const charLimit = THINKING_MESSAGE_SIZE;
+  const truncated = content.length > charLimit;
+
+  entry.thinkingContent = content;
+  entry.thinkingTruncated = content.length > 500 ? `...${content.slice(-500)}` : content;
+  entry.thinkingInProgress = false;
+
+  if (state.activityThreadMsgTs && truncated) {
+    if (state.pendingThinkingUpdate) {
+      await state.pendingThinkingUpdate;
+    }
+
+    const thinkingMsgLink = await getMessagePermalink(
+      app!.client as WebClient,
+      state.channelId,
+      state.activityThreadMsgTs
+    );
+
+    let attachmentFailed = false;
+    const uploadResult = await uploadFilesToThread(
+      app!.client as WebClient,
+      state.channelId,
+      state.threadParentTs,
+      content,
+      `_Content for <${thinkingMsgLink}|this thinking block>._`,
+      state.userId
+    );
+
+    if (uploadResult.success && uploadResult.fileMessageTs) {
+      const fileMsgLink = await getMessagePermalink(
+        app!.client as WebClient,
+        state.channelId,
+        uploadResult.fileMessageTs
+      );
+      const formattedText = formatThreadThinkingMessage(
+        entry,
+        true,
+        charLimit,
+        { preserveTail: true, attachmentLink: fileMsgLink }
+      );
+
+      await updateThinkingMessageWithRetry(
+        app!.client as WebClient,
+        state.channelId,
+        state.activityThreadMsgTs,
+        formattedText,
+        5,
+        state.channelId
+      );
+    } else {
+      attachmentFailed = true;
+    }
+
+    if (attachmentFailed) {
+      const formattedText = formatThreadThinkingMessage(
+        entry,
+        false,
+        charLimit,
+        { preserveTail: true }
+      );
+      const blocks = [
+        { type: 'section' as const, text: { type: 'mrkdwn' as const, text: formattedText } },
+        buildAttachThinkingFileButton(
+          state.activityThreadMsgTs,
+          state.threadParentTs,
+          state.channelId,
+          state.sessionId,
+          state.workingDir,
+          entry.timestamp,
+          content.length
+        ),
+      ];
+
+      try {
+        await (app!.client as WebClient).chat.update({
+          channel: state.channelId,
+          ts: state.activityThreadMsgTs,
+          text: formattedText,
+          blocks,
+        });
+      } catch (err) {
+        console.error('[Activity Thread] Failed to update thinking with retry button:', err);
+      }
+    }
+
+    entry.threadMessageTs = state.activityThreadMsgTs;
+    entry.threadMessageLink = thinkingMsgLink;
+    state.activityThreadMsgTs = null;
+    return;
+  }
+
+  if (truncated) {
+    await postThinkingToThread(
+      app!.client as WebClient,
+      state.channelId,
+      state.threadParentTs,
+      entry,
+      charLimit,
+      state.userId
+    );
+    state.activityThreadMsgTs = null;
+    return;
+  }
+
+  if (state.activityThreadMsgTs) {
+    const formattedText = formatThreadThinkingMessage(entry, false, charLimit);
+    try {
+      await (app!.client as WebClient).chat.update({
+        channel: state.channelId,
+        ts: state.activityThreadMsgTs,
+        text: formattedText,
+      });
+      entry.threadMessageTs = state.activityThreadMsgTs;
+      entry.threadMessageLink = await getMessagePermalink(
+        app!.client as WebClient,
+        state.channelId,
+        state.activityThreadMsgTs
+      );
+    } catch (err) {
+      console.error('[Activity Thread] Failed to finalize thinking in-place:', err);
+    }
+    state.activityThreadMsgTs = null;
+    return;
+  }
+
+  await postThinkingToThread(
+    app!.client as WebClient,
+    state.channelId,
+    state.threadParentTs,
+    entry,
+    charLimit,
+    state.userId
+  );
+  state.activityThreadMsgTs = null;
+}
+
 async function appendReasoningDelta(
   partId: string | undefined,
   text: string | undefined,
@@ -351,37 +662,30 @@ async function appendReasoningDelta(
 
   state.reasoningParts.set(key, next);
 
-  if (!state.thinkingEntry) {
-    state.thinkingEntry = {
-      timestamp: Date.now(),
-      type: 'thinking',
-      thinkingContent: '',
-      thinkingTruncated: '',
-      thinkingInProgress: true,
-    };
-    state.activityLog.push(state.thinkingEntry);
+  if (!state.thinkingEntry || !state.thinkingEntry.thinkingInProgress) {
+    await startThinkingEntry(state);
   }
 
   state.status = 'thinking';
-  state.thinkingEntry.thinkingContent = next;
-  state.thinkingEntry.thinkingTruncated = next.length > 500 ? '...' + next.slice(-500) : next;
-  state.thinkingEntry.thinkingInProgress = endTime === undefined;
-  if (startTime && endTime) {
-    state.thinkingEntry.durationMs = Math.max(0, endTime - startTime);
+  if (state.thinkingEntry) {
+    state.thinkingEntry.thinkingContent = next;
+    state.thinkingEntry.thinkingTruncated = next.length > 500 ? '...' + next.slice(-500) : next;
+    state.thinkingEntry.thinkingInProgress = endTime === undefined;
+    if (startTime && endTime) {
+      state.thinkingEntry.durationMs = Math.max(0, endTime - startTime);
+    }
   }
 
-  if (endTime !== undefined && state.thinkingEntry && state.thinkingEntry.thinkingContent) {
-    const content = state.thinkingEntry.thinkingContent;
-    if (content.length > THINKING_MESSAGE_SIZE && state.statusMsgTs) {
-      await postThinkingToThread(
-        app!.client as WebClient,
-        state.channelId,
-        state.statusMsgTs,
-        state.thinkingEntry,
-        THINKING_MESSAGE_SIZE,
-        state.userId
-      );
+  if (endTime === undefined) {
+    updateThinkingEntryInThread(state, next);
+    return;
+  }
+
+  if (state.thinkingEntry) {
+    if (startTime && endTime) {
+      state.thinkingEntry.durationMs = Math.max(0, endTime - startTime);
     }
+    await finalizeThinkingEntry(state, next);
   }
 }
 
@@ -407,6 +711,7 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
       toolUseId: toolKey,
     };
     state.activityLog.push(entry);
+    state.activityBatch.push(entry);  // Add to batch for thread posting
     return;
   }
 
@@ -441,6 +746,29 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
     }
 
     state.activityLog.push(entry);
+
+    // Add to batch: replace tool_start if exists, otherwise add tool_complete
+    const batchIdx = state.activityBatch.findIndex(
+      e => e.type === 'tool_start' && e.toolUseId === toolKey
+    );
+    if (batchIdx >= 0) {
+      state.activityBatch[batchIdx] = entry;
+    } else {
+      state.activityBatch.push(entry);
+    }
+
+    // If tool was already posted to thread (race condition), update the posted batch
+    if (toolKey && state.postedBatchToolUseIds?.has(toolKey) && state.postedBatchTs) {
+      void updatePostedBatch(
+        state,
+        app!.client as WebClient,
+        state.channelId,
+        state.activityLog,
+        toolKey
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to update posted batch:', err);
+      });
+    }
 
     // Detect plan file path in tool input (best-effort)
     const input = part.state?.input as Record<string, unknown> | undefined;
@@ -590,6 +918,41 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     }
   }
 
+  // Flush any remaining activity batch on completion
+  if (state.activityBatch.length > 0 && state.threadParentTs) {
+    await flushActivityBatch(
+      state,
+      app!.client as WebClient,
+      state.channelId,
+      state.charLimit,
+      'complete',
+      state.userId
+    ).catch(err => {
+      console.error('[Activity Thread] Failed to flush batch on completion:', err);
+    });
+  }
+
+  // Post final response to activity thread
+  if (state.threadParentTs && state.fullResponse && state.status === 'complete') {
+    const responseResult = await postResponseToThread(
+      app!.client as WebClient,
+      state.channelId,
+      state.threadParentTs,
+      state.fullResponse,
+      state.generatingEntry?.durationMs,
+      state.charLimit,
+      state.userId
+    ).catch(err => {
+      console.error('[Activity Thread] Failed to post response:', err);
+      return null;
+    });
+
+    if (responseResult && state.generatingEntry) {
+      state.generatingEntry.threadMessageTs = responseResult.ts;
+      state.generatingEntry.threadMessageLink = responseResult.permalink;
+    }
+  }
+
   await updateStatusMessage(state, session, app!.client as WebClient);
 
   if (state.originalTs) {
@@ -668,6 +1031,19 @@ function startStatusUpdater(state: ProcessingState, session: Session | ThreadSes
     void updateStatusMessage(state, session, client).catch((error) => {
       console.error('[opencode] Status update error:', error);
     });
+    // Flush activity batch on timer
+    if (state.activityBatch.length > 0 && state.threadParentTs) {
+      void flushActivityBatch(
+        state,
+        client,
+        state.channelId,
+        state.charLimit,
+        'timer',
+        state.userId
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to flush batch on timer:', err);
+      });
+    }
   }, STATUS_UPDATE_INTERVAL_MS);
 }
 
@@ -1212,6 +1588,7 @@ async function handleUserMessage(params: {
     sessionThreadTs,
     postingThreadTs,
     sessionId: session.sessionId!,
+    workingDir: session.workingDir,
     statusMsgTs: statusMsg.ts!,
     streamingMessageTs: streaming.messageTs,
     streamingSession: streaming,
@@ -1230,7 +1607,31 @@ async function handleUserMessage(params: {
     reasoningParts: new Map(),
     toolStates: new Map(),
     pendingPermissions: new Set(),
+    updateRateSeconds: session.updateRateSeconds ?? UPDATE_RATE_DEFAULT,
+    lastThinkingUpdateTime: 0,
+
+    // Activity thread batch infrastructure
+    activityThreadMsgTs: null,
+    activityBatch: [],
+    activityBatchStartIndex: 0,
+    lastActivityPostTime: 0,
+    threadParentTs: null,  // Will be set to statusMsgTs after posting
+    charLimit: (session as any).threadCharLimit ?? MESSAGE_SIZE_DEFAULT,
+    postedBatchTs: null,
+    postedBatchToolUseIds: new Set(),
+    pendingThinkingUpdate: null,
   };
+
+  // Set threadParentTs to statusMsgTs for activity thread replies
+  processingState.threadParentTs = statusMsg.ts!;
+
+  // Post starting entry to activity thread
+  if (processingState.threadParentTs) {
+    const startingEntry = processingState.activityLog.find(e => e.type === 'starting');
+    postStartingToThread(client, channelId, processingState.threadParentTs, startingEntry).catch(err => {
+      console.error('[Activity Thread] Failed to post starting entry:', err);
+    });
+  }
 
   processingBySession.set(session.sessionId!, processingState);
   processingByConversation.set(conversationKey, processingState);
@@ -1249,6 +1650,33 @@ async function handleUserMessage(params: {
   } catch (error) {
     processingState.status = 'error';
     processingState.customStatus = toUserMessage(error);
+
+    // Flush any pending batch on error
+    if (processingState.activityBatch.length > 0 && processingState.threadParentTs) {
+      await flushActivityBatch(
+        processingState,
+        client,
+        channelId,
+        processingState.charLimit,
+        'complete',
+        processingState.userId
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to flush batch on error:', err);
+      });
+    }
+
+    // Post error to activity thread
+    if (processingState.threadParentTs) {
+      await postErrorToThread(
+        client,
+        channelId,
+        processingState.threadParentTs,
+        toUserMessage(error)
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to post error:', err);
+      });
+    }
+
     await updateStatusMessage(processingState, session, client);
     if (originalTs) {
       await markError(client, channelId, originalTs);
@@ -1422,6 +1850,88 @@ function registerActionHandlers(appInstance: App): void {
     }
   });
 
+  // Attach thinking file retry button
+  appInstance.action(/^attach_thinking_file_(.+)$/, async ({ action, ack, body, client }) => {
+    await ack();
+    const channelId = (body as any).channel?.id;
+    const userId = (body as any).user?.id;
+    const activityMsgTs = (body as any).message?.ts;
+
+    if (!channelId || !userId || !activityMsgTs) return;
+
+    let value: {
+      threadParentTs?: string;
+      sessionId?: string;
+      thinkingTimestamp?: number;
+      thinkingCharCount?: number;
+      workingDir?: string;
+    };
+    try {
+      value = JSON.parse((action as any).value || '{}');
+    } catch {
+      return;
+    }
+
+    const { threadParentTs, sessionId, thinkingTimestamp, thinkingCharCount, workingDir } = value;
+    if (!threadParentTs || !sessionId || !workingDir) {
+      await (client as WebClient).chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        text: ':warning: Missing session info. Cannot retry upload.',
+      });
+      return;
+    }
+
+    const instance = await serverPool.getOrCreate(channelId);
+    const thinkingContent = await getThinkingContentFromSession(
+      instance.client.getClient(),
+      sessionId,
+      thinkingTimestamp ?? 0,
+      thinkingCharCount ?? 0,
+      workingDir
+    );
+
+    if (!thinkingContent) {
+      await (client as WebClient).chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        text: ':warning: Could not retrieve thinking content. The session data may be unavailable.',
+      });
+      return;
+    }
+
+    const thinkingMsgLink = await getMessagePermalink(client as WebClient, channelId, activityMsgTs);
+    const uploadResult = await uploadFilesToThread(
+      client as WebClient,
+      channelId,
+      threadParentTs,
+      thinkingContent,
+      `_Content for <${thinkingMsgLink}|this thinking block>._`,
+      userId
+    );
+
+    if (uploadResult.success && uploadResult.fileMessageTs) {
+      const fileMsgLink = await getMessagePermalink(client as WebClient, channelId, uploadResult.fileMessageTs);
+      const currentBlocks = (body as any).message?.blocks || [];
+      const textBlock = currentBlocks.find((b: any) => b.type === 'section');
+      const baseText = textBlock?.text?.text || '';
+      const newText = `${baseText}\n_Full response <${fileMsgLink}|attached>._`;
+
+      await (client as WebClient).chat.update({
+        channel: channelId,
+        ts: activityMsgTs,
+        text: newText,
+        blocks: undefined,
+      });
+    } else {
+      await (client as WebClient).chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        text: ':warning: Failed to attach file. Please try again.',
+      });
+    }
+  });
+
   // Abort button -> confirmation modal
   appInstance.action(/^abort_query_(.+)$/, async ({ action, ack, body, client }) => {
     await ack();
@@ -1453,6 +1963,25 @@ function registerActionHandlers(appInstance: App): void {
     if (!state) return;
 
     try {
+      // Add aborted entry to activity log and batch before aborting
+      const abortedEntry: ActivityEntry = { timestamp: Date.now(), type: 'aborted' };
+      state.activityLog.push(abortedEntry);
+      state.activityBatch.push(abortedEntry);
+
+      // Flush activity batch before abort
+      if (state.activityBatch.length > 0 && state.threadParentTs) {
+        await flushActivityBatch(
+          state,
+          app!.client as WebClient,
+          state.channelId,
+          state.charLimit,
+          'complete',
+          state.userId
+        ).catch(err => {
+          console.error('[Activity Thread] Failed to flush batch on abort:', err);
+        });
+      }
+
       const instance = await serverPool.getOrCreate(state.channelId);
       await instance.client.abort(state.sessionId);
       state.status = 'aborted';
