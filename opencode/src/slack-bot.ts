@@ -163,8 +163,17 @@ const updateMutexes = new Map<string, Mutex>();
 const pendingModelSelections = new Map<string, PendingSelection>();
 const pendingModeSelections = new Map<string, PendingSelection>();
 const pendingPermissions = new Map<string, PendingPermission>();
+const processedIncomingMessageTs = new Set<string>();
 
 let app: App | null = null;
+
+function shouldProcessIncomingMessage(channelId: string, messageTs?: string): boolean {
+  if (!messageTs) return true;
+  const key = `${channelId}:${messageTs}`;
+  if (processedIncomingMessageTs.has(key)) return false;
+  processedIncomingMessageTs.add(key);
+  return true;
+}
 
 function getUpdateMutex(key: string): Mutex {
   if (!updateMutexes.has(key)) {
@@ -242,6 +251,13 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
     case 'message.updated':
       await handleMessageUpdated(payload?.properties, state);
       break;
+    case 'session.status': {
+      const statusType = payload?.properties?.status?.type;
+      if (statusType === 'idle') {
+        await handleSessionIdle(state);
+      }
+      break;
+    }
     case 'permission.updated':
       await handlePermissionUpdated(payload?.properties, state);
       break;
@@ -1328,6 +1344,10 @@ async function handleUserMessage(params: {
   const { channelId, threadTs, userId, originalTs, client } = params;
   let { userText, inlineMode } = params;
 
+  if (!shouldProcessIncomingMessage(channelId, originalTs)) {
+    return;
+  }
+
   if (!userText.trim() && params.files && params.files.length > 0) {
     userText = 'Please review the attached files.';
   }
@@ -2267,6 +2287,10 @@ function registerMessageHandlers(appInstance: App): void {
       return;
     }
 
+    if ((evt as { edited?: unknown }).edited || (evt as { subtype?: string }).subtype === 'message_changed') {
+      return;
+    }
+
     const botId = context?.botUserId ?? extractFirstMentionId(evt.text);
     const mentionModeResult = botId ? extractMentionMode(evt.text, botId) : { remainingText: evt.text.replace(/<@[A-Z0-9]+>/g, '').replace(/\s+/g, ' ').trim() };
 
@@ -2339,6 +2363,8 @@ export async function startBot(): Promise<void> {
   if (!botToken || !appToken || !signingSecret) {
     throw new Error('Missing Slack credentials (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET)');
   }
+
+  processedIncomingMessageTs.clear();
 
   app = new App({
     token: botToken,
