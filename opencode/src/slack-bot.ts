@@ -70,6 +70,8 @@ interface PendingSelection {
   threadTs?: string;
   /** The thread ts for the SESSION (undefined = channel session, set = thread session) */
   sessionThreadTs?: string;
+  /** Query to execute after model selection */
+  deferredQuery?: string;
 }
 
 interface PendingPermission {
@@ -922,9 +924,11 @@ async function handleUserMessage(params: {
     if (commandResult.showModelSelection) {
       const instance = await serverPool.getOrCreate(channelId);
       const models = await getAvailableModels(instance.client.getClient());
+      // Always get recentModels from channel session (threads don't have their own recentModels)
+      const channelRecentModels = getSession(channelId)?.recentModels;
       const blocks = session!.model && !(await isModelAvailable(instance.client.getClient(), session!.model))
         ? buildModelDeprecatedBlocks(session!.model, models)
-        : buildModelSelectionBlocks(models, session!.model, (session as Session).recentModels);
+        : buildModelSelectionBlocks(models, session!.model, channelRecentModels);
 
       const response = await withSlackRetry(() =>
         client.chat.postMessage({
@@ -936,7 +940,13 @@ async function handleUserMessage(params: {
       ) as { ts?: string };
 
       if (originalTs && response.ts) {
-        pendingModelSelections.set(response.ts, { originalTs, channelId, threadTs: postingThreadTs, sessionThreadTs });
+        pendingModelSelections.set(response.ts, {
+          originalTs,
+          channelId,
+          threadTs: postingThreadTs,
+          sessionThreadTs,
+          deferredQuery: commandResult.deferredQuery,
+        });
         await markApprovalWait(client, channelId, originalTs);
       }
       return;
@@ -1305,14 +1315,17 @@ function registerActionHandlers(appInstance: App): void {
     const pending = pendingModelSelections.get(msgTs);
     const sessionThreadTs = pending?.sessionThreadTs;
 
+    // Always update channel session's recentModels (recent models are channel-level, not thread-level)
+    const channelSession = getSession(channelId);
+    const recent = (channelSession?.recentModels ?? []).filter(m => m !== modelValue);
+    recent.unshift(modelValue);
+
     if (sessionThreadTs) {
-      // Save to thread session
+      // Save model to thread session, recentModels to channel session
       await saveThreadSession(channelId, sessionThreadTs, { model: modelValue });
+      await saveSession(channelId, { recentModels: recent.slice(0, 5) });
     } else {
-      // Save to channel session with recent models tracking
-      const session = getSession(channelId);
-      const recent = (session?.recentModels ?? []).filter(m => m !== modelValue);
-      recent.unshift(modelValue);
+      // Save both model and recentModels to channel session
       await saveSession(channelId, {
         model: modelValue,
         recentModels: recent.slice(0, 5),
@@ -1333,6 +1346,18 @@ function registerActionHandlers(appInstance: App): void {
     if (pending) {
       await markApprovalDone(client as WebClient, pending.channelId, pending.originalTs);
       pendingModelSelections.delete(msgTs);
+
+      // If there's a deferred query, process it now with the newly selected model
+      if (pending.deferredQuery) {
+        await handleUserMessage({
+          client: client as WebClient,
+          channelId,
+          threadTs: pending.threadTs,
+          originalTs: pending.originalTs,
+          userId: (body as any).user?.id,
+          userText: pending.deferredQuery,
+        });
+      }
     }
   });
 

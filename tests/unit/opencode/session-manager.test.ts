@@ -28,6 +28,8 @@ import {
   saveSession,
   getSession,
   getOrCreateThreadSession,
+  saveThreadSession,
+  getThreadSession,
   saveMessageMapping,
   getMessageMapping,
 } from '../../../opencode/src/session-manager.js';
@@ -169,5 +171,62 @@ describe('session-manager (opencode)', () => {
     const session = getSession('C123');
     expect(session?.recentModels).toEqual(['anthropic:claude-4']);
     expect(session?.mode).toBe('plan');
+  });
+
+  it('thread model selection does not affect channel recentModels', async () => {
+    let fileContents = JSON.stringify({ channels: {} });
+    mockedFs.existsSync.mockImplementation((p: any) => String(p).endsWith('opencode-sessions.json'));
+    mockedFs.readFileSync.mockImplementation(() => fileContents);
+    mockedFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContents = data.toString();
+    });
+
+    // Set up channel session with recentModels
+    await saveSession('C123', {
+      sessionId: 'sess-1',
+      model: 'anthropic:claude-4',
+      recentModels: ['anthropic:claude-4', 'openai:gpt-4o'],
+    });
+
+    // Create thread session and update its model
+    await getOrCreateThreadSession('C123', '111.222');
+    await saveThreadSession('C123', '111.222', { model: 'google:gemini-2' });
+
+    // Verify channel recentModels is unchanged
+    const channelSession = getSession('C123');
+    expect(channelSession?.recentModels).toEqual(['anthropic:claude-4', 'openai:gpt-4o']);
+    expect(channelSession?.model).toBe('anthropic:claude-4');
+  });
+
+  it('can update channel recentModels while thread has different model', async () => {
+    let fileContents = JSON.stringify({ channels: {} });
+    mockedFs.existsSync.mockImplementation((p: any) => String(p).endsWith('opencode-sessions.json'));
+    mockedFs.readFileSync.mockImplementation(() => fileContents);
+    mockedFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContents = data.toString();
+    });
+
+    // Set up channel session
+    await saveSession('C123', {
+      sessionId: 'sess-1',
+      model: 'anthropic:claude-4',
+      recentModels: ['anthropic:claude-4'],
+    });
+
+    // Create thread with different model
+    await getOrCreateThreadSession('C123', '111.222');
+    await saveThreadSession('C123', '111.222', { model: 'google:gemini-2' });
+
+    // Simulate the fix: update channel recentModels when model selected from thread
+    // This is what slack-bot.ts now does after the fix
+    await saveSession('C123', { recentModels: ['google:gemini-2', 'anthropic:claude-4'] });
+
+    // Verify channel recentModels is updated
+    const channelSession = getSession('C123');
+    expect(channelSession?.recentModels).toEqual(['google:gemini-2', 'anthropic:claude-4']);
+
+    // Verify thread model is still correct
+    const threadSession = getThreadSession('C123', '111.222');
+    expect(threadSession?.model).toBe('google:gemini-2');
   });
 });

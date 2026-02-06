@@ -46,6 +46,7 @@ export interface CommandResult {
   fastForward?: boolean;
   showPlan?: boolean;
   planFilePath?: string;
+  deferredQuery?: string;  // Query to execute after model/mode selection
 }
 
 export const MODE_SHORTCUTS: Record<string, PermissionMode> = {
@@ -238,11 +239,12 @@ function handleMode(modeArg: string, session: Session): CommandResult {
 }
 
 function handleModel(modelArg: string): CommandResult {
-  if (modelArg) {
+  const query = modelArg.trim();
+  if (query) {
     return {
       handled: true,
-      response: 'Please use the model picker to select a model.',
       showModelSelection: true,
+      deferredQuery: query,
     };
   }
   return { handled: true, showModelSelection: true };

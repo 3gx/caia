@@ -34,4 +34,28 @@ describe('commands', () => {
     const res = extractMentionMode('<@BOT> /mode ask hello', 'BOT');
     expect(res.mode).toBe('default');
   });
+
+  describe('handleModel with query', () => {
+    it('returns deferredQuery when query provided', () => {
+      const result = parseCommand('/model what is the weather', baseSession);
+      expect(result.showModelSelection).toBe(true);
+      expect(result.deferredQuery).toBe('what is the weather');
+    });
+
+    it('returns no deferredQuery when no query', () => {
+      const result = parseCommand('/model', baseSession);
+      expect(result.showModelSelection).toBe(true);
+      expect(result.deferredQuery).toBeUndefined();
+    });
+
+    it('trims whitespace from query', () => {
+      const result = parseCommand('/model   hello world  ', baseSession);
+      expect(result.deferredQuery).toBe('hello world');
+    });
+
+    it('treats whitespace-only as no query', () => {
+      const result = parseCommand('/model    ', baseSession);
+      expect(result.deferredQuery).toBeUndefined();
+    });
+  });
 });
