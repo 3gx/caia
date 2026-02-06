@@ -128,6 +128,7 @@ export interface ActivityEntry {
   thinkingContent?: string;
   thinkingTruncated?: string;
   thinkingInProgress?: boolean;
+  thinkingPartId?: string;
   // Generating
   generatingChunks?: number;
   generatingChars?: number;

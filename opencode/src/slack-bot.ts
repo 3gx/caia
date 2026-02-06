@@ -122,6 +122,8 @@ interface ProcessingState {
   assistantMessageId?: string;
   queryText?: string;
   fullResponse: string;
+  currentResponseSegment: string;
+  generatingSegmentStartTime?: number;
   textParts: Map<string, string>;
   reasoningParts: Map<string, string>;
   toolStates: Map<string, string>;
@@ -338,25 +340,64 @@ async function appendTextDelta(partId: string | undefined, text: string | undefi
 
   state.status = 'generating';
   state.fullResponse += chunk;
+  state.currentResponseSegment += chunk;
 
   if (!state.generatingEntry) {
+    const now = Date.now();
     state.generatingEntry = {
-      timestamp: Date.now(),
+      timestamp: now,
       type: 'generating',
       generatingInProgress: true,
       generatingContent: '',
       generatingTruncated: '',
       generatingChars: 0,
     };
+    state.generatingSegmentStartTime = now;
     state.activityLog.push(state.generatingEntry);
   }
 
-  state.generatingEntry.generatingContent = state.fullResponse;
-  state.generatingEntry.generatingChars = state.fullResponse.length;
-  state.generatingEntry.generatingTruncated = state.fullResponse.slice(0, 500);
+  state.generatingEntry.generatingContent = state.currentResponseSegment;
+  state.generatingEntry.generatingChars = state.currentResponseSegment.length;
+  state.generatingEntry.generatingTruncated = state.currentResponseSegment.slice(0, 500);
   state.generatingEntry.generatingInProgress = true;
 
   await state.streamingSession.appendText(chunk);
+}
+
+async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
+  const entry = state.generatingEntry;
+  if (!entry) return;
+
+  const segment = state.currentResponseSegment;
+  entry.generatingInProgress = false;
+  entry.generatingContent = segment;
+  entry.generatingChars = segment.length;
+  entry.generatingTruncated = segment.slice(0, 500);
+  entry.durationMs = Math.max(0, Date.now() - (state.generatingSegmentStartTime ?? entry.timestamp));
+
+  if (state.threadParentTs && segment.trim()) {
+    const responseResult = await postResponseToThread(
+      app!.client as WebClient,
+      state.channelId,
+      state.threadParentTs,
+      segment,
+      entry.durationMs,
+      state.charLimit,
+      state.userId
+    ).catch(err => {
+      console.error('[Activity Thread] Failed to post response segment:', err);
+      return null;
+    });
+
+    if (responseResult) {
+      entry.threadMessageTs = responseResult.ts;
+      entry.threadMessageLink = responseResult.permalink;
+    }
+  }
+
+  state.currentResponseSegment = '';
+  state.generatingEntry = undefined;
+  state.generatingSegmentStartTime = undefined;
 }
 
 async function getThinkingContentFromSession(
@@ -364,7 +405,8 @@ async function getThinkingContentFromSession(
   sessionId: string,
   thinkingTimestamp: number,
   thinkingCharCount: number,
-  workingDir: string
+  workingDir: string,
+  reasoningPartId?: string
 ): Promise<string | null> {
   try {
     const response = await client.session.messages({
@@ -377,6 +419,9 @@ async function getThinkingContentFromSession(
       const parts = msg.parts ?? [];
       for (const part of parts) {
         if (part.type !== 'reasoning' || !part.text) continue;
+        if (reasoningPartId && part.id === reasoningPartId) {
+          return part.text;
+        }
         const timeValue = part.time?.end ?? part.time?.start ?? 0;
         const timeMatch = Math.abs(timeValue - thinkingTimestamp) < 1000;
         const charMatch = part.text.length === thinkingCharCount;
@@ -435,7 +480,7 @@ async function updateThinkingMessageWithRetry(
   return false;
 }
 
-async function startThinkingEntry(state: ProcessingState, startTime?: number): Promise<void> {
+async function startThinkingEntry(state: ProcessingState, startTime?: number, thinkingPartId?: string): Promise<void> {
   if (state.activityBatch.length > 0 && state.threadParentTs) {
     await flushActivityBatch(
       state,
@@ -457,6 +502,7 @@ async function startThinkingEntry(state: ProcessingState, startTime?: number): P
     thinkingTruncated: '',
     thinkingInProgress: true,
     durationMs: elapsedMs,
+    thinkingPartId,
   };
   state.thinkingEntry = entry;
   const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
@@ -585,7 +631,8 @@ async function finalizeThinkingEntry(state: ProcessingState, content: string): P
           state.sessionId,
           state.workingDir,
           entry.timestamp,
-          content.length
+          content.length,
+          entry.thinkingPartId
         ),
       ];
 
@@ -677,7 +724,8 @@ async function appendReasoningDelta(
 
   if (state.currentThinkingPartId !== key) {
     state.currentThinkingPartId = key;
-    await startThinkingEntry(state, startTime);
+    await finalizeResponseSegment(state);
+    await startThinkingEntry(state, startTime, partId);
   }
 
   state.status = 'thinking';
@@ -715,6 +763,10 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
     return;
   }
   if (status) state.toolStates.set(toolKey, status);
+
+  if (status === 'pending' || status === 'running' || status === 'completed' || status === 'error') {
+    await finalizeResponseSegment(state);
+  }
 
   if (status === 'pending' || status === 'running') {
     state.status = 'tool';
@@ -900,9 +952,6 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     state.statusUpdateTimer = undefined;
   }
 
-  if (state.generatingEntry) {
-    state.generatingEntry.generatingInProgress = false;
-  }
   if (state.thinkingEntry) {
     state.thinkingEntry.thinkingInProgress = false;
   }
@@ -948,25 +997,8 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     });
   }
 
-  // Post final response to activity thread
-  if (state.threadParentTs && state.fullResponse && state.status === 'complete') {
-    const responseResult = await postResponseToThread(
-      app!.client as WebClient,
-      state.channelId,
-      state.threadParentTs,
-      state.fullResponse,
-      state.generatingEntry?.durationMs,
-      state.charLimit,
-      state.userId
-    ).catch(err => {
-      console.error('[Activity Thread] Failed to post response:', err);
-      return null;
-    });
-
-    if (responseResult && state.generatingEntry) {
-      state.generatingEntry.threadMessageTs = responseResult.ts;
-      state.generatingEntry.threadMessageLink = responseResult.permalink;
-    }
+  if (state.status === 'complete') {
+    await finalizeResponseSegment(state);
   }
 
   await updateStatusMessage(state, session, app!.client as WebClient);
@@ -1619,6 +1651,8 @@ async function handleUserMessage(params: {
     model: session.model,
     queryText: userText,
     fullResponse: '',
+    currentResponseSegment: '',
+    generatingSegmentStartTime: undefined,
     textParts: new Map(),
     reasoningParts: new Map(),
     toolStates: new Map(),
@@ -1883,6 +1917,7 @@ function registerActionHandlers(appInstance: App): void {
       thinkingTimestamp?: number;
       thinkingCharCount?: number;
       workingDir?: string;
+      reasoningPartId?: string;
     };
     try {
       value = JSON.parse((action as any).value || '{}');
@@ -1890,7 +1925,7 @@ function registerActionHandlers(appInstance: App): void {
       return;
     }
 
-    const { threadParentTs, sessionId, thinkingTimestamp, thinkingCharCount, workingDir } = value;
+    const { threadParentTs, sessionId, thinkingTimestamp, thinkingCharCount, workingDir, reasoningPartId } = value;
     if (!threadParentTs || !sessionId || !workingDir) {
       await (client as WebClient).chat.postEphemeral({
         channel: channelId,
@@ -1906,7 +1941,8 @@ function registerActionHandlers(appInstance: App): void {
       sessionId,
       thinkingTimestamp ?? 0,
       thinkingCharCount ?? 0,
-      workingDir
+      workingDir,
+      reasoningPartId
     );
 
     if (!thinkingContent) {

@@ -69,9 +69,10 @@ describe('blocks', () => {
   });
 
   it('includes workingDir in attach thinking button payload', () => {
-    const block = buildAttachThinkingFileButton('1.0', '2.0', 'C1', 'sess1', '/tmp', 123, 456) as any;
+    const block = buildAttachThinkingFileButton('1.0', '2.0', 'C1', 'sess1', '/tmp', 123, 456, 'r1') as any;
     const value = JSON.parse(block.elements[0].value);
     expect(value.workingDir).toBe('/tmp');
+    expect(value.reasoningPartId).toBe('r1');
   });
 });
 

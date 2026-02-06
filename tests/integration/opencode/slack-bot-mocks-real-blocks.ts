@@ -188,5 +188,11 @@ vi.mock('../../../opencode/src/model-cache.js', () => ({
 }));
 
 vi.mock('../../../opencode/src/activity-thread.js', () => ({
+  flushActivityBatch: vi.fn().mockResolvedValue(undefined),
+  postStartingToThread: vi.fn().mockResolvedValue(undefined),
   postThinkingToThread: vi.fn().mockResolvedValue(undefined),
+  postErrorToThread: vi.fn().mockResolvedValue(undefined),
+  postResponseToThread: vi.fn().mockResolvedValue({ ts: '2.0', permalink: 'https://example.slack.com/archives/C123/p2' }),
+  updatePostedBatch: vi.fn().mockResolvedValue(undefined),
+  getMessagePermalink: vi.fn().mockResolvedValue('https://example.slack.com/archives/C123/p1'),
 }));

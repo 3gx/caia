@@ -2359,6 +2359,7 @@ export interface AttachThinkingButtonValue {
   workingDir: string;
   thinkingTimestamp: number;
   thinkingCharCount: number;
+  reasoningPartId?: string;
   activityMsgTs: string;
 }
 
@@ -2382,7 +2383,8 @@ export function buildAttachThinkingFileButton(
   sessionId: string,
   workingDir: string,
   thinkingTimestamp: number,
-  thinkingCharCount: number
+  thinkingCharCount: number,
+  reasoningPartId?: string
 ): Block {
   const value: AttachThinkingButtonValue = {
     threadParentTs,
@@ -2391,6 +2393,7 @@ export function buildAttachThinkingFileButton(
     workingDir,
     thinkingTimestamp,
     thinkingCharCount,
+    reasoningPartId,
     activityMsgTs,
   };
 
