@@ -1,5 +1,5 @@
 /**
- * SDK Live Tests: Fork Independence
+ * SDK Live Tests: Fork - Delete Independence
  *
  * Uses in-memory atomic port allocator via Vitest's globalSetup provide/inject
  */
@@ -9,7 +9,7 @@ import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSI
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
 
-describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
+describe.skipIf(SKIP_LIVE)('Fork - Delete', { timeout: 120000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
   let testPort: number;
@@ -28,7 +28,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
     await opencode.cleanup();
   });
 
-  it('CANARY: forked session is independent', async () => {
+  it('CANARY: fork can be deleted independently', async () => {
     const parent = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Parent Session` },
     });
@@ -36,7 +36,7 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
 
     await client.session.prompt({
       path: { id: parent.data!.id },
-      body: { parts: [{ type: 'text', text: 'Base message' }] },
+      body: { parts: [{ type: 'text', text: 'Base' }] },
     });
     // prompt() blocks until completion
 
@@ -45,13 +45,14 @@ describe.skipIf(SKIP_LIVE)('Fork - Independence', { timeout: 120000 }, () => {
       path: { id: parent.data!.id },
       body: { messageID: messages.data![0].info.id },
     });
-    opencode.trackSession(fork.data!.id);
+    // Don't track fork - this test deletes it manually
+
+    await client.session.delete({ path: { id: fork.data!.id } });
 
     const parentStatus = await client.session.get({ path: { id: parent.data!.id } });
-    const forkStatus = await client.session.get({ path: { id: fork.data!.id } });
-
     expect(parentStatus.data).toBeDefined();
-    expect(forkStatus.data).toBeDefined();
-  });
 
+    const forkStatus = await client.session.get({ path: { id: fork.data!.id } });
+    expect(forkStatus.error).toBeDefined();
+  });
 });

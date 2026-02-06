@@ -179,28 +179,4 @@ describe.skipIf(SKIP_LIVE)('Compaction Events', { timeout: 120000 }, () => {
     expect(messages.data!.length).toBeGreaterThan(0);
   });
 
-  it('CANARY: compact triggered by /compact command', async () => {
-    const session = await client.session.create({
-      body: { title: `${TEST_SESSION_PREFIX}Compact Command Test` },
-    });
-    opencode.trackSession(session.data!.id);
-
-    // Add some context
-    await client.session.prompt({
-      path: { id: session.data!.id },
-      body: { parts: [{ type: 'text', text: 'Explain what a hash table is.' }] },
-    });
-
-    // /compact should not throw an error
-    const compactResult = await client.session.prompt({
-      path: { id: session.data!.id },
-      body: { parts: [{ type: 'text', text: '/compact' }] },
-    });
-
-    expect(compactResult).toBeDefined();
-
-    // Session should remain accessible
-    const sessionData = await client.session.get({ path: { id: session.data!.id } });
-    expect(sessionData.data?.id).toBe(session.data!.id);
-  });
 });

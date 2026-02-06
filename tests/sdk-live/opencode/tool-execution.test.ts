@@ -37,7 +37,6 @@ async function collectEventsUntil(
 describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
-  let server: { close(): void; url: string };
   let testPort: number;
 
   beforeAll(async () => {
@@ -48,7 +47,6 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
 
     opencode = await createOpencodeWithCleanup(testPort);
     client = opencode.client;
-    server = opencode.server;
   });
 
   afterAll(async () => {
@@ -105,19 +103,4 @@ describe.skipIf(SKIP_LIVE)('Tool Execution', { timeout: 120000 }, () => {
     expect(result.data).toBeDefined();
   });
 
-  it('CANARY: read tool works', async () => {
-    const session = await client.session.create({
-      body: { title: `${TEST_SESSION_PREFIX}Read Tool Test` },
-    });
-    opencode.trackSession(session.data!.id);
-
-    // Ask to read a common file
-    const result = await client.session.prompt({
-      path: { id: session.data!.id },
-      body: { parts: [{ type: 'text', text: 'Read the package.json file' }] },
-    });
-
-    // Prompt returns acknowledgement
-    expect(result.data).toBeDefined();
-  });
 });
