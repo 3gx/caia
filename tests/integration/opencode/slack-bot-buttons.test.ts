@@ -17,7 +17,7 @@ describe('slack-bot-buttons', () => {
 
   it('registers button handlers', () => {
     expect(registeredHandlers['action_^mode_(plan|default|bypassPermissions)$']).toBeDefined();
-    expect(registeredHandlers['action_^model_select_(.+)$']).toBeDefined();
+    expect(registeredHandlers['action_model_select']).toBeDefined();  // Now uses static_select (string action_id)
     expect(registeredHandlers['action_^abort_query_(.+)$']).toBeDefined();
   });
 
@@ -37,11 +37,15 @@ describe('slack-bot-buttons', () => {
   });
 
   it('handles model selection action', async () => {
-    const handler = registeredHandlers['action_^model_select_(.+)$'];
+    // Model selection now uses static_select with string action_id 'model_select'
+    const handler = registeredHandlers['action_model_select'];
     const client = createMockWebClient();
 
     await handler({
-      action: { action_id: 'model_select_provider:model' },
+      action: {
+        action_id: 'model_select',
+        selected_option: { value: 'provider:model', text: { text: 'Model' } },
+      },
       ack: async () => undefined,
       body: { channel: { id: 'C1' }, message: { ts: '1.0' } },
       client,
@@ -52,13 +56,17 @@ describe('slack-bot-buttons', () => {
   });
 
   it('uses model display name when available', async () => {
-    const handler = registeredHandlers['action_^model_select_(.+)$'];
+    // Model selection now uses static_select with string action_id 'model_select'
+    const handler = registeredHandlers['action_model_select'];
     const client = createMockWebClient();
 
     vi.mocked(getModelInfo).mockResolvedValueOnce({ displayName: 'Fancy Model' } as any);
 
     await handler({
-      action: { action_id: 'model_select_provider:model' },
+      action: {
+        action_id: 'model_select',
+        selected_option: { value: 'provider:model', text: { text: 'Model' } },
+      },
       ack: async () => undefined,
       body: { channel: { id: 'C1' }, message: { ts: '1.0' } },
       client,

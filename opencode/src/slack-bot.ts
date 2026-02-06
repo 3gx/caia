@@ -1287,11 +1287,13 @@ function registerActionHandlers(appInstance: App): void {
     }
   });
 
-  // Model selection
-  appInstance.action(/^model_select_(.+)$/, async ({ action, ack, body, client }) => {
+  // Model selection (static_select dropdown)
+  appInstance.action('model_select', async ({ action, ack, body, client }) => {
     await ack();
-    const actionId = (action as { action_id: string }).action_id;
-    const modelValue = actionId.replace('model_select_', '');
+    const selectedOption = (action as { selected_option?: { value: string; text?: { text: string } } }).selected_option;
+    if (!selectedOption) return;
+
+    const modelValue = selectedOption.value;
     const channelId = (body as any).channel?.id;
     const msgTs = (body as any).message?.ts;
     const threadTs = (body as any).message?.thread_ts;

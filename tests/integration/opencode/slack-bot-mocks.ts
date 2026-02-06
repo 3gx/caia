@@ -29,7 +29,10 @@ class MockApp {
   }
   event(name: string, handler: any) { registeredHandlers[`event_${name}`] = handler; }
   message(handler: any) { registeredHandlers['message'] = handler; }
-  action(pattern: RegExp, handler: any) { registeredHandlers[`action_${pattern.source}`] = handler; }
+  action(pattern: string | RegExp, handler: any) {
+    const key = typeof pattern === 'string' ? pattern : pattern.source;
+    registeredHandlers[`action_${key}`] = handler;
+  }
   view(pattern: string, handler: any) { registeredHandlers[`view_${pattern}`] = handler; }
   async start() { return Promise.resolve(); }
   async stop() { return Promise.resolve(); }
@@ -128,7 +131,33 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
   buildStatusDisplayBlocks: vi.fn().mockReturnValue([]),
   buildContextDisplayBlocks: vi.fn().mockReturnValue([]),
   buildToolApprovalBlocks: vi.fn().mockReturnValue([]),
-  buildModelSelectionBlocks: vi.fn().mockReturnValue([]),
+  buildModelSelectionBlocks: vi.fn().mockImplementation((models: any[], currentModel?: string) => {
+    // Group models by provider for option_groups (same logic as real implementation)
+    const groups = new Map<string, any[]>();
+    for (const model of models) {
+      const provider = model.displayName?.split(' / ')[0] || 'Other';
+      if (!groups.has(provider)) groups.set(provider, []);
+      groups.get(provider)!.push(model);
+    }
+    const optionGroups = Array.from(groups.entries()).map(([provider, models]) => ({
+      label: { type: 'plain_text', text: provider },
+      options: models.map((m: any) => ({
+        text: { type: 'plain_text', text: m.displayName?.split(' / ')[1] || m.displayName },
+        value: m.value,
+      })),
+    }));
+    return [{
+      type: 'section',
+      block_id: 'model_selection',
+      text: { type: 'mrkdwn', text: `*Select Model*\nCurrent: \`${currentModel || 'default (SDK chooses)'}\`` },
+      accessory: {
+        type: 'static_select',
+        action_id: 'model_select',
+        placeholder: { type: 'plain_text', text: 'Choose a model...' },
+        option_groups: optionGroups,
+      },
+    }];
+  }),
   buildModelDeprecatedBlocks: vi.fn().mockReturnValue([]),
   buildForkToChannelModalView: vi.fn().mockReturnValue({}),
   buildAbortConfirmationModalView: vi.fn().mockReturnValue({}),
@@ -195,8 +224,19 @@ vi.mock('../../../opencode/src/message-sync.js', () => ({
 }));
 
 vi.mock('../../../opencode/src/model-cache.js', () => ({
-  getAvailableModels: vi.fn().mockResolvedValue([]),
-  getModelInfo: vi.fn().mockResolvedValue(undefined),
+  getAvailableModels: vi.fn().mockResolvedValue([
+    { value: 'anthropic:claude-4', displayName: 'Anthropic / Claude 4', description: 'Latest model' },
+    { value: 'anthropic:claude-3-5-sonnet', displayName: 'Anthropic / Claude 3.5 Sonnet', description: 'Fast model' },
+    { value: 'openai:gpt-4o', displayName: 'OpenAI / GPT-4o', description: 'OpenAI model' },
+  ]),
+  getModelInfo: vi.fn().mockImplementation((_client: any, modelValue: string) => {
+    const models: Record<string, any> = {
+      'anthropic:claude-4': { value: 'anthropic:claude-4', displayName: 'Anthropic / Claude 4', description: 'Latest model' },
+      'anthropic:claude-3-5-sonnet': { value: 'anthropic:claude-3-5-sonnet', displayName: 'Anthropic / Claude 3.5 Sonnet', description: 'Fast model' },
+      'openai:gpt-4o': { value: 'openai:gpt-4o', displayName: 'OpenAI / GPT-4o', description: 'OpenAI model' },
+    };
+    return Promise.resolve(models[modelValue]);
+  }),
   encodeModelId: vi.fn().mockReturnValue('p:m'),
   decodeModelId: vi.fn().mockReturnValue({ providerID: 'p', modelID: 'm' }),
   isModelAvailable: vi.fn().mockResolvedValue(true),

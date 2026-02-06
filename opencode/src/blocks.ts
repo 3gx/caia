@@ -741,49 +741,76 @@ export function buildModeSelectionBlocks(currentMode: PermissionMode): Block[] {
 }
 
 /**
+ * Group models by provider name for option_groups.
+ * Provider is extracted from displayName (e.g., "Anthropic / Claude 4" -> "Anthropic").
+ */
+export function groupModelsByProvider(models: ModelInfo[]): { provider: string; models: ModelInfo[] }[] {
+  const groups = new Map<string, ModelInfo[]>();
+  for (const model of models) {
+    const provider = model.displayName.split(' / ')[0] || 'Other';
+    if (!groups.has(provider)) {
+      groups.set(provider, []);
+    }
+    groups.get(provider)!.push(model);
+  }
+  return Array.from(groups.entries()).map(([provider, models]) => ({ provider, models }));
+}
+
+/**
+ * Get display name for current model in dropdown.
+ */
+function getCurrentModelDisplay(models: ModelInfo[], currentModel: string): string {
+  const model = models.find(m => m.value === currentModel);
+  if (!model) return currentModel;
+  // Extract model name without provider prefix for cleaner display
+  const parts = model.displayName.split(' / ');
+  return parts[1] || model.displayName;
+}
+
+/**
  * Build model selection UI from dynamic model list.
+ * Uses static_select dropdown with option_groups for provider categorization.
  */
 export function buildModelSelectionBlocks(
   models: ModelInfo[],
   currentModel?: string
 ): Block[] {
-  // Create buttons for each model (max 5 for Slack actions block)
-  const buttons = models.slice(0, 5).map(model => ({
-    type: 'button' as const,
-    text: {
-      type: 'plain_text' as const,
-      text: model.displayName,
-      emoji: true,
-    },
-    action_id: `model_select_${model.value}`,
-    value: model.value,
-    ...(currentModel === model.value ? { style: 'primary' as const } : {}),
+  // Group models by provider for option_groups
+  const providerGroups = groupModelsByProvider(models);
+
+  const optionGroups = providerGroups.map(group => ({
+    label: { type: 'plain_text' as const, text: group.provider },
+    options: group.models.map(model => ({
+      text: { type: 'plain_text' as const, text: model.displayName.split(' / ')[1] || model.displayName },
+      value: model.value,
+    })),
   }));
 
-  // Build description context
-  const descriptions = models.slice(0, 5).map(m =>
-    `• *${m.displayName}*: ${m.description}`
-  ).join('\n');
+  // Build initial_option if currentModel is set and valid
+  let initialOption: { text: { type: 'plain_text'; text: string }; value: string } | undefined;
+  if (currentModel) {
+    const display = getCurrentModelDisplay(models, currentModel);
+    initialOption = {
+      text: { type: 'plain_text' as const, text: display },
+      value: currentModel,
+    };
+  }
 
   return [
     {
       type: 'section',
+      block_id: 'model_selection',
       text: {
         type: 'mrkdwn',
         text: `*Select Model*\nCurrent: \`${currentModel || 'default (SDK chooses)'}\``,
       },
-    },
-    {
-      type: 'actions',
-      block_id: 'model_selection',
-      elements: buttons,
-    },
-    {
-      type: 'context',
-      elements: [{
-        type: 'mrkdwn',
-        text: descriptions,
-      }],
+      accessory: {
+        type: 'static_select',
+        action_id: 'model_select',
+        placeholder: { type: 'plain_text' as const, text: 'Choose a model...' },
+        option_groups: optionGroups,
+        ...(initialOption ? { initial_option: initialOption } : {}),
+      },
     },
   ];
 }
