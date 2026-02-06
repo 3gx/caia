@@ -136,6 +136,9 @@ interface ProcessingState {
   lastThinkingUpdateTime: number;
   currentThinkingPartId?: string;
   completedThinkingPartIds: Set<string>;
+  messageRoles: Map<string, 'user' | 'assistant'>;
+  pendingMessageParts: Map<string, Array<{ part: Part; delta?: string }>>;
+  finalizingResponseSegment: Promise<void> | null;
 
   // Activity thread batch infrastructure
   activityThreadMsgTs: string | null;
@@ -267,6 +270,17 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
 
   if (!info) return;
 
+  const assistantCompleted = Boolean(info.id && info.role === 'assistant' && info.time?.completed);
+
+  if (info.id && info.role) {
+    state.messageRoles.set(info.id, info.role);
+    if (info.role === 'assistant') {
+      await flushPendingParts(state, info.id);
+    } else {
+      state.pendingMessageParts.delete(info.id);
+    }
+  }
+
   if (info.role === 'user' && info.id) {
     await addSlackOriginatedUserUuid(state.channelId, info.id, state.sessionThreadTs);
   }
@@ -296,11 +310,13 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
       });
     }
   }
+
+  if (assistantCompleted) {
+    await handleSessionIdle(state);
+  }
 }
 
-async function handleMessagePartUpdated(part: Part | undefined, delta: string | undefined, state: ProcessingState): Promise<void> {
-  if (!part) return;
-
+async function processAssistantPart(part: Part, delta: string | undefined, state: ProcessingState): Promise<void> {
   if (part.type === 'text') {
     await appendTextDelta(part.id, part.text, delta, state);
     return;
@@ -313,8 +329,40 @@ async function handleMessagePartUpdated(part: Part | undefined, delta: string | 
 
   if (part.type === 'tool') {
     await handleToolPart(part as ToolPart, state);
-    return;
   }
+}
+
+async function flushPendingParts(state: ProcessingState, messageId: string): Promise<void> {
+  const pending = state.pendingMessageParts.get(messageId);
+  if (!pending || pending.length === 0) return;
+  state.pendingMessageParts.delete(messageId);
+  for (const { part, delta } of pending) {
+    await processAssistantPart(part, delta, state);
+  }
+}
+
+async function handleMessagePartUpdated(part: Part | undefined, delta: string | undefined, state: ProcessingState): Promise<void> {
+  if (!part) return;
+  const messageId = (part as Part & { messageID?: string }).messageID;
+
+  if (messageId) {
+    const knownRole = state.messageRoles.get(messageId);
+    if (knownRole === 'user') return;
+
+    if (!knownRole) {
+      if (part.type === 'text') {
+        const pending = state.pendingMessageParts.get(messageId) ?? [];
+        pending.push({ part, delta });
+        state.pendingMessageParts.set(messageId, pending);
+        return;
+      }
+      // Non-text parts imply assistant message; flush any buffered text first.
+      state.messageRoles.set(messageId, 'assistant');
+      await flushPendingParts(state, messageId);
+    }
+  }
+
+  await processAssistantPart(part, delta, state);
 }
 
 async function appendTextDelta(partId: string | undefined, text: string | undefined, delta: string | undefined, state: ProcessingState): Promise<void> {
@@ -365,39 +413,55 @@ async function appendTextDelta(partId: string | undefined, text: string | undefi
 }
 
 async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
+  if (state.finalizingResponseSegment) {
+    await state.finalizingResponseSegment;
+    if (!state.currentResponseSegment.trim()) return;
+  }
+
   const entry = state.generatingEntry;
   if (!entry) return;
 
   const segment = state.currentResponseSegment;
-  entry.generatingInProgress = false;
-  entry.generatingContent = segment;
-  entry.generatingChars = segment.length;
-  entry.generatingTruncated = segment.slice(0, 500);
-  entry.durationMs = Math.max(0, Date.now() - (state.generatingSegmentStartTime ?? entry.timestamp));
+  const finalizePromise = (async () => {
+    entry.generatingInProgress = false;
+    entry.generatingContent = segment;
+    entry.generatingChars = segment.length;
+    entry.generatingTruncated = segment.slice(0, 500);
+    entry.durationMs = Math.max(0, Date.now() - (state.generatingSegmentStartTime ?? entry.timestamp));
 
-  if (state.threadParentTs && segment.trim()) {
-    const responseResult = await postResponseToThread(
-      app!.client as WebClient,
-      state.channelId,
-      state.threadParentTs,
-      segment,
-      entry.durationMs,
-      state.charLimit,
-      state.userId
-    ).catch(err => {
-      console.error('[Activity Thread] Failed to post response segment:', err);
-      return null;
-    });
+    if (state.threadParentTs && segment.trim()) {
+      const responseResult = await postResponseToThread(
+        app!.client as WebClient,
+        state.channelId,
+        state.threadParentTs,
+        segment,
+        entry.durationMs,
+        state.charLimit,
+        state.userId
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to post response segment:', err);
+        return null;
+      });
 
-    if (responseResult) {
-      entry.threadMessageTs = responseResult.ts;
-      entry.threadMessageLink = responseResult.permalink;
+      if (responseResult) {
+        entry.threadMessageTs = responseResult.ts;
+        entry.threadMessageLink = responseResult.permalink;
+      }
+    }
+
+    state.currentResponseSegment = '';
+    state.generatingEntry = undefined;
+    state.generatingSegmentStartTime = undefined;
+  })();
+
+  state.finalizingResponseSegment = finalizePromise;
+  try {
+    await finalizePromise;
+  } finally {
+    if (state.finalizingResponseSegment === finalizePromise) {
+      state.finalizingResponseSegment = null;
     }
   }
-
-  state.currentResponseSegment = '';
-  state.generatingEntry = undefined;
-  state.generatingSegmentStartTime = undefined;
 }
 
 async function getThinkingContentFromSession(
@@ -1661,6 +1725,9 @@ async function handleUserMessage(params: {
     lastThinkingUpdateTime: 0,
     currentThinkingPartId: undefined,
     completedThinkingPartIds: new Set(),
+    messageRoles: new Map(),
+    pendingMessageParts: new Map(),
+    finalizingResponseSegment: null,
 
     // Activity thread batch infrastructure
     activityThreadMsgTs: null,
