@@ -263,6 +263,7 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       workingDir: existing?.workingDir ?? process.cwd(),
       mode: existing?.mode ?? 'bypassPermissions',
       model: existing?.model,  // Preserve selected model
+      recentModels: existing?.recentModels,  // Preserve recent models for quick selection
       agent: existing?.agent,
       createdAt: existing?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),

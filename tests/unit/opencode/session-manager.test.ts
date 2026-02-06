@@ -101,4 +101,73 @@ describe('session-manager (opencode)', () => {
     const mapping = getMessageMapping('C1', '111.222');
     expect(mapping?.sdkMessageId).toBe('msg_1');
   });
+
+  it('preserves recentModels across saveSession calls', async () => {
+    let fileContents = JSON.stringify({ channels: {} });
+    mockedFs.existsSync.mockImplementation((p: any) => String(p).endsWith('opencode-sessions.json'));
+    mockedFs.readFileSync.mockImplementation(() => fileContents);
+    mockedFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContents = data.toString();
+    });
+
+    // First save: set model and recentModels
+    await saveSession('C123', {
+      sessionId: 'sess-1',
+      workingDir: '/tmp',
+      mode: 'default',
+      model: 'anthropic:claude-4',
+      recentModels: ['anthropic:claude-4', 'openai:gpt-4o'],
+      createdAt: 1,
+      lastActiveAt: 2,
+      pathConfigured: false,
+      configuredPath: null,
+    });
+
+    // Verify recentModels was saved
+    let session = getSession('C123');
+    expect(session?.recentModels).toEqual(['anthropic:claude-4', 'openai:gpt-4o']);
+
+    // Second save: update only lastUsage (simulates turn completion)
+    // This should NOT wipe out recentModels
+    await saveSession('C123', {
+      lastUsage: {
+        model: 'claude-4',
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        contextWindow: 200000,
+        maxOutputTokens: 8192,
+      },
+    });
+
+    // Verify recentModels is still preserved
+    session = getSession('C123');
+    expect(session?.recentModels).toEqual(['anthropic:claude-4', 'openai:gpt-4o']);
+    expect(session?.model).toBe('anthropic:claude-4');
+    expect(session?.lastUsage?.inputTokens).toBe(100);
+  });
+
+  it('preserves recentModels when updating mode', async () => {
+    let fileContents = JSON.stringify({ channels: {} });
+    mockedFs.existsSync.mockImplementation((p: any) => String(p).endsWith('opencode-sessions.json'));
+    mockedFs.readFileSync.mockImplementation(() => fileContents);
+    mockedFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContents = data.toString();
+    });
+
+    // Set up session with recentModels
+    await saveSession('C123', {
+      sessionId: 'sess-1',
+      recentModels: ['anthropic:claude-4'],
+    });
+
+    // Update mode only
+    await saveSession('C123', { mode: 'plan' });
+
+    // Verify recentModels preserved
+    const session = getSession('C123');
+    expect(session?.recentModels).toEqual(['anthropic:claude-4']);
+    expect(session?.mode).toBe('plan');
+  });
 });
