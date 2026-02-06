@@ -724,8 +724,8 @@ async function appendReasoningDelta(
 
   if (state.currentThinkingPartId !== key) {
     state.currentThinkingPartId = key;
-    await finalizeResponseSegment(state);
     await startThinkingEntry(state, startTime, partId);
+    await finalizeResponseSegment(state);
   }
 
   state.status = 'thinking';
