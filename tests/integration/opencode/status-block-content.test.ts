@@ -104,4 +104,52 @@ describe('status-block-content', () => {
     expect(actionsBlock).toBeDefined();
     expect(actionsBlock.elements?.some((el: any) => el.action_id?.startsWith('fork_here_'))).toBe(true);
   });
+
+  it('renders completion blocks on session.status idle (no abort)', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '3.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-2',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0.01,
+          },
+          parts: [],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.status', properties: { sessionID: 'sess_mock', status: { type: 'idle' } } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
+    const completionCall = updateCalls.find((call: any) =>
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
+    );
+
+    expect(completionCall).toBeDefined();
+    const blocks = completionCall[0].blocks as Array<any>;
+    const actionsBlock = blocks.find((b: any) => b.type === 'actions');
+    expect(actionsBlock).toBeDefined();
+    expect(actionsBlock.elements?.some((el: any) => el.action_id?.startsWith('fork_here_'))).toBe(true);
+    expect(actionsBlock.elements?.some((el: any) => el.action_id?.startsWith('abort_query_'))).toBe(false);
+  });
 });

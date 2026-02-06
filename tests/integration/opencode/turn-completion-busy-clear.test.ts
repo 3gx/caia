@@ -43,4 +43,30 @@ describe('turn-completion-busy-clear', () => {
 
     expect(mockWrapper.promptAsync.mock.calls.length).toBeGreaterThan(callsBefore);
   });
+
+  it('clears busy state after session.status idle', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> first', channel: 'C1', ts: '3.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    const callsBefore = mockWrapper.promptAsync.mock.calls.length;
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.status', properties: { sessionID: 'sess_mock', status: { type: 'idle' } } },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> second', channel: 'C1', ts: '4.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    expect(mockWrapper.promptAsync.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
 });
