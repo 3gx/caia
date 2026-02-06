@@ -93,7 +93,7 @@ vi.mock('../../../opencode/src/server-pool.js', () => {
   return { ServerPool };
 });
 
-vi.mock('../../../slack/src/session/conversation-tracker.js', () => ({
+vi.mock('../../../slack/dist/session/conversation-tracker.js', () => ({
   ConversationTracker: class {
     startProcessing(id: string) { if (conversationBusy.has(id)) return false; conversationBusy.add(id); return true; }
     stopProcessing(id: string) { conversationBusy.delete(id); }
@@ -274,7 +274,7 @@ vi.mock('../../../opencode/src/dm-notifications.js', () => ({
   clearDmDebounce: vi.fn(),
 }));
 
-vi.mock('../../../slack/src/file-handler.js', () => ({
+vi.mock('../../../slack/dist/file-handler.js', () => ({
   processSlackFiles: vi.fn().mockResolvedValue({ files: [], warnings: [] }),
 }));
 
@@ -282,7 +282,7 @@ vi.mock('../../../opencode/src/content-builder.js', () => ({
   buildMessageContent: vi.fn().mockReturnValue([{ type: 'text', text: 'hello' }]),
 }));
 
-vi.mock('../../../slack/src/retry.js', () => ({
+vi.mock('../../../slack/dist/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
   sleep: (ms: number) => Promise.resolve(ms),
 }));

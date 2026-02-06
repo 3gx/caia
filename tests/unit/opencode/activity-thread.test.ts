@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { getMessagePermalink, postActivityToThread } from '../../../opencode/src/activity-thread.js';
 
-vi.mock('../../../slack/src/retry.js', () => ({
+vi.mock('../../../slack/dist/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
 }));
 

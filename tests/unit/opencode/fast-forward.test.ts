@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { syncMessagesFromSession } from '../../../opencode/src/message-sync.js';
 
-vi.mock('../../../slack/src/retry.js', () => ({
+vi.mock('../../../slack/dist/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
 }));
 

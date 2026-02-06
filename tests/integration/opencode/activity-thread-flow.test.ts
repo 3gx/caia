@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 
-vi.mock('../../../slack/src/retry.js', () => ({
+vi.mock('../../../slack/dist/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
 }));
 

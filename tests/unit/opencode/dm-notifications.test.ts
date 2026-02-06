@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { sendDmNotification, truncateQueryForPreview } from '../../../opencode/src/dm-notifications.js';
 
-vi.mock('../../../slack/src/retry.js', () => ({
+vi.mock('../../../slack/dist/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
 }));
 

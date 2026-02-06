@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { registeredHandlers, mockWrapper } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
-import { processSlackFiles } from '../../../slack/src/file-handler.js';
+import { processSlackFiles } from '../../../slack/dist/file-handler.js';
 import { buildMessageContent } from '../../../opencode/src/content-builder.js';
 
 const sampleFile = {
