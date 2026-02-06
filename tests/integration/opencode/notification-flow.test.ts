@@ -17,7 +17,7 @@ describe('notification-flow', () => {
     expect(registeredHandlers['event_app_mention']).toBeDefined();
   });
 
-  it('streams text deltas from message.part.updated', async () => {
+  it('accumulates text deltas without streaming to Slack', async () => {
     const handler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
 
@@ -40,6 +40,6 @@ describe('notification-flow', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(lastStreamingSession?.appendText).toHaveBeenCalled();
+    expect(lastStreamingSession?.appendText).not.toHaveBeenCalled();
   });
 });

@@ -14,7 +14,7 @@ describe('response-segments', () => {
     await teardownBot();
   });
 
-  it('posts response segment to activity thread when tool starts', async () => {
+  it('does not post response before completion (tool start)', async () => {
     const handler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
 
@@ -56,11 +56,10 @@ describe('response-segments', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const calls = (postResponseToThread as any).mock.calls;
-    const postedSegment = calls.some((call: any[]) => call[3] === 'Hello');
-    expect(postedSegment).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 
-  it('posts thinking placeholder before response segment when reasoning starts', async () => {
+  it('posts response once on completion', async () => {
     const handler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
 
@@ -86,27 +85,15 @@ describe('response-segments', () => {
 
     eventSubscribers[0]?.({
       payload: {
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            type: 'reasoning',
-            id: 'r1',
-            text: 'The',
-            time: { start: 0 },
-          },
-          sessionID: 'sess_mock',
-        },
+        type: 'session.idle',
+        properties: { sessionID: 'sess_mock' },
       },
     });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const postMessageCalls = lastAppClient?.chat.postMessage.mock.calls || [];
-    const thinkingCallIndex = postMessageCalls.findIndex((call) => call[0]?.text?.includes('Thinking...'));
-    expect(thinkingCallIndex).toBeGreaterThanOrEqual(0);
-
-    const thinkingOrder = lastAppClient!.chat.postMessage.mock.invocationCallOrder[thinkingCallIndex];
-    const responseOrder = (postResponseToThread as any).mock.invocationCallOrder[0];
-    expect(thinkingOrder).toBeLessThan(responseOrder);
+    const calls = (postResponseToThread as any).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][3]).toBe('Hello');
   });
 });

@@ -42,11 +42,12 @@ import {
   formatThreadThinkingMessage,
 } from './blocks.js';
 import {
-  startStreamingSession,
+  createNoopStreamingSession,
   makeConversationKey,
   uploadMarkdownAndPngWithResponse,
   uploadFilesToThread,
   extractTailWithFormatting,
+  type StreamingSession,
 } from './streaming.js';
 import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentionId, UPDATE_RATE_DEFAULT, MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
 import { toUserMessage } from './errors.js';
@@ -107,7 +108,7 @@ interface ProcessingState {
   workingDir: string;
   statusMsgTs: string;
   streamingMessageTs: string | null;
-  streamingSession: Awaited<ReturnType<typeof startStreamingSession>>;
+  streamingSession: StreamingSession;
   startTime: number;
   spinnerIndex: number;
   status: StatusState;
@@ -124,6 +125,8 @@ interface ProcessingState {
   fullResponse: string;
   currentResponseSegment: string;
   generatingSegmentStartTime?: number;
+  responseMessageTs?: string;
+  responseMessageLink?: string;
   textParts: Map<string, string>;
   reasoningParts: Map<string, string>;
   toolStates: Map<string, string>;
@@ -159,6 +162,7 @@ const conversationTracker = new ConversationTracker<BusyContext>();
 const processingBySession = new Map<string, ProcessingState>();
 const processingByConversation = new Map<string, ProcessingState>();
 const eventSubscriptions = new Map<OpencodeClientWrapper, () => void>();
+const eventMutexes = new Map<string, Mutex>();
 const updateMutexes = new Map<string, Mutex>();
 const pendingModelSelections = new Map<string, PendingSelection>();
 const pendingModeSelections = new Map<string, PendingSelection>();
@@ -173,6 +177,13 @@ function shouldProcessIncomingMessage(channelId: string, messageTs?: string): bo
   if (processedIncomingMessageTs.has(key)) return false;
   processedIncomingMessageTs.add(key);
   return true;
+}
+
+function getEventMutex(sessionId: string): Mutex {
+  if (!eventMutexes.has(sessionId)) {
+    eventMutexes.set(sessionId, new Mutex());
+  }
+  return eventMutexes.get(sessionId)!;
 }
 
 function getUpdateMutex(key: string): Mutex {
@@ -241,38 +252,41 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
   const sessionId = getSessionIdFromPayload(payload);
   if (!sessionId || !type) return;
 
-  const state = processingBySession.get(sessionId);
-  if (!state) return;
+  const mutex = getEventMutex(sessionId);
+  await mutex.runExclusive(async () => {
+    const state = processingBySession.get(sessionId);
+    if (!state) return;
 
-  switch (type) {
-    case 'message.part.updated':
-      await handleMessagePartUpdated(payload?.properties?.part as Part | undefined, payload?.properties?.delta as string | undefined, state);
-      break;
-    case 'message.updated':
-      await handleMessageUpdated(payload?.properties, state);
-      break;
-    case 'session.status': {
-      const statusType = payload?.properties?.status?.type;
-      if (statusType === 'idle') {
-        await handleSessionIdle(state);
+    switch (type) {
+      case 'message.part.updated':
+        await handleMessagePartUpdated(payload?.properties?.part as Part | undefined, payload?.properties?.delta as string | undefined, state);
+        break;
+      case 'message.updated':
+        await handleMessageUpdated(payload?.properties, state);
+        break;
+      case 'session.status': {
+        const statusType = payload?.properties?.status?.type;
+        if (statusType === 'idle') {
+          await handleSessionIdle(state);
+        }
+        break;
       }
-      break;
+      case 'permission.updated':
+        await handlePermissionUpdated(payload?.properties, state);
+        break;
+      case 'session.idle':
+        await handleSessionIdle(state);
+        break;
+      case 'session.compacted':
+        state.customStatus = 'Compacted';
+        break;
+      case 'todo.updated':
+        await handleTodoUpdated(payload?.properties?.todos as Todo[] | undefined, state);
+        break;
+      default:
+        break;
     }
-    case 'permission.updated':
-      await handlePermissionUpdated(payload?.properties, state);
-      break;
-    case 'session.idle':
-      await handleSessionIdle(state);
-      break;
-    case 'session.compacted':
-      state.customStatus = 'Compacted';
-      break;
-    case 'todo.updated':
-      await handleTodoUpdated(payload?.properties?.todos as Todo[] | undefined, state);
-      break;
-    default:
-      break;
-  }
+  });
 }
 
 async function handleMessageUpdated(properties: any, state: ProcessingState): Promise<void> {
@@ -285,12 +299,17 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
     modelID?: string;
     providerID?: string;
     time?: { completed?: number };
+    finish?: any;
   } | undefined;
   const parts = properties?.parts as Part[] | undefined;
 
   if (!info) return;
 
-  const assistantCompleted = Boolean(info?.id && info.role === 'assistant' && info.time?.completed);
+  const assistantCompleted = Boolean(
+    info?.id &&
+    info.role === 'assistant' &&
+    (info.time?.completed || info.finish)
+  );
 
   if (info?.id && info.role) {
     if (info.role === 'assistant' || info.role === 'user') {
@@ -308,12 +327,9 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
   }
 
   if (parts && Array.isArray(parts)) {
-    const messageId = info?.id;
-    const shouldProcessParts = !messageId || !state.seenMessagePartMessageIds.has(messageId);
-    if (shouldProcessParts) {
-      for (const part of parts) {
-        await handleMessagePartUpdated(part, undefined, state);
-      }
+    // Always process message.updated parts; append* handlers are idempotent on unchanged content.
+    for (const part of parts) {
+      await handleMessagePartUpdated(part, undefined, state);
     }
   }
 
@@ -332,8 +348,15 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
     };
     state.lastUsage.model = state.model || 'OpenCode';
 
-    // Save mapping if we already have a streaming message ts
-    if (state.streamingMessageTs) {
+    // Save mapping to the final response message when available
+    if (state.responseMessageTs) {
+      await saveMessageMapping(state.channelId, state.responseMessageTs, {
+        sdkMessageId: info.id,
+        sessionId: state.sessionId,
+        type: 'assistant',
+        parentSlackTs: state.originalTs,
+      });
+    } else if (state.streamingMessageTs) {
       await saveMessageMapping(state.channelId, state.streamingMessageTs, {
         sdkMessageId: info.id,
         sessionId: state.sessionId,
@@ -401,27 +424,33 @@ async function handleMessagePartUpdated(part: Part | undefined, delta: string | 
 async function appendTextDelta(partId: string | undefined, text: string | undefined, delta: string | undefined, state: ProcessingState): Promise<void> {
   const key = partId || 'text';
   const previous = state.textParts.get(key) || '';
-  let chunk = '';
+  let next = previous;
 
   if (typeof delta === 'string') {
-    chunk = delta;
-    state.textParts.set(key, previous + delta);
+    next = previous + delta;
   } else if (text) {
-    if (text.startsWith(previous)) {
-      chunk = text.slice(previous.length);
-    } else if (!previous) {
-      chunk = text;
+    if (!previous) {
+      next = text;
+    } else if (text.startsWith(previous)) {
+      next = text;
+    } else if (previous.startsWith(text)) {
+      next = previous;
+    } else if (text.length > previous.length) {
+      next = text;
     } else {
-      chunk = text; // fallback
+      next = previous + text;
     }
-    state.textParts.set(key, text);
   }
 
-  if (!chunk) return;
+  if (next === previous) return;
+
+  state.textParts.set(key, next);
+  const merged = Array.from(state.textParts.values()).join('');
+  if (merged === state.fullResponse) return;
 
   state.status = 'generating';
-  state.fullResponse += chunk;
-  state.currentResponseSegment += chunk;
+  state.fullResponse = merged;
+  state.currentResponseSegment = merged;
 
   if (!state.generatingEntry) {
     const now = Date.now();
@@ -442,19 +471,20 @@ async function appendTextDelta(partId: string | undefined, text: string | undefi
   state.generatingEntry.generatingTruncated = state.currentResponseSegment.slice(0, 500);
   state.generatingEntry.generatingInProgress = true;
 
-  await state.streamingSession.appendText(chunk);
 }
 
 async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
   if (state.finalizingResponseSegment) {
     await state.finalizingResponseSegment;
-    if (!state.currentResponseSegment.trim()) return;
   }
+
+  const pendingSegment = state.currentResponseSegment || state.fullResponse;
+  if (!pendingSegment.trim()) return;
 
   const entry = state.generatingEntry;
   if (!entry) return;
 
-  const segment = state.currentResponseSegment;
+  const segment = pendingSegment;
   const finalizePromise = (async () => {
     entry.generatingInProgress = false;
     entry.generatingContent = segment;
@@ -462,7 +492,7 @@ async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
     entry.generatingTruncated = segment.slice(0, 500);
     entry.durationMs = Math.max(0, Date.now() - (state.generatingSegmentStartTime ?? entry.timestamp));
 
-    if (state.threadParentTs && segment.trim()) {
+    if (state.threadParentTs && segment.trim() && !state.responseMessageTs) {
       const responseResult = await postResponseToThread(
         app!.client as WebClient,
         state.channelId,
@@ -479,6 +509,17 @@ async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
       if (responseResult) {
         entry.threadMessageTs = responseResult.ts;
         entry.threadMessageLink = responseResult.permalink;
+        state.responseMessageTs = responseResult.ts;
+        state.responseMessageLink = responseResult.permalink;
+
+        if (state.assistantMessageId) {
+          await saveMessageMapping(state.channelId, responseResult.ts, {
+            sdkMessageId: state.assistantMessageId,
+            sessionId: state.sessionId,
+            type: 'assistant',
+            parentSlackTs: state.originalTs,
+          });
+        }
       }
     }
 
@@ -693,6 +734,7 @@ async function finalizeThinkingEntry(state: ProcessingState, content: string): P
         state.channelId,
         uploadResult.fileMessageTs
       );
+      entry.thinkingAttachmentLink = fileMsgLink;
       const formattedText = formatThreadThinkingMessage(
         entry,
         true,
@@ -751,7 +793,9 @@ async function finalizeThinkingEntry(state: ProcessingState, content: string): P
     return;
   }
 
-  if (truncated) {
+  // Only post new if truncated AND no placeholder exists
+  // If placeholder exists, it was already handled in the activityThreadMsgTs && truncated block above
+  if (truncated && !state.activityThreadMsgTs) {
     await postThinkingToThread(
       app!.client as WebClient,
       state.channelId,
@@ -760,7 +804,6 @@ async function finalizeThinkingEntry(state: ProcessingState, content: string): P
       charLimit,
       state.userId
     );
-    state.activityThreadMsgTs = null;
     return;
   }
 
@@ -805,33 +848,56 @@ async function appendReasoningDelta(
   state: ProcessingState
 ): Promise<void> {
   const key = partId || 'thinking';
-  if (state.completedThinkingPartIds.has(key)) {
-    return;
-  }
   const previous = state.reasoningParts.get(key) || '';
   let next = previous;
 
   if (typeof delta === 'string') {
     next = previous + delta;
   } else if (text) {
-    next = text.startsWith(previous) ? text : text;
+    // SDK may send full text or incremental text.
+    // Prefer authoritative text when it extends previous content.
+    if (!previous) {
+      next = text;
+    } else if (text.startsWith(previous)) {
+      next = text;
+    } else if (previous.startsWith(text)) {
+      next = previous;
+    } else if (text.length > previous.length) {
+      next = text;
+    } else {
+      next = previous + text;
+    }
+  }
+
+  const hasNewContent = next !== previous;
+  if (!hasNewContent && state.completedThinkingPartIds.has(key)) {
+    return;
   }
 
   state.reasoningParts.set(key, next);
 
-  if (state.currentThinkingPartId !== key) {
+  if (state.currentThinkingPartId !== key && !state.completedThinkingPartIds.has(key)) {
     state.currentThinkingPartId = key;
     await startThinkingEntry(state, startTime, partId);
-    await finalizeResponseSegment(state);
   }
 
   state.status = 'thinking';
-  if (state.thinkingEntry) {
-    state.thinkingEntry.thinkingContent = next;
-    state.thinkingEntry.thinkingTruncated = next.length > 500 ? '...' + next.slice(-500) : next;
-    state.thinkingEntry.thinkingInProgress = endTime === undefined;
+  let entry = state.thinkingEntry;
+  if (entry && entry.thinkingPartId !== key) {
+    entry = undefined;
+  }
+  if (!entry) {
+    entry = [...state.activityLog].reverse().find((item) => item.type === 'thinking' && item.thinkingPartId === key);
+  }
+
+  if (entry) {
+    entry.thinkingContent = next;
+    entry.thinkingTruncated = next.length > 500 ? '...' + next.slice(-500) : next;
     if (startTime && endTime) {
-      state.thinkingEntry.durationMs = Math.max(0, endTime - startTime);
+      entry.durationMs = Math.max(0, endTime - startTime);
+    }
+    if (endTime === undefined) {
+      entry.thinkingInProgress = true;
     }
   }
 
@@ -840,12 +906,15 @@ async function appendReasoningDelta(
     return;
   }
 
-  if (state.thinkingEntry) {
-    if (startTime && endTime) {
-      state.thinkingEntry.durationMs = Math.max(0, endTime - startTime);
-    }
+  if (entry) {
+    entry.thinkingInProgress = false;
+  }
+
+  if (state.thinkingEntry && state.thinkingEntry.thinkingPartId === key) {
     await finalizeThinkingEntry(state, next);
-    state.completedThinkingPartIds.add(key);
+  }
+  state.completedThinkingPartIds.add(key);
+  if (state.currentThinkingPartId === key) {
     state.currentThinkingPartId = undefined;
   }
 }
@@ -860,10 +929,6 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
     return;
   }
   if (status) state.toolStates.set(toolKey, status);
-
-  if (status === 'pending' || status === 'running' || status === 'completed' || status === 'error') {
-    await finalizeResponseSegment(state);
-  }
 
   if (status === 'pending' || status === 'running') {
     state.status = 'tool';
@@ -1059,8 +1124,8 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     console.error('[opencode] Streaming finish error:', error);
   }
 
-  if (state.assistantMessageId && state.streamingMessageTs) {
-    await saveMessageMapping(state.channelId, state.streamingMessageTs, {
+  if (state.assistantMessageId && (state.responseMessageTs || state.streamingMessageTs)) {
+    await saveMessageMapping(state.channelId, state.responseMessageTs ?? state.streamingMessageTs!, {
       sdkMessageId: state.assistantMessageId,
       sessionId: state.sessionId,
       type: 'assistant',
@@ -1724,12 +1789,15 @@ async function handleUserMessage(params: {
     })
   ) as { ts?: string };
 
-  const streaming = await startStreamingSession(client, {
-    channel: channelId,
-    userId,
-    threadTs: postingThreadTs,
-    forceFallback: true,
+  // Post starting entry FIRST (before streaming session) to ensure correct thread order
+  const threadParentTs = statusMsg.ts!;
+  const startingEntry = initialActivity;
+  await postStartingToThread(client, channelId, threadParentTs, startingEntry).catch(err => {
+    console.error('[Activity Thread] Failed to post starting entry:', err);
   });
+
+  // Codex-style: do NOT stream response to Slack. Post response once on completion.
+  const streaming = createNoopStreamingSession();
 
   const processingState: ProcessingState = {
     conversationKey,
@@ -1754,6 +1822,8 @@ async function handleUserMessage(params: {
     fullResponse: '',
     currentResponseSegment: '',
     generatingSegmentStartTime: undefined,
+    responseMessageTs: undefined,
+    responseMessageLink: undefined,
     textParts: new Map(),
     reasoningParts: new Map(),
     toolStates: new Map(),
@@ -1780,15 +1850,8 @@ async function handleUserMessage(params: {
   };
 
   // Set threadParentTs to statusMsgTs for activity thread replies
-  processingState.threadParentTs = statusMsg.ts!;
-
-  // Post starting entry to activity thread
-  if (processingState.threadParentTs) {
-    const startingEntry = processingState.activityLog.find(e => e.type === 'starting');
-    postStartingToThread(client, channelId, processingState.threadParentTs, startingEntry).catch(err => {
-      console.error('[Activity Thread] Failed to post starting entry:', err);
-    });
-  }
+  // (starting entry was already posted earlier, before streaming session)
+  processingState.threadParentTs = threadParentTs;
 
   processingBySession.set(session.sessionId!, processingState);
   processingByConversation.set(conversationKey, processingState);

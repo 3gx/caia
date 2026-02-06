@@ -74,6 +74,25 @@ export interface StreamingSession {
 }
 
 /**
+ * No-op streaming session for Codex-style flow.
+ * Accumulates response in memory only; does not post streaming messages to Slack.
+ */
+export function createNoopStreamingSession(): StreamingSession {
+  return {
+    messageTs: null,
+    async appendText(_text: string) {
+      // Intentionally no-op: Codex pattern posts response once on completion.
+    },
+    async finish() {
+      // No-op.
+    },
+    async error(_message: string) {
+      // No-op.
+    },
+  };
+}
+
+/**
  * Start a streaming session to Slack.
  * Tries the native streaming API first, falls back to chat.update throttling.
  * Exported for use in slack-bot.ts to get messageTs before streaming starts.

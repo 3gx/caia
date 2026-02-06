@@ -152,4 +152,73 @@ describe('status-block-content', () => {
     expect(actionsBlock.elements?.some((el: any) => el.action_id?.startsWith('fork_here_'))).toBe(true);
     expect(actionsBlock.elements?.some((el: any) => el.action_id?.startsWith('abort_query_'))).toBe(false);
   });
+
+  it('renders full thinking content from message.updated parts', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '4.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    // Initial partial reasoning delta
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'reasoning',
+            id: 'r1',
+            text: 'The',
+            time: { start: 0 },
+          },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    // Final message.updated with full reasoning
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-3',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0,
+            time: { completed: 1 },
+          },
+          parts: [{
+            type: 'reasoning',
+            id: 'r1',
+            messageID: 'assistant-msg-3',
+            text: 'The user wants me to assume xyz has value 1234.',
+            time: { start: 0, end: 1 },
+          }],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
+    const completionCall = updateCalls.find((call: any) =>
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
+    );
+
+    expect(completionCall).toBeDefined();
+    const blocks = completionCall[0].blocks as Array<any>;
+    expect(blocks[0]?.text?.text).toContain('The user wants me to assume xyz has value 1234.');
+  });
 });

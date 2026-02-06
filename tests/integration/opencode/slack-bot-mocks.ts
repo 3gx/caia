@@ -227,6 +227,15 @@ vi.mock('../../../opencode/src/blocks.js', () => ({
 }));
 
 vi.mock('../../../opencode/src/streaming.js', () => ({
+  createNoopStreamingSession: vi.fn().mockImplementation(() => {
+    lastStreamingSession = {
+      appendText: vi.fn(),
+      finish: vi.fn(),
+      error: vi.fn(),
+      messageTs: null,
+    };
+    return lastStreamingSession;
+  }),
   startStreamingSession: vi.fn().mockImplementation(async () => {
     lastStreamingSession = {
       appendText: vi.fn(),
