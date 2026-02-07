@@ -46,7 +46,6 @@ describe.skipIf(SKIP_LIVE)('Interleaved Segments - Multi-Tool', { timeout: 18000
         sessionId = (msg as any).session_id;
         createdSessions.push(sessionId);
       }
-      if (msg.type === 'result') break;
     }
 
     expect(sessionId).toBeTruthy();

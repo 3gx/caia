@@ -58,7 +58,6 @@ describe.skipIf(SKIP_LIVE)('Session Event Stream - Parity Thinking', { timeout: 
         }
       }
 
-      if (msg.type === 'result') break;
     }
 
     const filePath = getSessionFilePath(sessionId!);

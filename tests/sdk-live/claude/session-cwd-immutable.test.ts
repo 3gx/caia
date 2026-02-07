@@ -87,7 +87,7 @@ describe.skipIf(SKIP_LIVE)('Session cwd Immutability', { timeout: 120000 }, () =
       prompt: 'Say exactly: "second"',
       options: {
         maxTurns: 1,
-        sessionId: testSessionId!,
+        resume: testSessionId!,
       },
     });
 

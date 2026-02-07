@@ -57,7 +57,6 @@ describe.skipIf(SKIP_LIVE)('Session Event Stream - Parity Text', { timeout: 1200
         }
       }
 
-      if (msg.type === 'result') break;
     }
 
     const filePath = getSessionFilePath(sessionId!);

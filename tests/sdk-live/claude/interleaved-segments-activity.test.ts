@@ -46,7 +46,6 @@ describe.skipIf(SKIP_LIVE)('Interleaved Segments - Activity', { timeout: 180000 
         sessionId = (msg as any).session_id;
         createdSessions.push(sessionId);
       }
-      if (msg.type === 'result') break;
     }
 
     const filePath = getSessionFilePath(sessionId!);

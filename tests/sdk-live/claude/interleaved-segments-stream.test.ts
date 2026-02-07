@@ -60,7 +60,6 @@ describe.skipIf(SKIP_LIVE)('Interleaved Segments - Stream', { timeout: 180000 },
         }
       }
 
-      if (msg.type === 'result') break;
     }
 
     console.log('Event order:');
@@ -113,7 +112,6 @@ describe.skipIf(SKIP_LIVE)('Interleaved Segments - Stream', { timeout: 180000 },
         }
       }
 
-      if (msg.type === 'result') break;
     }
 
     expect(sessionId).toBeTruthy();

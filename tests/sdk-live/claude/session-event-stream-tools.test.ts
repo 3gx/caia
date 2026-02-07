@@ -51,7 +51,6 @@ describe.skipIf(SKIP_LIVE)('Session Event Stream - Tools', { timeout: 120000 }, 
         sessionId = (msg as any).session_id;
         createdSessions.push(sessionId);
       }
-      if (msg.type === 'result') break;
     }
 
     if (!sessionId) {
