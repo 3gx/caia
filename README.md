@@ -7,6 +7,10 @@
 
 A multi-provider Slack bot framework that integrates AI coding assistants into your workspace. Run Claude Code, Codex, or OpenCode through a unified Slack interface.
 
+> [!WARNING]
+> **This is an experimental project under development. Some features may not work as expected or may change without notice.**
+> **Documentation is auto-generated and may contain gaps or inaccuracies.**
+
 </td>
 <td>
 <img src="caia.jpg" alt="C.A.I.A. Logo" width="630">
