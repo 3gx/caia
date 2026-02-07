@@ -9,7 +9,7 @@ A multi-provider Slack bot framework that integrates AI coding assistants into y
 
 </td>
 <td>
-<img src="caia.jpg" alt="C.A.I.A. Logo" width="280">
+<img src="caia.jpg" alt="C.A.I.A. Logo" width="420">
 </td>
 </tr>
 </table>
