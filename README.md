@@ -1,7 +1,7 @@
 # C.A.I.A. - Central Artificial Intelligence Agency
 
 <p align="center">
-  <img src="caia.jpg" alt="C.A.I.A. Logo" width="400">
+  <img src="caia.jpg" alt="C.A.I.A. Logo" width="280">
 </p>
 
 A multi-provider Slack bot framework that integrates AI coding assistants into your workspace. Run Claude Code, Codex, or OpenCode through a unified Slack interface.
