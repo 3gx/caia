@@ -4,6 +4,7 @@
 
 # C.A.I.A.
 **Central Artificial Intelligence Agency**
+<sub>pronounced /ˈkaɪ.ɑ/</sub>
 
 A multi-provider Slack bot framework that integrates AI coding assistants into your workspace. Run Claude Code, Codex, or OpenCode through a unified Slack interface.
 
