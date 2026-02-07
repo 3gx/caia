@@ -58,6 +58,7 @@ import { withSlackRetry } from '../../slack/dist/retry.js';
 import { toUserMessage } from '../../slack/dist/errors.js';
 import { markProcessingStart, markApprovalWait, removeProcessingEmoji } from './emoji-reactions.js';
 import { markAborted } from './abort-tracker.js';
+import { evaluateFileProcessing } from '../../slack/dist/file-guard.js';
 import { processSlackFiles, SlackFile, writeTempFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
 import { uploadFilesToThread, uploadMarkdownAndPngWithResponse, getMessagePermalink, type ActivityEntry } from './activity-thread.js';
@@ -1315,12 +1316,21 @@ async function handleUserMessage(
   let input: TurnContent[] = [{ type: 'text', text }];
   if (files && files.length > 0) {
     try {
-      const { files: processedFiles, warnings } = await processSlackFiles(
+      const processedResult = await processSlackFiles(
         files,
         process.env.SLACK_BOT_TOKEN!,
         { writeTempFile }
       );
-      input = buildMessageContent(text, processedFiles, warnings);
+      const guard = evaluateFileProcessing(processedResult, { allowInlineFallback: true });
+      if (guard.hasFailedFiles) {
+        await runtime.streaming.failTurnStart(
+          conversationKey,
+          guard.failureMessage ?? 'Some attached files could not be processed.'
+        );
+        conversationTracker.stopProcessing(threadId);
+        return;
+      }
+      input = buildMessageContent(text, guard.files, guard.warnings);
     } catch (error) {
       console.error('[FileUpload] Error processing files:', error);
       // Fallback to plain text input

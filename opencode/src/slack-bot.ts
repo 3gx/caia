@@ -54,7 +54,8 @@ import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentio
 import { toUserMessage } from './errors.js';
 import { markProcessingStart, markApprovalWait, markApprovalDone, markError, markAborted, removeProcessingEmoji } from './emoji-reactions.js';
 import { sendDmNotification, clearDmDebounce } from './dm-notifications.js';
-import { processSlackFiles, writeTempFile, type SlackFile } from '../../slack/dist/file-handler.js';
+import { processSlackFilesWithGuard } from '../../slack/dist/file-guard.js';
+import { writeTempFile, type SlackFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
 import { withSlackRetry, sleep } from '../../slack/dist/retry.js';
 import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
@@ -1749,7 +1750,27 @@ async function handleUserMessage(params: {
   let processedFiles = { files: [], warnings: [] } as { files: any[]; warnings: string[] };
   if (params.files && params.files.length > 0) {
     const token = process.env.SLACK_BOT_TOKEN || '';
-    processedFiles = await processSlackFiles(params.files, token, { writeTempFile, inlineImages: 'always' });
+    const guardResult = await processSlackFilesWithGuard(
+      params.files,
+      token,
+      { writeTempFile, inlineImages: 'always' },
+      { allowInlineFallback: true }
+    );
+    if (guardResult.hasFailedFiles) {
+      await withSlackRetry(() =>
+        client.chat.postMessage({
+          channel: channelId,
+          thread_ts: postingThreadTs,
+          text: guardResult.failureMessage ?? 'Some attached files could not be processed.',
+        })
+      );
+      if (originalTs) {
+        await markError(client, channelId, originalTs);
+      }
+      conversationTracker.stopProcessing(session.sessionId!);
+      return;
+    }
+    processedFiles = guardResult;
   }
 
   const parts = buildMessageContent(userText, processedFiles.files, processedFiles.warnings);

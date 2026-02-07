@@ -62,6 +62,7 @@ import { markFfAborted, isFfAborted, clearFfAborted } from './ff-abort-tracker.j
 import { markdownToSlack, formatTimeRemaining, stripMarkdownCodeFence } from './utils.js';
 import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentionId, UPDATE_RATE_DEFAULT, MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
 import { toUserMessage, SlackBotError, Errors } from '../../slack/dist/errors.js';
+import { evaluateFileProcessing } from '../../slack/dist/file-guard.js';
 import { processSlackFiles, SlackFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent, ContentBlock } from './content-builder.js';
 import { withSlackRetry, withRetry } from '../../slack/dist/retry.js';
@@ -3573,11 +3574,26 @@ async function handleMessage(params: {
     if (files && files.length > 0) {
       console.log(`[FileUpload] Processing ${files.length} file(s)`);
       try {
-        const { files: processedFiles, warnings } = await processSlackFiles(
+        const processedResult = await processSlackFiles(
           files,
           process.env.SLACK_BOT_TOKEN!
         );
-        messageContent = buildMessageContent(textToProcess, processedFiles, warnings);
+        const guard = evaluateFileProcessing(processedResult, { allowInlineFallback: false });
+        if (guard.hasFailedFiles) {
+          await client.chat.postMessage({
+            channel: channelId,
+            thread_ts: effectiveThreadTs,
+            text: guard.failureMessage ?? 'Some attached files could not be processed.',
+          });
+          if (originalTs) {
+            await removeReaction(client, channelId, originalTs, 'eyes');
+            await removeReaction(client, channelId, originalTs, 'question');
+            await addReaction(client, channelId, originalTs, 'x');
+          }
+          stopSessionProcessing(session.sessionId);
+          return;
+        }
+        messageContent = buildMessageContent(textToProcess, guard.files, guard.warnings);
         if (Array.isArray(messageContent)) {
           console.log(`[FileUpload] Built ${messageContent.length} content blocks`);
         }

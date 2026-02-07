@@ -279,6 +279,16 @@ vi.mock('../../../slack/dist/file-handler.js', () => ({
   writeTempFile: vi.fn(),
 }));
 
+vi.mock('../../../slack/dist/file-guard.js', () => ({
+  processSlackFilesWithGuard: vi.fn().mockResolvedValue({
+    files: [],
+    warnings: [],
+    hasFailedFiles: false,
+    failureWarnings: [],
+    failedFiles: [],
+  }),
+}));
+
 vi.mock('../../../opencode/src/content-builder.js', () => ({
   buildMessageContent: vi.fn().mockReturnValue([{ type: 'text', text: 'hello' }]),
 }));
