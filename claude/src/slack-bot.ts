@@ -64,6 +64,12 @@ import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentio
 import { toUserMessage, SlackBotError, Errors } from '../../slack/dist/errors.js';
 import { evaluateFileProcessing } from '../../slack/dist/file-guard.js';
 import { processSlackFiles, SlackFile } from '../../slack/dist/file-handler.js';
+import {
+  sendDmNotification,
+  truncateQueryForPreview,
+  DM_DEBOUNCE_MS,
+  clearAllDmDebounce as clearDmNotificationDebounce,
+} from '../../slack/dist/dm-notifications.js';
 import { buildMessageContent, ContentBlock } from './content-builder.js';
 import { withSlackRetry, withRetry } from '../../slack/dist/retry.js';
 import {
@@ -99,6 +105,8 @@ const MAX_LIVE_ENTRIES = 300;  // Switch to rolling window if exceeded
 const ROLLING_WINDOW_SIZE = 20; // Show last N entries when in rolling mode
 const STATUS_UPDATE_INTERVAL = 1000; // TEMP: 1s for testing spinner updates
 
+export { sendDmNotification, truncateQueryForPreview, DM_DEBOUNCE_MS, clearDmNotificationDebounce };
+
 /**
  * Get user mention string for Slack messages.
  * Skip mentions in DMs (channel IDs starting with 'D') where the user is the only participant.
@@ -106,15 +114,6 @@ const STATUS_UPDATE_INTERVAL = 1000; // TEMP: 1s for testing spinner updates
 function getUserMention(userId: string | undefined, channelId: string): string {
   if (!userId || channelId.startsWith('D')) return '';
   return `<@${userId}> `;
-}
-
-// Track recent DM notifications per user+type for debouncing
-const recentDmNotifications = new Map<string, number>(); // `${userId}:${title}` -> lastNotifyTime
-export const DM_DEBOUNCE_MS = 15000; // 15 seconds
-
-/** Clear debounce state - exported for testing */
-export function clearDmNotificationDebounce(): void {
-  recentDmNotifications.clear();
 }
 
 /**
@@ -125,115 +124,6 @@ function extractTextFromContent(content: string | ContentBlock[]): string {
   if (typeof content === 'string') return content;
   const textBlock = content.find((b): b is { type: 'text'; text: string } => b.type === 'text');
   return textBlock?.text || '';
-}
-
-/**
- * Truncate query text for DM notification preview.
- * Removes backticks (would break formatting) and collapses whitespace.
- */
-export function truncateQueryForPreview(query: string | undefined, maxLength: number = 50): string {
-  if (!query) return '';
-  // Remove backticks (would break formatting), collapse whitespace
-  const cleaned = query.replace(/`/g, '').replace(/\s+/g, ' ').trim();
-  if (cleaned.length <= maxLength) return cleaned;
-  return cleaned.slice(0, maxLength).trim() + '...';
-}
-
-/**
- * Send a DM notification to user with permalink to the thread.
- * This triggers unread indicator on DM without polluting main channel.
- *
- * Features:
- * - 15-second debouncing per user to prevent spam
- * - Skips for DM channels (no need to DM about a DM)
- * - Skips for bot users (can't DM bots)
- * - Silently fails - DM notification is nice-to-have, not critical
- */
-export async function sendDmNotification(params: {
-  client: any;
-  userId: string;
-  channelId: string;
-  messageTs: string;
-  emoji: string;
-  title: string;
-  subtitle?: string;
-  queryPreview?: string;
-}): Promise<void> {
-  const { client, userId, channelId, messageTs, emoji, title, subtitle, queryPreview } = params;
-
-  // Skip for DMs - no need to DM about a DM
-  if (!userId || channelId.startsWith('D')) return;
-
-  // Debounce: skip if notified this user with same notification type within last 15 seconds
-  const now = Date.now();
-  const debounceKey = `${userId}:${title}`;
-  const lastNotify = recentDmNotifications.get(debounceKey) || 0;
-  if (now - lastNotify < DM_DEBOUNCE_MS) {
-    return; // Skip - too recent
-  }
-
-  try {
-    // Check if user is a bot (can't DM bots)
-    try {
-      const userInfo = await client.users.info({ user: userId });
-      if (userInfo.ok && userInfo.user?.is_bot) {
-        return; // Skip silently for bots
-      }
-    } catch {
-      // If we can't check, proceed anyway - will fail silently if bot
-    }
-
-    // Get channel name for friendly message
-    let channelName = 'the channel';
-    try {
-      const channelInfo = await client.conversations.info({ channel: channelId });
-      if (channelInfo.ok && channelInfo.channel?.name) {
-        channelName = `#${channelInfo.channel.name}`;
-      }
-    } catch {
-      // Use fallback name
-    }
-
-    // Get permalink to the message
-    const permalink = await getMessagePermalink(client, channelId, messageTs);
-
-    // Open DM channel with user
-    const dmResult = await client.conversations.open({ users: userId });
-    if (!dmResult.ok || !dmResult.channel?.id) return;
-
-    // Build message: emoji conveys meaning, query preview provides context
-    // Format: ✅ `query preview...` in #channel
-    const queryClause = queryPreview ? ` \`${queryPreview}\`` : '';
-
-    // Send DM with permalink button
-    await withSlackRetry(() =>
-      client.chat.postMessage({
-        channel: dmResult.channel.id,
-        text: `${emoji}${queryClause} in ${channelName}`,
-        blocks: [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `${emoji}${queryClause} in ${channelName}${subtitle ? `\n${subtitle}` : ''}`,
-            },
-            accessory: {
-              type: 'button',
-              text: { type: 'plain_text', text: 'View →', emoji: true },
-              url: permalink,
-              action_id: 'dm_notification_view', // Required but unused (link button)
-            },
-          },
-        ],
-      })
-    );
-
-    // Update debounce tracker
-    recentDmNotifications.set(debounceKey, now);
-  } catch (error) {
-    // Silently fail - don't block main notification flow
-    console.error('Failed to send DM notification:', error);
-  }
 }
 
 // Processing state for real-time activity tracking

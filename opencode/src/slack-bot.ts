@@ -1175,6 +1175,19 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     }
   }
 
+  if (state.status === 'complete' && state.userId && state.statusMsgTs) {
+    await sendDmNotification({
+      client: app!.client as WebClient,
+      userId: state.userId,
+      channelId: state.channelId,
+      messageTs: state.statusMsgTs,
+      conversationKey: state.conversationKey,
+      emoji: ':white_check_mark:',
+      title: 'Query completed',
+      queryPreview: state.queryText,
+    }).catch((err) => console.error('[opencode] Failed to send completion DM:', err));
+  }
+
   if (state.userId) {
     clearDmDebounce(state.userId, state.conversationKey);
   }

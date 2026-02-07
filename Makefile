@@ -4,7 +4,7 @@ JOBS ?= 4
 
 help:
 	@echo "Targets:"
-	@echo "  build              Build all packages"
+	@echo "  build              Build claude/codex/opencode packages"
 	@echo "  clean              Remove build artifacts"
 	@echo "  test               Run unit + integration tests"
 	@echo "  sdk-test           Run live SDK tests for all providers"
@@ -16,7 +16,7 @@ help:
 	@echo "  opencode-sdk-test  Run OpenCode live SDK tests"
 
 build:
-	npm run build
+	npx tsc -b claude codex opencode
 
 clean:
 	rm -rf slack/dist claude/dist codex/dist opencode/dist

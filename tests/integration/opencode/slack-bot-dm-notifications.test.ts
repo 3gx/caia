@@ -43,4 +43,28 @@ describe('slack-bot-dm-notifications', () => {
       conversationKey: 'C1',
     }));
   });
+
+  it('sends DM notification when session completes', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '2.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await waitForAsync();
+
+    expect(sendDmNotification).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'U1',
+      channelId: 'C1',
+      conversationKey: 'C1',
+      title: 'Query completed',
+    }));
+  });
 });
