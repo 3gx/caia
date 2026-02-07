@@ -28,7 +28,7 @@ describe('slack-bot-file-uploads', () => {
     const client = createMockWebClient();
 
     vi.mocked(processSlackFiles).mockResolvedValueOnce({
-      files: [{ name: 'readme.txt', buffer: Buffer.from('hello') }],
+      files: [{ name: 'readme.txt', buffer: Buffer.from('hello'), localPath: '/tmp/readme.txt' }],
       warnings: ['warn'],
     } as any);
 
@@ -48,8 +48,16 @@ describe('slack-bot-file-uploads', () => {
       context: { botUserId: 'BOT123' },
     });
 
-    expect(processSlackFiles).toHaveBeenCalledWith([sampleFile], 'xoxb-test');
-    expect(buildMessageContent).toHaveBeenCalledWith('summarize', expect.any(Array), ['warn']);
+    expect(processSlackFiles).toHaveBeenCalledWith(
+      [sampleFile],
+      'xoxb-test',
+      expect.objectContaining({ writeTempFile: expect.any(Function) })
+    );
+    expect(buildMessageContent).toHaveBeenCalledWith(
+      'summarize',
+      expect.arrayContaining([expect.objectContaining({ localPath: '/tmp/readme.txt' })]),
+      ['warn']
+    );
     expect(mockWrapper.promptAsync).toHaveBeenCalledWith(
       'sess_mock',
       [{ type: 'text', text: 'content with file' }],

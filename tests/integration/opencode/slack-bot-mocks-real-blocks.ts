@@ -166,6 +166,7 @@ vi.mock('../../../opencode/src/dm-notifications.js', () => ({
 
 vi.mock('../../../slack/dist/file-handler.js', () => ({
   processSlackFiles: vi.fn().mockResolvedValue({ files: [], warnings: [] }),
+  writeTempFile: vi.fn(),
 }));
 
 vi.mock('../../../opencode/src/content-builder.js', () => ({

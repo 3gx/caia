@@ -54,7 +54,7 @@ import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentio
 import { toUserMessage } from './errors.js';
 import { markProcessingStart, markApprovalWait, markApprovalDone, markError, markAborted, removeProcessingEmoji } from './emoji-reactions.js';
 import { sendDmNotification, clearDmDebounce } from './dm-notifications.js';
-import { processSlackFiles, type SlackFile } from '../../slack/dist/file-handler.js';
+import { processSlackFiles, writeTempFile, type SlackFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
 import { withSlackRetry, sleep } from '../../slack/dist/retry.js';
 import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
@@ -1749,7 +1749,7 @@ async function handleUserMessage(params: {
   let processedFiles = { files: [], warnings: [] } as { files: any[]; warnings: string[] };
   if (params.files && params.files.length > 0) {
     const token = process.env.SLACK_BOT_TOKEN || '';
-    processedFiles = await processSlackFiles(params.files, token);
+    processedFiles = await processSlackFiles(params.files, token, { writeTempFile });
   }
 
   const parts = buildMessageContent(userText, processedFiles.files, processedFiles.warnings);
