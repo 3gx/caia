@@ -31,8 +31,8 @@ describe('point-in-time-fork', () => {
         mode: 'default',
         createdAt: Date.now(),
         lastActiveAt: Date.now(),
-        pathConfigured: false,
-        configuredPath: null,
+        pathConfigured: true,
+        configuredPath: '/tmp',
       } as any,
       isNewFork: true,
     });

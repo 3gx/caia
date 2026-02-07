@@ -13,8 +13,8 @@ const baseSession = {
   mode: 'default',
   createdAt: Date.now(),
   lastActiveAt: Date.now(),
-  pathConfigured: false,
-  configuredPath: null,
+  pathConfigured: true,
+  configuredPath: '/tmp',
   previousSessionIds: [],
 } as any;
 

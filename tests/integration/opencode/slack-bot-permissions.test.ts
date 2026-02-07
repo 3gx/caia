@@ -28,8 +28,8 @@ describe('slack-bot-permissions', () => {
       mode: 'bypassPermissions',
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
-      pathConfigured: false,
-      configuredPath: null,
+      pathConfigured: true,
+      configuredPath: '/tmp',
       previousSessionIds: [],
     } as any;
 
