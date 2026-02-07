@@ -1,4 +1,4 @@
-.PHONY: help setup setup-tools verify-tools build clean test sdk-test claude-test codex-test opencode-test claude-sdk-test codex-sdk-test opencode-sdk-test
+.PHONY: help setup setup-tools verify-tools build clean test sdk-test claude-test codex-test opencode-test claude-sdk-test codex-sdk-test opencode-sdk-test claude-dev codex-dev opencode-dev claude-start codex-start opencode-start
 
 JOBS ?= 4
 
@@ -23,10 +23,14 @@ help:
 	@echo "  opencode-sdk-test  Run OpenCode live SDK tests"
 	@echo ""
 	@echo "Run a Provider:"
-	@echo "  cd claude/   && make dev     # Dev mode with auto-reload"
-	@echo "  cd claude/   && make start   # Run built service"
-	@echo "  cd codex/    && make dev"
-	@echo "  cd opencode/ && make dev"
+	@echo "  claude-dev         Run Claude bot in dev mode"
+	@echo "  codex-dev          Run Codex bot in dev mode"
+	@echo "  opencode-dev       Run OpenCode bot in dev mode"
+	@echo "  claude-start       Build and run Claude bot"
+	@echo "  codex-start        Build and run Codex bot"
+	@echo "  opencode-start     Build and run OpenCode bot"
+	@echo ""
+	@echo "Or manually: cd claude/ && make build && make start"
 
 # =============================================================================
 # Setup Targets
@@ -319,3 +323,25 @@ codex-sdk-test:
 
 opencode-sdk-test:
 	npm run test:opencode -- --maxWorkers=$(JOBS)
+
+# =============================================================================
+# Run Targets
+# =============================================================================
+
+claude-dev:
+	cd claude && make dev
+
+codex-dev:
+	cd codex && make dev
+
+opencode-dev:
+	cd opencode && make dev
+
+claude-start:
+	cd claude && make build && make start
+
+codex-start:
+	cd codex && make build && make start
+
+opencode-start:
+	cd opencode && make build && make start
