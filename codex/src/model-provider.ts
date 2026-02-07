@@ -1,23 +1,18 @@
 import type { IModelProvider, ModelInfo } from '../../slack/dist/types.js';
 import type { CodexClient } from './codex-client.js';
-import { FALLBACK_MODELS } from './commands.js';
-
-function normalizeModels(models: string[]): ModelInfo[] {
-  return models.map((value) => ({
-    value,
-    displayName: value,
-    description: 'Available model',
-  }));
-}
+import {
+  FALLBACK_MODELS,
+  getAvailableModels as getAvailableCodexModels,
+  getModelInfo as findModelInfo,
+  resolveDefaultModel,
+} from './model-cache.js';
 
 export class CodexModelProvider implements IModelProvider {
   constructor(private readonly client?: CodexClient) {}
 
   async getAvailableModels(): Promise<ModelInfo[]> {
     if (!this.client) return FALLBACK_MODELS;
-    const models = await this.client.listModels();
-    if (!models.length) return FALLBACK_MODELS;
-    return normalizeModels(models);
+    return getAvailableCodexModels(this.client);
   }
 
   async refreshModels(): Promise<ModelInfo[]> {
@@ -31,11 +26,13 @@ export class CodexModelProvider implements IModelProvider {
 
   async getModelInfo(modelId: string): Promise<ModelInfo | undefined> {
     const models = await this.getAvailableModels();
-    return models.find((model) => model.value === modelId);
+    return findModelInfo(models, modelId);
   }
 
   async getDefaultModel(): Promise<ModelInfo | undefined> {
+    if (!this.client) return FALLBACK_MODELS[0];
+    const defaultModelId = await resolveDefaultModel(this.client);
     const models = await this.getAvailableModels();
-    return models[0];
+    return findModelInfo(models, defaultModelId) ?? models[0];
   }
 }

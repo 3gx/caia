@@ -816,4 +816,41 @@ describe('CodexClient Point-in-Time Fork', () => {
       expect(result).toEqual(expectedThread);
     });
   });
+
+  describe('model/list compatibility', () => {
+    it('parses current model/list data[] shape', async () => {
+      const client = new CodexClient({ requestTimeout: 10 });
+      vi.spyOn(client, 'rpc').mockResolvedValue({
+        data: [
+          {
+            id: 'gpt-5.3-codex',
+            model: 'gpt-5.3-codex',
+            displayName: 'GPT-5.3 Codex',
+            description: 'Latest coding model',
+            isDefault: true,
+          },
+        ],
+      });
+
+      const infos = await client.listModelInfos();
+      expect(infos).toHaveLength(1);
+      expect(infos[0].id).toBe('gpt-5.3-codex');
+      expect(infos[0].displayName).toBe('GPT-5.3 Codex');
+
+      const ids = await client.listModels();
+      expect(ids).toEqual(['gpt-5.3-codex']);
+    });
+
+    it('parses legacy model/list models[] shape', async () => {
+      const client = new CodexClient({ requestTimeout: 10 });
+      vi.spyOn(client, 'rpc').mockResolvedValue({
+        models: ['gpt-5.2-codex', 'gpt-5.1-codex-mini'],
+      });
+
+      const infos = await client.listModelInfos();
+      expect(infos.map((m) => m.id)).toEqual(['gpt-5.2-codex', 'gpt-5.1-codex-mini']);
+      const ids = await client.listModels();
+      expect(ids).toEqual(['gpt-5.2-codex', 'gpt-5.1-codex-mini']);
+    });
+  });
 });

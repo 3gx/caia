@@ -738,7 +738,10 @@ export function buildModelSelectionBlocks(
       emoji: true,
     },
     action_id: `model_select_${model.value}`,
-    value: model.value,
+    value: JSON.stringify({
+      model: model.value,
+      displayName: model.displayName,
+    }),
     ...(currentModel === model.value ? { style: 'primary' as const } : {}),
   }));
 
@@ -819,7 +822,11 @@ export function buildReasoningSelectionBlocks(
       emoji: true,
     },
     action_id: `reasoning_select_${level.value}`,
-    value: JSON.stringify({ model: selectedModel, reasoning: level.value }),
+    value: JSON.stringify({
+      model: selectedModel,
+      displayName: selectedModelDisplayName,
+      reasoning: level.value,
+    }),
     ...(currentReasoning === level.value ? { style: 'primary' as const } : {}),
   }));
 

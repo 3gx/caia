@@ -98,6 +98,15 @@ export interface RateLimits {
   planType?: 'free' | 'plus' | 'pro' | 'team' | 'business' | 'enterprise' | 'edu' | 'unknown';
 }
 
+// Model info from model/list
+export interface CodexModelInfo {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  isDefault?: boolean;
+}
+
 // Turn status
 export type TurnStatus = 'running' | 'completed' | 'interrupted' | 'failed';
 
@@ -852,17 +861,79 @@ export class CodexClient extends EventEmitter {
   }
 
   /**
-   * List available models.
-   * Note: This may not be supported by all App-Server versions.
+   * List available models with metadata.
+   * Supports both:
+   * - legacy shape: { models: string[] }
+   * - current shape: { data: [{ id, model, displayName, description, ... }] }
    */
-  async listModels(): Promise<string[]> {
+  async listModelInfos(): Promise<CodexModelInfo[]> {
     try {
-      const result = await this.rpc<{ models?: string[] }>('model/list', {});
-      return result.models ?? [];
+      const result = await this.rpc<{
+        models?: string[];
+        data?: Array<{
+          id?: string;
+          model?: string;
+          displayName?: string;
+          description?: string;
+          isDefault?: boolean;
+        }>;
+      }>('model/list', {});
+
+      // New shape: { data: [...] }
+      if (Array.isArray(result.data)) {
+        const models: CodexModelInfo[] = [];
+        for (const item of result.data) {
+          const id = typeof item.id === 'string'
+            ? item.id
+            : typeof item.model === 'string'
+              ? item.model
+              : null;
+          if (!id) continue;
+          const model = typeof item.model === 'string' ? item.model : id;
+          models.push({
+            id,
+            model,
+            displayName: typeof item.displayName === 'string' ? item.displayName : model,
+            description: typeof item.description === 'string' ? item.description : 'Available model',
+            ...(typeof item.isDefault === 'boolean' ? { isDefault: item.isDefault } : {}),
+          });
+        }
+        if (models.length > 0) {
+          return models;
+        }
+      }
+
+      // Legacy shape: { models: [...] }
+      if (Array.isArray(result.models)) {
+        return result.models.map((model) => ({
+          id: model,
+          model,
+          displayName: model,
+          description: 'Available model',
+        }));
+      }
+
+      return [];
     } catch {
       // model/list may not be implemented - return empty array
       return [];
     }
+  }
+
+  /**
+   * List available model IDs.
+   */
+  async listModels(): Promise<string[]> {
+    const infos = await this.listModelInfos();
+    const unique = new Set<string>();
+    const modelIds: string[] = [];
+    for (const info of infos) {
+      if (!unique.has(info.id)) {
+        unique.add(info.id);
+        modelIds.push(info.id);
+      }
+    }
+    return modelIds;
   }
 
   /**

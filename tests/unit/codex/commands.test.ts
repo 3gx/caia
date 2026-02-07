@@ -12,6 +12,7 @@ import {
   MESSAGE_SIZE_DEFAULT,
   type CommandContext,
 } from '../../../codex/src/commands.js';
+import { resetModelCacheForTests } from '../../../codex/src/model-cache.js';
 
 vi.mock('../../../codex/src/session-manager.js', () => ({
   getEffectiveMode: vi.fn(() => 'ask'),
@@ -35,6 +36,7 @@ describe('Command Handlers', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetModelCacheForTests();
   });
 
   it('shows mode selection prompt when no args', async () => {

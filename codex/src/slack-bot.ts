@@ -16,9 +16,7 @@ import {
   handleCommand,
   CommandContext,
   parseCommand,
-  FALLBACK_MODELS,
   getModelInfo,
-  DEFAULT_MODEL,
   DEFAULT_REASONING,
 } from './commands.js';
 import {
@@ -53,7 +51,9 @@ import {
   formatThreadActivityEntry,
   buildPathSetupBlocks,
   Block,
+  ModelInfo,
 } from './blocks.js';
+import { resolveDefaultModel } from './model-cache.js';
 import { withSlackRetry } from '../../slack/dist/retry.js';
 import { toUserMessage } from '../../slack/dist/errors.js';
 import { markProcessingStart, markApprovalWait, removeProcessingEmoji } from './emoji-reactions.js';
@@ -72,6 +72,7 @@ interface PendingModelSelection {
   originalTs: string;   // User's message timestamp (for emoji cleanup)
   channelId: string;
   threadTs?: string;
+  models?: ModelInfo[];
 }
 
 // Track pending model selections for emoji cleanup
@@ -877,7 +878,23 @@ function setupEventHandlers(): void {
     await ack();
 
     const actionId = 'action_id' in action ? action.action_id : '';
-    const modelValue = actionId.replace('model_select_', '');
+    const actionValue = 'value' in action ? (action.value as string) : '';
+
+    let modelValue = actionId.replace('model_select_', '');
+    let selectedModelDisplayName = '';
+    if (actionValue) {
+      try {
+        const parsed = JSON.parse(actionValue) as { model?: string; displayName?: string };
+        if (typeof parsed.model === 'string' && parsed.model) {
+          modelValue = parsed.model;
+        }
+        if (typeof parsed.displayName === 'string') {
+          selectedModelDisplayName = parsed.displayName;
+        }
+      } catch {
+        // Keep action_id fallback when value isn't JSON.
+      }
+    }
 
     const channelId = body.channel?.id;
     const messageTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.ts;
@@ -912,8 +929,8 @@ function setupEventHandlers(): void {
     }
 
     // Get model info for display name
-    const modelInfo = getModelInfo(modelValue);
-    const displayName = modelInfo?.displayName || modelValue;
+    const modelInfo = getModelInfo(modelValue, pending?.models);
+    const displayName = selectedModelDisplayName || modelInfo?.displayName || modelValue;
 
     // Get current reasoning for initial selection
     const session = getThreadSession(channelId, threadTs) ?? getSession(channelId);
@@ -939,9 +956,11 @@ function setupEventHandlers(): void {
     // Value contains JSON with model and reasoning
     const actionValue = 'value' in action ? (action.value as string) : '';
     let modelValue = '';
+    let modelDisplayName = '';
     try {
-      const parsed = JSON.parse(actionValue);
-      modelValue = parsed.model;
+      const parsed = JSON.parse(actionValue) as { model?: string; displayName?: string };
+      modelValue = parsed.model ?? '';
+      modelDisplayName = parsed.displayName ?? '';
     } catch {
       console.error('[model] Failed to parse reasoning action value:', actionValue);
       return;
@@ -993,8 +1012,8 @@ function setupEventHandlers(): void {
     console.log(`[model] Verified saved session: model=${savedSession?.model}, reasoning=${savedSession?.reasoningEffort}`);
 
     // Get model info for display name
-    const modelInfo = getModelInfo(modelValue);
-    const displayName = modelInfo?.displayName || modelValue;
+    const modelInfo = getModelInfo(modelValue, pending?.models);
+    const displayName = modelDisplayName || modelInfo?.displayName || modelValue;
 
     // Show confirmation
     await client.chat.update({
@@ -1107,6 +1126,7 @@ async function handleUserMessage(
           originalTs: messageTs,
           channelId,
           threadTs: postingThreadTs,
+          models: commandResult.modelOptions,
         });
         await markApprovalWait(app.client, channelId, messageTs);
       }
@@ -1239,8 +1259,9 @@ async function handleUserMessage(
     await saveThreadSession(channelId, postingThreadTs, { threadId });
   }
 
-  // Use defaults when model/reasoning not explicitly set
-  const effectiveModel = session?.model || DEFAULT_MODEL;
+  // Use dynamic default model from app-server when model is not explicitly set.
+  const defaultModel = await resolveDefaultModel(runtime.codex);
+  const effectiveModel = session?.model || defaultModel;
   const effectiveReasoning = session?.reasoningEffort || DEFAULT_REASONING;
   const effectiveSandbox = runtime.codex.getSandboxMode();
 

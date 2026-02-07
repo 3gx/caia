@@ -40,15 +40,23 @@ import {
   Block,
   ModelInfo,
 } from './blocks.js';
+import {
+  FALLBACK_MODELS as MODEL_FALLBACKS,
+  LEGACY_DEFAULT_MODEL,
+  getAvailableModels as getAvailableCodexModels,
+  getModelInfo as findModelInfo,
+  resolveDefaultModel,
+} from './model-cache.js';
 import fs from 'fs';
 import path from 'path';
 
 /**
  * Default model and reasoning when not explicitly set.
  */
-export const DEFAULT_MODEL = 'gpt-5.2-codex';
+export const DEFAULT_MODEL = LEGACY_DEFAULT_MODEL;
 export const DEFAULT_MODEL_DISPLAY = 'GPT-5.2 Codex';
 export const DEFAULT_REASONING: ReasoningEffort = 'xhigh';
+export const FALLBACK_MODELS = MODEL_FALLBACKS;
 
 /**
  * Message size configuration for thread responses.
@@ -59,21 +67,10 @@ export const MESSAGE_SIZE_DEFAULT = 500;
 export const THINKING_MESSAGE_SIZE = 3000;
 
 /**
- * Fallback model list when server doesn't provide models.
- * Uses ModelInfo format for consistency with button-based UI.
- */
-export const FALLBACK_MODELS: ModelInfo[] = [
-  { value: 'gpt-5.2-codex', displayName: 'GPT-5.2 Codex', description: 'Latest frontier agentic coding model.' },
-  { value: 'gpt-5.2', displayName: 'GPT-5.2', description: 'Latest frontier model with improvements across knowledge, reasoning and coding.' },
-  { value: 'gpt-5.1-codex-max', displayName: 'GPT-5.1 Codex Max', description: 'Codex-optimized flagship for deep and fast reasoning.' },
-  { value: 'gpt-5.1-codex-mini', displayName: 'GPT-5.1 Codex Mini', description: 'Optimized for codex. Cheaper, faster, but less capable.' },
-];
-
-/**
  * Get model info by value.
  */
-export function getModelInfo(modelValue: string): ModelInfo | undefined {
-  return FALLBACK_MODELS.find(m => m.value === modelValue);
+export function getModelInfo(modelValue: string, models: ModelInfo[] = FALLBACK_MODELS): ModelInfo | undefined {
+  return findModelInfo(models, modelValue) ?? findModelInfo(FALLBACK_MODELS, modelValue);
 }
 
 /**
@@ -84,6 +81,7 @@ export interface CommandResult {
   text: string; // Fallback text
   ephemeral?: boolean; // Whether to send as ephemeral message
   showModelSelection?: boolean; // Flag to trigger model picker with emoji tracking
+  modelOptions?: ModelInfo[]; // Models shown in picker (for follow-up display resolution)
   showModeSelection?: boolean; // Flag to trigger mode picker with emoji tracking
 }
 
@@ -189,7 +187,7 @@ export async function handleClearCommand(
  */
 export async function handleModelCommand(
   context: CommandContext,
-  _codex: CodexClient
+  codex: CodexClient
 ): Promise<CommandResult> {
   const { channelId, threadTs } = context;
 
@@ -199,15 +197,15 @@ export async function handleModelCommand(
     : getSession(channelId);
   const currentModel = session?.model;
 
-  // Use fallback models (button-based UI)
-  // The actual model list would come from SDK if available
-  const models = FALLBACK_MODELS;
+  // Prefer dynamic model list from Codex App-Server, with fallback when unavailable.
+  const models = await getAvailableCodexModels(codex);
 
   // Return flag for slack-bot.ts to handle with emoji tracking
   return {
     blocks: buildModelSelectionBlocks(models, currentModel),
     text: 'Select a model.',
     showModelSelection: true,
+    modelOptions: models,
   };
 }
 
@@ -411,8 +409,8 @@ export async function handleStatusCommand(
   // Fallback to bot's session storage only if Codex session file unavailable
   const lastUsage = tokenUsage ? null : (session?.lastUsage || getSession(channelId)?.lastUsage);
 
-  // Format model like CLI: "gpt-5.2-codex (reasoning xhigh)"
-  const modelName = session?.model || DEFAULT_MODEL;
+  // Format model like CLI: "<model> (reasoning <effort>)"
+  const modelName = session?.model || await resolveDefaultModel(codex);
   const reasoning = session?.reasoningEffort || DEFAULT_REASONING;
   const messageSize = session?.threadCharLimit ?? MESSAGE_SIZE_DEFAULT;
   const messageSizeSuffix = session?.threadCharLimit === undefined ? ' (default)' : '';

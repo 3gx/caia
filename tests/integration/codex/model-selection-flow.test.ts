@@ -12,7 +12,15 @@ import {
   buildModelPickerCancelledBlocks,
   ModelInfo,
 } from '../../../codex/src/blocks.js';
-import { FALLBACK_MODELS, getModelInfo, DEFAULT_MODEL, DEFAULT_REASONING } from '../../../codex/src/commands.js';
+import {
+  FALLBACK_MODELS,
+  getModelInfo,
+  handleModelCommand,
+  DEFAULT_MODEL,
+  DEFAULT_REASONING,
+  type CommandContext,
+} from '../../../codex/src/commands.js';
+import { resolveDefaultModel, resetModelCacheForTests } from '../../../codex/src/model-cache.js';
 import { pendingModelSelections } from '../../../codex/src/slack-bot.js';
 import {
   getThreadSession,
@@ -22,7 +30,7 @@ import {
   saveModelSettings,
   loadSessions,
 } from '../../../codex/src/session-manager.js';
-import type { ReasoningEffort } from '../../../codex/src/codex-client.js';
+import type { ReasoningEffort, CodexClient } from '../../../codex/src/codex-client.js';
 
 // Mock fs for session persistence tests
 vi.mock('fs');
@@ -31,6 +39,71 @@ describe('Model Selection Flow Integration', () => {
   beforeEach(() => {
     // Clear pending selections before each test
     pendingModelSelections.clear();
+    resetModelCacheForTests();
+  });
+
+  describe('Dynamic Model Discovery', () => {
+    const baseContext: CommandContext = {
+      channelId: 'C123',
+      threadTs: '123.456',
+      userId: 'U123',
+      text: '',
+    };
+
+    it('uses app-server model/list results for /model picker', async () => {
+      const codex = {
+        listModelInfos: vi.fn().mockResolvedValue([
+          {
+            id: 'gpt-5.3-codex',
+            model: 'gpt-5.3-codex',
+            displayName: 'GPT-5.3 Codex',
+            description: 'Latest coding model',
+          },
+          {
+            id: 'gpt-5.2-codex',
+            model: 'gpt-5.2-codex',
+            displayName: 'GPT-5.2 Codex',
+            description: 'Fallback coding model',
+          },
+        ]),
+      } as unknown as CodexClient;
+
+      const result = await handleModelCommand(baseContext, codex);
+      expect(result.showModelSelection).toBe(true);
+      expect(result.modelOptions?.map((m) => m.value)).toEqual(['gpt-5.3-codex', 'gpt-5.2-codex']);
+      expect(JSON.stringify(result.blocks)).toContain('gpt-5.3-codex');
+    });
+
+    it('falls back to bundled models when app-server model/list fails', async () => {
+      const codex = {
+        listModelInfos: vi.fn().mockRejectedValue(new Error('model/list unavailable')),
+      } as unknown as CodexClient;
+
+      const result = await handleModelCommand(baseContext, codex);
+      expect(result.showModelSelection).toBe(true);
+      expect(result.modelOptions?.[0].value).toBe(FALLBACK_MODELS[0].value);
+      expect(JSON.stringify(result.blocks)).toContain(FALLBACK_MODELS[0].value);
+    });
+  });
+
+  describe('Default Model Resolution', () => {
+    it('prefers gpt-5.3-codex when available', async () => {
+      const codex = {
+        listModels: vi.fn().mockResolvedValue(['gpt-5.2-codex', 'gpt-5.3-codex']),
+      } as unknown as CodexClient;
+
+      const resolved = await resolveDefaultModel(codex);
+      expect(resolved).toBe('gpt-5.3-codex');
+    });
+
+    it('falls back to gpt-5.2-codex when gpt-5.3-codex is unavailable', async () => {
+      const codex = {
+        listModels: vi.fn().mockResolvedValue(['gpt-5.2-codex', 'gpt-5.1-codex-mini']),
+      } as unknown as CodexClient;
+
+      const resolved = await resolveDefaultModel(codex);
+      expect(resolved).toBe('gpt-5.2-codex');
+    });
   });
 
   describe('Step 1: Model Selection', () => {
