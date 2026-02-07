@@ -71,6 +71,12 @@ export function buildMessageContent(
         type: 'text',
         text: `Image file ${file.index} is available at ${file.localPath}.`,
       });
+    } else {
+      // Explicitly warn so the model doesn't guess a local path.
+      blocks.push({
+        type: 'text',
+        text: `Image file ${file.index} could not be inlined or stored; no usable image data was provided.`,
+      });
     }
   }
 

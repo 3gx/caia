@@ -61,4 +61,25 @@ describe('content-builder', () => {
       .join('\n');
     expect(combinedText).toContain('/tmp/img.png');
   });
+
+  it('warns when image has neither base64 nor local path', () => {
+    const files = [
+      {
+        index: 2,
+        name: 'img.png',
+        mimetype: 'image/png',
+        size: 1024,
+        isText: false,
+        isImage: true,
+        error: null,
+      },
+    ];
+
+    const parts = buildMessageContent('hi', files, []);
+    const combinedText = parts
+      .filter((p: any) => p.type === 'text')
+      .map((p: any) => p.text)
+      .join('\n');
+    expect(combinedText).toContain('could not be inlined or stored');
+  });
 });

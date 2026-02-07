@@ -1749,7 +1749,7 @@ async function handleUserMessage(params: {
   let processedFiles = { files: [], warnings: [] } as { files: any[]; warnings: string[] };
   if (params.files && params.files.length > 0) {
     const token = process.env.SLACK_BOT_TOKEN || '';
-    processedFiles = await processSlackFiles(params.files, token, { writeTempFile });
+    processedFiles = await processSlackFiles(params.files, token, { writeTempFile, inlineImages: 'always' });
   }
 
   const parts = buildMessageContent(userText, processedFiles.files, processedFiles.warnings);

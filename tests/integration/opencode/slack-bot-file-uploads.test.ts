@@ -51,7 +51,7 @@ describe('slack-bot-file-uploads', () => {
     expect(processSlackFiles).toHaveBeenCalledWith(
       [sampleFile],
       'xoxb-test',
-      expect.objectContaining({ writeTempFile: expect.any(Function) })
+      expect.objectContaining({ writeTempFile: expect.any(Function), inlineImages: 'always' })
     );
     expect(buildMessageContent).toHaveBeenCalledWith(
       'summarize',
