@@ -6,16 +6,16 @@
 import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import { OpencodeClient } from '@opencode-ai/sdk';
 import { createOpencodeWithCleanup, OpencodeTestServer, findFreePort, TEST_SESSION_PREFIX } from './test-helpers.js';
+import { MINIMAL_PNG_DATA_URL, findImageCapableModel, promptAsyncAndWaitForIdle, type ModelRef } from './image-test-helpers.js';
 
 const SKIP_LIVE = process.env.SKIP_SDK_TESTS === 'true';
-
-const MINIMAL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
 
 describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
   let server: { close(): void; url: string };
   let testPort: number;
+  let imageModel: ModelRef | null = null;
 
   beforeAll(async () => {
     const buffer = inject('portCounter') as SharedArrayBuffer;
@@ -26,6 +26,7 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
     opencode = await createOpencodeWithCleanup(testPort);
     client = opencode.client;
     server = opencode.server;
+    imageModel = await findImageCapableModel(client);
   });
 
   afterAll(async () => {
@@ -46,54 +47,70 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
     expect(result.data).toBeDefined();
   });
 
-  // SKIP: Image handling times out - data URI format may not be supported
-  it.skip('CANARY: image content type works', async () => {
+  it('CANARY: image content type works', async () => {
+    if (!imageModel) {
+      console.log('[SKIP] No image-capable model found in config.providers(); skipping image content test.');
+      return;
+    }
+
     const session = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 
-    const result = await client.session.prompt({
-      path: { id: session.data!.id },
-      body: {
-        parts: [
-          { type: 'text', text: 'Describe this image:' },
-          {
-            type: 'file',
-            mime: 'image/png',
-            filename: 'test.png',
-            url: `data:image/png;base64,${MINIMAL_PNG_BASE64}`,
-          },
-        ],
-      },
+    await promptAsyncAndWaitForIdle(client, session.data!.id, {
+      model: imageModel,
+      parts: [
+        { type: 'text', text: 'Describe this image:' },
+        {
+          type: 'file',
+          mime: 'image/png',
+          filename: 'test.png',
+          url: MINIMAL_PNG_DATA_URL,
+        },
+      ],
     });
 
-    expect(result.data).toBeDefined();
+    const messages = await client.session.messages({ path: { id: session.data!.id } });
+    const userMessage = messages.data?.find((m) => m.info.role === 'user');
+    const filePart = userMessage?.parts?.find((p: any) => p?.type === 'file');
+
+    expect(filePart).toBeDefined();
+    expect((filePart as any).mime).toBe('image/png');
+    expect((filePart as any).url?.startsWith('data:image/png;base64,')).toBe(true);
   });
 
-  // SKIP: Image handling times out - data URI format may not be supported
-  it.skip('CANARY: mixed content (text + image) works', async () => {
+  it('CANARY: mixed content (text + image) works', async () => {
+    if (!imageModel) {
+      console.log('[SKIP] No image-capable model found in config.providers(); skipping mixed image content test.');
+      return;
+    }
+
     const session = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
     opencode.trackSession(session.data!.id);
 
-    const result = await client.session.prompt({
-      path: { id: session.data!.id },
-      body: {
-        parts: [
-          { type: 'text', text: 'What do you see?' },
-          {
-            type: 'file',
-            mime: 'image/png',
-            filename: 'test.png',
-            url: `data:image/png;base64,${MINIMAL_PNG_BASE64}`,
-          },
-          { type: 'text', text: 'Be brief.' },
-        ],
-      },
+    await promptAsyncAndWaitForIdle(client, session.data!.id, {
+      model: imageModel,
+      parts: [
+        { type: 'text', text: 'What do you see?' },
+        {
+          type: 'file',
+          mime: 'image/png',
+          filename: 'test.png',
+          url: MINIMAL_PNG_DATA_URL,
+        },
+        { type: 'text', text: 'Be brief.' },
+      ],
     });
 
-    expect(result.data).toBeDefined();
+    const messages = await client.session.messages({ path: { id: session.data!.id } });
+    const userMessage = messages.data?.find((m) => m.info.role === 'user');
+    const fileParts = userMessage?.parts?.filter((p: any) => p?.type === 'file') ?? [];
+    const textParts = userMessage?.parts?.filter((p: any) => p?.type === 'text') ?? [];
+
+    expect(fileParts.length).toBe(1);
+    expect(textParts.length).toBeGreaterThanOrEqual(2);
   });
 });
