@@ -1,12 +1,12 @@
 # Slack Bot Setup Guide
 
-This guide walks you through creating and configuring a Slack app for the Claude Code Slack Bot from scratch.
+This guide walks you through creating and configuring a Slack app for C.A.I.A. (Central Artificial Intelligence Agency) from scratch. The same Slack app configuration works for all providers (Claude, Codex, OpenCode).
 
 ## Prerequisites
 
 - A Slack workspace where you have admin permissions (or permission to install apps)
 - Node.js 18+ installed
-- The Claude Code Slack Bot code cloned to your machine
+- The C.A.I.A. repository cloned to your machine
 - Native dependencies installed (see [Install Native Dependencies](#install-native-dependencies))
 
 ## Table of Contents
@@ -93,7 +93,7 @@ If no output, all dependencies are installed.
 2. Click **Create New App**
 3. Select **From scratch**
 4. Enter your app details:
-   - **App Name:** `Claude Code Bot` (or your preferred name)
+   - **App Name:** `CAIA Bot` (or `Claude Bot`, `Codex Bot`, `OpenCode Bot` for provider-specific)
    - **Pick a workspace:** Select your Slack workspace
 5. Click **Create App**
 
@@ -241,13 +241,20 @@ If you didn't save the App-Level Token earlier:
 
 ## Step 8: Configure Environment
 
-1. In your project directory, create a `.env` file:
+1. In your project directory, create a `.env` file for your chosen provider:
 
 ```bash
-cp .env.example .env
+# For Claude provider
+cp claude/.env.example claude/.env
+
+# For Codex provider
+cp codex/.env.example codex/.env
+
+# For OpenCode provider
+cp opencode/.env.example opencode/.env
 ```
 
-2. Edit `.env` and add your tokens:
+2. Edit the `.env` file and add your tokens:
 
 ```bash
 # Required: Bot User OAuth Token (from OAuth & Permissions page)
@@ -266,7 +273,7 @@ SLACK_SIGNING_SECRET=your-signing-secret-here
 3. Click **Show** next to **Signing Secret**
 4. Click **Copy**
 
-**Note:** The bot uses `dotenv` to load environment variables from `.env` at startup.
+**Note:** The bot uses `dotenv` to load environment variables from `.env` at startup. Each provider has its own `.env` file in its directory.
 
 **Security:** Never commit `.env` to version control. It's already in `.gitignore`.
 
@@ -279,19 +286,16 @@ SLACK_SIGNING_SECRET=your-signing-secret-here
 make setup
 ```
 
-2. Build the project:
+2. Build and start your chosen provider:
 ```bash
-make build
-```
+# Claude provider
+make claude-start    # or: make claude-dev (for auto-reload)
 
-3. Start the bot:
-```bash
-make start
-```
+# Codex provider
+make codex-start     # or: make codex-dev
 
-Or for development with auto-reload:
-```bash
-make dev
+# OpenCode provider
+make opencode-start  # or: make opencode-dev
 ```
 
 You should see output like:
@@ -309,12 +313,12 @@ The bot needs to be invited to channels before it can see messages there.
 ### Option A: Invite via Slack UI
 
 1. Open the channel where you want to use the bot
-2. Type `/invite @Claude Code Bot` (or your bot's name)
+2. Type `/invite @YourBotName` (use the name you configured)
 3. Press Enter
 
 ### Option B: Mention to Auto-Join
 
-1. In any public channel, type `@Claude Code Bot hello`
+1. In any public channel, type `@YourBotName hello`
 2. The bot will be invited automatically (if `chat:write.public` scope is enabled)
 
 ---
@@ -324,7 +328,7 @@ The bot needs to be invited to channels before it can see messages there.
 Test that everything is working:
 
 1. Go to a channel where the bot is present
-2. Type: `@Claude Code Bot /status`
+2. Type: `@YourBotName /status`
 3. You should see a response with session information
 
 If you see an error or no response, check:
@@ -402,12 +406,12 @@ For quick setup, you can use an app manifest. Create a new app and paste this ma
 
 ```yaml
 display_information:
-  name: Claude Code Bot
-  description: Claude Code assistant for Slack
+  name: CAIA Bot
+  description: AI coding assistant for Slack (Claude, Codex, OpenCode)
   background_color: "#4a154b"
 features:
   bot_user:
-    display_name: Claude Code Bot
+    display_name: CAIA Bot
     always_online: true
 oauth_config:
   scopes:
@@ -457,6 +461,6 @@ To use the manifest:
 
 ## Next Steps
 
-- Read [CLAUDE.md](./CLAUDE.md) for development guide
+- Read [README.md](./README.md) for usage instructions and commands
 - Read [ARCHITECTURE.md](./ARCHITECTURE.md) for technical details
-- Read [README.md](./README.md) for usage instructions
+- Read [CLAUDE.md](./CLAUDE.md) for development guide
