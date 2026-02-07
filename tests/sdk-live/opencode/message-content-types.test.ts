@@ -15,7 +15,7 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
   let client: OpencodeClient;
   let server: { close(): void; url: string };
   let testPort: number;
-  let imageModel: ModelRef | null = null;
+  let imageModel: ModelRef;
 
   beforeAll(async () => {
     const buffer = inject('portCounter') as SharedArrayBuffer;
@@ -48,11 +48,6 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
   });
 
   it('CANARY: image content type works', async () => {
-    if (!imageModel) {
-      console.log('[SKIP] No image-capable model found in config.providers(); skipping image content test.');
-      return;
-    }
-
     const session = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });
@@ -81,11 +76,6 @@ describe.skipIf(SKIP_LIVE)('Content Types', { timeout: 120000 }, () => {
   });
 
   it('CANARY: mixed content (text + image) works', async () => {
-    if (!imageModel) {
-      console.log('[SKIP] No image-capable model found in config.providers(); skipping mixed image content test.');
-      return;
-    }
-
     const session = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Test Session` },
     });

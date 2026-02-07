@@ -4,7 +4,8 @@ export const MINIMAL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
 
 export const MINIMAL_PNG_DATA_URL = `data:image/png;base64,${MINIMAL_PNG_BASE64}`;
-export const DEFAULT_IMAGE_MODEL = 'moonshotai:kimi-k2.5';
+export const PRIMARY_IMAGE_MODEL = 'opencode:gpt-5-nano';
+export const FALLBACK_IMAGE_MODEL = 'opencode:kimi-k2.5-free';
 export const IMAGE_MODEL_OVERRIDE_ENV = 'VITEST_OPENCODE_IMAGE_MODEL';
 
 export interface ModelRef {
@@ -34,15 +35,7 @@ function modelExists(providers: any[], modelRef: ModelRef): boolean {
   return false;
 }
 
-function modelSupportsImageInput(model: any): boolean {
-  if (model?.capabilities?.input?.image === true) return true;
-  const modalities = model?.modalities?.input;
-  if (Array.isArray(modalities) && modalities.includes('image')) return true;
-  if (model?.attachment === true) return true;
-  return model?.capabilities?.attachment === true;
-}
-
-export async function findImageCapableModel(client: OpencodeClient): Promise<ModelRef | null> {
+export async function findImageCapableModel(client: OpencodeClient): Promise<ModelRef> {
   const providersResult = await client.config.providers();
   const providers = providersResult.data?.providers ?? [];
 
@@ -58,24 +51,21 @@ export async function findImageCapableModel(client: OpencodeClient): Promise<Mod
     }
   }
 
-  const defaultModel = parseModelRef(DEFAULT_IMAGE_MODEL);
-  if (defaultModel && modelExists(providers, defaultModel)) {
-    return defaultModel;
+  const primary = parseModelRef(PRIMARY_IMAGE_MODEL);
+  if (primary && modelExists(providers, primary)) {
+    return primary;
   }
 
-  for (const provider of providers) {
-    const providerID = provider?.id;
-    const models = provider?.models ?? {};
-    for (const [modelKey, model] of Object.entries(models)) {
-      const modelID = (model as any)?.id || modelKey;
-      if (!providerID || !modelID) continue;
-      if (modelSupportsImageInput(model)) {
-        return { providerID, modelID };
-      }
-    }
+  const fallback = parseModelRef(FALLBACK_IMAGE_MODEL);
+  if (fallback && modelExists(providers, fallback)) {
+    return fallback;
   }
 
-  return null;
+  throw new Error(
+    `No image-capable model found. Neither ${PRIMARY_IMAGE_MODEL} nor ${FALLBACK_IMAGE_MODEL} are available.\n` +
+    `Set ${IMAGE_MODEL_OVERRIDE_ENV} to an image-capable model.\n` +
+    `Example: ${IMAGE_MODEL_OVERRIDE_ENV}=moonshotai:kimi-k2.5`
+  );
 }
 
 export async function promptAsyncAndWaitForIdle(

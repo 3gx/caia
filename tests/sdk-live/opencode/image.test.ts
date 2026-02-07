@@ -14,7 +14,7 @@ describe.skipIf(SKIP_LIVE)('Image Support', { timeout: 120000 }, () => {
   let opencode: OpencodeTestServer;
   let client: OpencodeClient;
   let testPort: number;
-  let imageModel: ModelRef | null = null;
+  let imageModel: ModelRef;
 
   beforeAll(async () => {
     const buffer = inject('portCounter') as SharedArrayBuffer;
@@ -32,11 +32,6 @@ describe.skipIf(SKIP_LIVE)('Image Support', { timeout: 120000 }, () => {
   });
 
   it('CANARY: file content block accepted', async () => {
-    if (!imageModel) {
-      console.log('[SKIP] No image-capable model found in config.providers(); skipping image file content test.');
-      return;
-    }
-
     const session = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Image Test` },
     });
@@ -69,11 +64,6 @@ describe.skipIf(SKIP_LIVE)('Image Support', { timeout: 120000 }, () => {
   });
 
   it('CANARY: text + file in same resumed session', async () => {
-    if (!imageModel) {
-      console.log('[SKIP] No image-capable model found in config.providers(); skipping resumed image test.');
-      return;
-    }
-
     const session = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Image Resume Test` },
     });
@@ -106,11 +96,6 @@ describe.skipIf(SKIP_LIVE)('Image Support', { timeout: 120000 }, () => {
   });
 
   it('CANARY: image prompt works in forked session', async () => {
-    if (!imageModel) {
-      console.log('[SKIP] No image-capable model found in config.providers(); skipping forked image test.');
-      return;
-    }
-
     const parent = await client.session.create({
       body: { title: `${TEST_SESSION_PREFIX}Image Fork Parent` },
     });
