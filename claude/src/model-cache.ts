@@ -68,9 +68,9 @@ export async function refreshModelCache(): Promise<ModelInfo[]> {
     if (cachedModels.length === 0) {
       // Fallback to known models if cache is empty
       cachedModels = [
-        { value: 'claude-sonnet-4-5-20250929', displayName: 'Claude Sonnet 4.5', description: 'Best balance of speed and capability' },
-        { value: 'claude-haiku-4-5-20251001', displayName: 'Claude Haiku 4.5', description: 'Fastest model' },
-        { value: 'claude-opus-4-5-20251101', displayName: 'Claude Opus 4.5', description: 'Most capable model' },
+        { value: 'default', displayName: 'Default (recommended)', description: 'Opus 4.6 · Most capable for complex work' },
+        { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 4.5 · Best for everyday tasks' },
+        { value: 'haiku', displayName: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers' },
       ];
       console.log('Using fallback model list');
     }

@@ -167,9 +167,9 @@ describe('model-cache', () => {
 
       // Should return fallback models
       expect(result).toHaveLength(3);
-      expect(result[0].value).toBe('claude-sonnet-4-5-20250929');
-      expect(result[1].value).toBe('claude-haiku-4-5-20251001');
-      expect(result[2].value).toBe('claude-opus-4-5-20251101');
+      expect(result[0].value).toBe('default');
+      expect(result[1].value).toBe('sonnet');
+      expect(result[2].value).toBe('haiku');
     });
 
     it('refreshModelCache keeps existing cache when SDK fails', async () => {
