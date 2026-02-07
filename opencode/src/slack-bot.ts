@@ -1500,7 +1500,18 @@ async function handleUserMessage(params: {
       if (commandResult.sessionUpdate.pathConfigured) {
         commandResult.sessionUpdate.configuredBy = userId;
       }
-      if (sessionThreadTs) {
+      const isPathUpdate = 'workingDir' in commandResult.sessionUpdate
+        || 'pathConfigured' in commandResult.sessionUpdate
+        || 'configuredPath' in commandResult.sessionUpdate
+        || 'configuredAt' in commandResult.sessionUpdate
+        || 'configuredBy' in commandResult.sessionUpdate;
+
+      if (isPathUpdate) {
+        await saveSession(channelId, commandResult.sessionUpdate as Partial<Session>);
+        if (sessionThreadTs) {
+          await saveThreadSession(channelId, sessionThreadTs, commandResult.sessionUpdate as Partial<ThreadSession>);
+        }
+      } else if (sessionThreadTs) {
         await saveThreadSession(channelId, sessionThreadTs, commandResult.sessionUpdate as Partial<ThreadSession>);
       } else {
         await saveSession(channelId, commandResult.sessionUpdate as Partial<Session>);
@@ -1645,6 +1656,17 @@ async function handleUserMessage(params: {
       return;
     }
 
+    return;
+  }
+
+  if (!session.pathConfigured) {
+    await withSlackRetry(() =>
+      client.chat.postMessage({
+        channel: channelId,
+        thread_ts: postingThreadTs,
+        text: 'Please set working directory first using /ls, /cd, and /set-current-path.',
+      })
+    );
     return;
   }
 

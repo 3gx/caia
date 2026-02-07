@@ -155,6 +155,14 @@ export function parseCommand(text: string, session: Session, threadTs?: string):
       return handleThinking(argString, session);
     case 'path':
       return handlePath(argString, session);
+    case 'cwd':
+      return handleCwd(argString, session);
+    case 'ls':
+      return handleLs(argString, session);
+    case 'cd':
+      return handleCd(argString, session);
+    case 'set-current-path':
+      return handleSetCurrentPath(session);
     case 'show-plan':
       return handleShowPlan(session);
     case 'watch':
@@ -366,6 +374,202 @@ function handlePath(pathArg: string, session: Session): CommandResult {
   return {
     handled: true,
     response: `Path locked to \`${normalized}\`.`,
+    sessionUpdate: {
+      workingDir: normalized,
+      pathConfigured: true,
+      configuredPath: normalized,
+      configuredAt: Date.now(),
+    },
+  };
+}
+
+function handleCwd(pathArg: string, session: Session): CommandResult {
+  const trimmed = pathArg.trim();
+  if (!trimmed) {
+    return {
+      handled: true,
+      response: `Current working directory: \`${session.workingDir}\``,
+    };
+  }
+
+  if (session.pathConfigured) {
+    if (session.configuredPath === trimmed) {
+      return {
+        handled: true,
+        response: `Working directory already locked to \`${session.configuredPath}\`.`,
+      };
+    }
+    return {
+      handled: true,
+      response: `❌ Working directory is locked to \`${session.configuredPath}\`. It cannot be changed.`,
+      isError: true,
+    };
+  }
+
+  return handlePath(trimmed, session);
+}
+
+function handleLs(pathArg: string, session: Session): CommandResult {
+  const currentWorkingDir = session.workingDir || process.cwd();
+  const pathConfigured = session.pathConfigured ?? false;
+  const configuredPath = session.configuredPath;
+  const trimmed = pathArg.trim();
+
+  let targetDir: string;
+  if (!trimmed) {
+    targetDir = currentWorkingDir;
+  } else if (trimmed.startsWith('/')) {
+    targetDir = trimmed;
+  } else {
+    targetDir = path.resolve(currentWorkingDir, trimmed);
+  }
+
+  if (!fs.existsSync(targetDir)) {
+    return {
+      handled: true,
+      response: `❌ Directory does not exist: \`${targetDir}\``,
+      isError: true,
+    };
+  }
+
+  try {
+    const stats = fs.statSync(targetDir);
+    if (!stats.isDirectory()) {
+      return {
+        handled: true,
+        response: `❌ Not a directory: \`${targetDir}\``,
+        isError: true,
+      };
+    }
+  } catch (error) {
+    return {
+      handled: true,
+      response: `❌ Cannot access: \`${targetDir}\`\n\n${error instanceof Error ? error.message : String(error)}`,
+      isError: true,
+    };
+  }
+
+  try {
+    const files = fs.readdirSync(targetDir);
+    const totalFiles = files.length;
+    const fileList = files.map((entry) => {
+      try {
+        const stat = fs.statSync(path.join(targetDir, entry));
+        return stat.isDirectory() ? `${entry}/` : entry;
+      } catch {
+        return entry;
+      }
+    }).join('\n');
+
+    const hint = pathConfigured
+      ? `:lock: Current locked directory: \`${configuredPath}\``
+      : `To navigate: \`/cd <path>\`\nTo lock directory: \`/set-current-path\``;
+
+    return {
+      handled: true,
+      response: `:file_folder: Files in \`${targetDir}\` (${totalFiles} total):\n\`\`\`\n${fileList || '(empty)'}\n\`\`\`\n\n${hint}`,
+    };
+  } catch (error) {
+    return {
+      handled: true,
+      response: `❌ Cannot read directory: ${error instanceof Error ? error.message : String(error)}`,
+      isError: true,
+    };
+  }
+}
+
+function handleCd(pathArg: string, session: Session): CommandResult {
+  const currentWorkingDir = session.workingDir || process.cwd();
+  const pathConfigured = session.pathConfigured ?? false;
+  const configuredPath = session.configuredPath;
+  const trimmed = pathArg.trim();
+
+  if (pathConfigured) {
+    return {
+      handled: true,
+      response: `❌ /cd is disabled after path locked.\n\nWorking directory is locked to: \`${configuredPath}\`\n\nUse \`/ls [path]\` to explore other directories.`,
+      isError: true,
+    };
+  }
+
+  if (!trimmed) {
+    return {
+      handled: true,
+      response: `Current directory: \`${currentWorkingDir}\`\n\nUsage: \`/cd <path>\` (relative or absolute)\n\nTo lock this directory: \`/set-current-path\``,
+    };
+  }
+
+  let targetPath: string;
+  if (trimmed.startsWith('/')) {
+    targetPath = trimmed;
+  } else {
+    targetPath = path.resolve(currentWorkingDir, trimmed);
+  }
+
+  if (!fs.existsSync(targetPath)) {
+    return {
+      handled: true,
+      response: `❌ Directory does not exist: \`${targetPath}\``,
+      isError: true,
+    };
+  }
+
+  const stats = fs.statSync(targetPath);
+  if (!stats.isDirectory()) {
+    return {
+      handled: true,
+      response: `❌ Not a directory: \`${targetPath}\``,
+      isError: true,
+    };
+  }
+
+  try {
+    fs.accessSync(targetPath, fs.constants.R_OK | fs.constants.X_OK);
+  } catch {
+    return {
+      handled: true,
+      response: `❌ Cannot access directory: \`${targetPath}\`\n\nPermission denied or directory not readable.`,
+      isError: true,
+    };
+  }
+
+  const normalized = fs.realpathSync(targetPath);
+  return {
+    handled: true,
+    response: `📂 Changed to \`${normalized}\`\n\nUse \`/ls\` to see files, or \`/set-current-path\` to lock this directory.`,
+    sessionUpdate: {
+      workingDir: normalized,
+    },
+  };
+}
+
+function handleSetCurrentPath(session: Session): CommandResult {
+  const currentWorkingDir = session.workingDir || process.cwd();
+  const pathConfigured = session.pathConfigured ?? false;
+  const configuredPath = session.configuredPath;
+
+  if (pathConfigured) {
+    return {
+      handled: true,
+      response: `❌ Working directory already locked: \`${configuredPath}\`\n\nThis cannot be changed. If you need a different directory, use a different channel.`,
+      isError: true,
+    };
+  }
+
+  let normalized: string;
+  try {
+    normalized = fs.realpathSync(currentWorkingDir);
+  } catch (error) {
+    return {
+      handled: true,
+      response: `❌ Cannot resolve path: \`${currentWorkingDir}\`\n\n${error instanceof Error ? error.message : String(error)}`,
+      isError: true,
+    };
+  }
+
+  return {
+    handled: true,
+    response: `✅ Working directory locked to \`${normalized}\`\n\n⚠️ This cannot be changed. \`/cd\` is now disabled. All OpenCode operations will use this directory.`,
     sessionUpdate: {
       workingDir: normalized,
       pathConfigured: true,
