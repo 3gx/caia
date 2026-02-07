@@ -21,6 +21,12 @@ help:
 	@echo "  claude-sdk-test    Run Claude live SDK tests"
 	@echo "  codex-sdk-test     Run Codex live SDK tests"
 	@echo "  opencode-sdk-test  Run OpenCode live SDK tests"
+	@echo ""
+	@echo "Run a Provider:"
+	@echo "  cd claude/   && make dev     # Dev mode with auto-reload"
+	@echo "  cd claude/   && make start   # Run built service"
+	@echo "  cd codex/    && make dev"
+	@echo "  cd opencode/ && make dev"
 
 # =============================================================================
 # Setup Targets
