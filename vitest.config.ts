@@ -4,10 +4,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    testTimeout: 30000,
-    hookTimeout: 30000,
+    testTimeout: 10000,
+    hookTimeout: 10000,
+    teardownTimeout: 1000,
     setupFiles: ['tests/setup.ts'],
     include: ['tests/**/*.test.ts'],
-    exclude: ['tests/sdk-live/**']
+    exclude: ['tests/sdk-live/**'],
   }
 });

@@ -154,6 +154,7 @@ async function startFallbackStreaming(
   let accumulatedText = '';
   let lastUpdateTime = 0;
   let updatePending = false;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
 
   console.log(`Started fallback stream: ${messageTs}`);
 
@@ -162,6 +163,7 @@ async function startFallbackStreaming(
     const now = Date.now();
     if (now - lastUpdateTime >= UPDATE_INTERVAL_MS && accumulatedText) {
       updatePending = false;
+      pendingTimer = null;
       lastUpdateTime = now;
       try {
         await client.chat.update({
@@ -176,7 +178,7 @@ async function startFallbackStreaming(
       // Schedule an update for later
       updatePending = true;
       const delay = UPDATE_INTERVAL_MS - (now - lastUpdateTime);
-      setTimeout(() => throttledUpdate(), delay);
+      pendingTimer = setTimeout(() => throttledUpdate(), delay);
     }
   }
 
@@ -189,6 +191,8 @@ async function startFallbackStreaming(
     },
 
     async finish() {
+      // Clear any pending throttle timer to prevent dangling setTimeout
+      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
       // Final update with complete text (converted to Slack format)
       if (accumulatedText) {
         try {
@@ -205,6 +209,8 @@ async function startFallbackStreaming(
     },
 
     async error(message: string) {
+      // Clear any pending throttle timer to prevent dangling setTimeout
+      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
       try {
         await client.chat.update({
           channel,

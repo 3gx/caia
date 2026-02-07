@@ -4,7 +4,7 @@ import { createMockSlackClient } from '../../__fixtures__/claude/slack-messages.
 import { createMockClaudeStream, mockSystemInit, mockAssistantText, mockAssistantContentBlocks, mockResult } from '../../__fixtures__/claude/claude-messages.js';
 
 // Mock markdownToPng to avoid timeout in tests
-vi.mock('../../../slack/src/markdown-png.js', () => ({
+vi.mock('../../../slack/dist/markdown-png.js', () => ({
   markdownToPng: vi.fn().mockResolvedValue(null),
 }));
 
