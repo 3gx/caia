@@ -150,6 +150,33 @@ export function getAppMentionRejection(
   return null;
 }
 
+interface SandboxThreadCodexClient {
+  getSandboxMode(): SandboxMode | undefined;
+  restartWithSandbox(mode: SandboxMode): Promise<void>;
+  resumeThread(threadId: string): Promise<unknown>;
+}
+
+/**
+ * Ensure runtime sandbox matches session config before attempting to use an existing thread.
+ * Restarting app-server after resume can invalidate the resumed thread in the new process.
+ */
+export async function reconcileSandboxAndMaybeResumeThread(
+  codex: SandboxThreadCodexClient,
+  configuredSandbox: SandboxMode,
+  threadId?: string
+): Promise<SandboxMode> {
+  const runtimeSandbox = codex.getSandboxMode() ?? 'danger-full-access';
+  if (runtimeSandbox !== configuredSandbox) {
+    await codex.restartWithSandbox(configuredSandbox);
+  }
+
+  if (threadId) {
+    await codex.resumeThread(threadId);
+  }
+
+  return codex.getSandboxMode() ?? configuredSandbox;
+}
+
 /**
  * Start the Slack bot.
  */
@@ -1337,8 +1364,12 @@ async function handleUserMessage(
     return;
   }
 
+  const configuredSandbox = getEffectiveSandboxMode(channelId, postingThreadTs);
+
   // Start or resume thread
+  let effectiveSandbox: SandboxMode;
   if (!threadId) {
+    effectiveSandbox = await reconcileSandboxAndMaybeResumeThread(runtime.codex, configuredSandbox);
     console.log(`[message] No existing Codex thread, will create new one`);
     // Check if this is a Slack thread that needs forking (only for existing threads, not new anchors)
     if (threadTs) {
@@ -1371,7 +1402,11 @@ async function handleUserMessage(
   } else {
     // Resume existing thread
     console.log(`[message] Resuming existing Codex thread: ${threadId}`);
-    await runtime.codex.resumeThread(threadId);
+    effectiveSandbox = await reconcileSandboxAndMaybeResumeThread(
+      runtime.codex,
+      configuredSandbox,
+      threadId
+    );
     // Ensure this thread anchor also has the threadId saved
     await saveThreadSession(channelId, postingThreadTs, { threadId });
   }
@@ -1380,12 +1415,6 @@ async function handleUserMessage(
   const defaultModel = await resolveDefaultModel(runtime.codex);
   const effectiveModel = session?.model || defaultModel;
   const effectiveReasoning = session?.reasoningEffort || DEFAULT_REASONING;
-  const configuredSandbox = getEffectiveSandboxMode(channelId, postingThreadTs);
-  const runtimeSandbox = runtime.codex.getSandboxMode() ?? 'danger-full-access';
-  if (runtimeSandbox !== configuredSandbox) {
-    await runtime.codex.restartWithSandbox(configuredSandbox);
-  }
-  const effectiveSandbox = runtime.codex.getSandboxMode() ?? configuredSandbox;
 
   // Post initial "processing" message IN THE THREAD using activity format
   const initialResult = await app.client.chat.postMessage({
