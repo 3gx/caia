@@ -68,7 +68,7 @@ describe('response segment posting linearity', () => {
     expect(
       threadPosts.some(
         (payload: any) =>
-          String(payload?.text || '').includes('*Generating*') &&
+          String(payload?.text || '').includes('*Response*') &&
           String(payload?.text || '').includes('First streamed response segment')
       )
     ).toBe(true);
@@ -78,8 +78,9 @@ describe('response segment posting linearity', () => {
     const latestUpdate = updateCalls[updateCalls.length - 1]?.[0];
     const activityText = latestUpdate?.blocks?.[0]?.text?.text || '';
 
-    expect(activityText).not.toContain(':speech_balloon:');
-    expect(activityText).not.toContain('|Response>');
+    // Streaming response line is shown during generation.
+    expect(activityText).toContain(':speech_balloon:');
+    expect(activityText).toContain('Response');
 
     codex.emit('turn:completed', { threadId: context.threadId, turnId: context.turnId, status: 'completed' });
     await tick(30);
@@ -118,12 +119,12 @@ describe('response segment posting linearity', () => {
     const postedTexts = (slack.chat.postMessage as any).mock.calls.map((call: any[]) => String(call[0]?.text || ''));
 
     const firstGeneratingIndex = postedTexts.findIndex(
-      (text: string) => text.includes('*Generating*') && text.includes('First response batch')
+      (text: string) => text.includes('*Response*') && text.includes('First response batch')
     );
     const toolStartIndex = postedTexts.findIndex((text: string) => text.includes('*FileChange*'));
     const secondGeneratingIndex = postedTexts.findIndex(
       (text: string, index: number) =>
-        index > toolStartIndex && text.includes('*Generating*') && text.includes('Second response batch')
+        index > toolStartIndex && text.includes('*Response*') && text.includes('Second response batch')
     );
 
     expect(firstGeneratingIndex).toBeGreaterThanOrEqual(0);

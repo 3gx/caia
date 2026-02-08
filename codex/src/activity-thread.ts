@@ -380,8 +380,12 @@ export class ActivityThreadManager {
         return `${emoji} *${label}*${inputSummary}${resultSummary}${outputHint}${duration}${errorFlag}`;
       }
       case 'generating': {
-        const label = linkifyActivityLabel('Generating', link);
-        return `:memo: *${label}*...${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
+        const label = linkifyActivityLabel('Response', link);
+        const header = `:speech_balloon: *${label}*${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
+        if (!entry.message) {
+          return header;
+        }
+        return `${header}\n${entry.message}`;
       }
       case 'error': {
         const label = linkifyActivityLabel('Error', link);

@@ -381,7 +381,8 @@ describe('buildActivityLogText', () => {
 
     const text = buildActivityLogText(entries);
 
-    expect(text).toContain(':memo:'); // Generating uses memo emoji
+    expect(text).toContain(':speech_balloon:');
+    expect(text).toContain('Response');
     expect(text).toContain('500');
   });
 
@@ -498,7 +499,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':memo: *Generating*');
+      expect(text).toContain(':speech_balloon: *Response*');
     });
 
     it('formats generating entry with bold linked label', () => {
@@ -513,7 +514,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':memo: *<https://slack.com/archives/C123/p123|Generating>*');
+      expect(text).toContain(':speech_balloon: *<https://slack.com/archives/C123/p123|Response>*');
     });
 
     it('formats error entry with bold label', () => {

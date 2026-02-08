@@ -36,6 +36,8 @@ import {
   buildAttachResponseFileButton,
   formatThreadActivityEntry,
   formatThreadResponseMessage,
+  markdownToSlack,
+  truncateWithClosedFormatting,
 } from './blocks.js';
 import {
   markProcessingStart,
@@ -63,13 +65,13 @@ import {
 import { buildActivityEntryActionParams } from './blocks.js';
 import { withSlackRetry } from '../../slack/dist/retry.js';
 import { sendDmNotification } from './dm-notifications.js';
-import { THINKING_MESSAGE_SIZE } from './commands.js';
+import { THINKING_MESSAGE_SIZE, MESSAGE_SIZE_DEFAULT } from './commands.js';
 
 // Constants matching CCSLACK architecture
 const MAX_LIVE_ENTRIES = 300; // Threshold for rolling window
 const ROLLING_WINDOW_SIZE = 20; // Show last N entries when exceeded
 const ACTIVITY_LOG_MAX_CHARS = 1000; // Max chars for activity display
-const RESPONSE_THREAD_PREVIEW_MAX_CHARS = 300; // Inline response preview in thread entries
+const RESPONSE_THREAD_PREVIEW_MAX_CHARS = MESSAGE_SIZE_DEFAULT; // Keep streamed response preview aligned with response limit
 const STATUS_SPINNER_FRAMES = ['\u25D0', '\u25D3', '\u25D1', '\u25D2'];
 
 // Extract tail with formatting preserved (ported from ccslack)
@@ -133,11 +135,19 @@ function buildThinkingDisplay(content: string, maxChars: number): { display: str
 }
 
 function buildResponsePreview(content: string): string {
-  const cleaned = content.replace(/\s+/g, ' ').trim();
-  if (cleaned.length <= RESPONSE_THREAD_PREVIEW_MAX_CHARS) {
-    return `> ${cleaned}`;
+  const normalized = content.trim();
+  if (!normalized) {
+    return '';
   }
-  return `> ${cleaned.slice(0, RESPONSE_THREAD_PREVIEW_MAX_CHARS)}...`;
+
+  // Match final response semantics: keep Slack markdown formatting and close open markers when truncating.
+  const slackFormatted = markdownToSlack(normalized);
+  if (slackFormatted.length <= RESPONSE_THREAD_PREVIEW_MAX_CHARS) {
+    return slackFormatted;
+  }
+
+  const truncated = truncateWithClosedFormatting(slackFormatted, RESPONSE_THREAD_PREVIEW_MAX_CHARS);
+  return `${truncated}\n\n_Full response is posted on completion._`;
 }
 
 // Item types that should NOT be displayed as tool activity

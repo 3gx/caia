@@ -98,15 +98,18 @@ describe('Response Thread Posting', () => {
     const payloads = (slack.chat.postMessage as any).mock.calls.map((call: any[]) => call[0]);
     const postedTexts = payloads.map((payload: any) => String(payload?.text || ''));
 
-    const generatingIndex = postedTexts.findIndex(
-      (text: string) => text.includes('*Generating*') && text.includes('Segment text from streaming')
-    );
-    const responseIndex = postedTexts.findIndex(
+    const streamingResponseIndex = postedTexts.findIndex(
       (text: string) => text.includes(':speech_balloon: *Response*') && text.includes('Segment text from streaming')
     );
+    const responseIndex = postedTexts.findIndex(
+      (text: string, index: number) =>
+        text.includes(':speech_balloon: *Response*') &&
+        index > streamingResponseIndex &&
+        text.includes('Segment text from streaming')
+    );
 
-    expect(generatingIndex).toBeGreaterThanOrEqual(0);
+    expect(streamingResponseIndex).toBeGreaterThanOrEqual(0);
     expect(responseIndex).toBeGreaterThanOrEqual(0);
-    expect(responseIndex).toBeGreaterThan(generatingIndex);
+    expect(responseIndex).toBeGreaterThan(streamingResponseIndex);
   });
 });

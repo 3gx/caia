@@ -1839,7 +1839,7 @@ export function formatThreadActivityEntry(entry: ActivityEntry): string {
     }
     case 'generating': {
       const duration = entry.durationMs ? ` [${(entry.durationMs / 1000).toFixed(1)}s]` : '';
-      const header = `:memo: *Generating*...${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
+      const header = `:speech_balloon: *Response*${duration}${entry.charCount ? ` _[${entry.charCount} chars]_` : ''}`;
       if (!entry.message) {
         return header;
       }
