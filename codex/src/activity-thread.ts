@@ -112,6 +112,8 @@ export interface ActivityEntry {
 
   /** Unique ID for thinking segment (like toolUseId for tools) */
   thinkingSegmentId?: string;
+  /** Unique ID for response segment (for interleaved response posting) */
+  responseSegmentId?: string;
 }
 
 /**
@@ -125,6 +127,7 @@ export interface ActivityBatch {
   postedCount: number; // How many entries have been emitted as thread replies
   toolIdToPostedTs: Map<string, string>; // toolUseId → message ts for update-in-place
   thinkingIdToPostedTs: Map<string, string>; // thinkingSegmentId → message ts for update-in-place
+  responseIdToPostedTs: Map<string, string>; // responseSegmentId → message ts for update-in-place
 }
 
 // Spinner frames for animated status
@@ -170,6 +173,7 @@ export class ActivityThreadManager {
       postedCount: 0,
       toolIdToPostedTs: new Map(),
       thinkingIdToPostedTs: new Map(),
+      responseIdToPostedTs: new Map(),
     };
     batch.entries.push(entry);
     this.batches.set(conversationKey, batch);
@@ -825,6 +829,26 @@ export async function postStartingToThread(
   }
 }
 
+const ACTIVITY_FLUSH_QUEUES = new Map<string, Promise<void>>();
+
+function enqueueActivityFlush(
+  conversationKey: string,
+  work: () => Promise<void>
+): Promise<void> {
+  const previous = ACTIVITY_FLUSH_QUEUES.get(conversationKey) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(work)
+    .finally(() => {
+      if (ACTIVITY_FLUSH_QUEUES.get(conversationKey) === next) {
+        ACTIVITY_FLUSH_QUEUES.delete(conversationKey);
+      }
+    });
+
+  ACTIVITY_FLUSH_QUEUES.set(conversationKey, next);
+  return next;
+}
+
 /**
  * Flush activity batch to thread.
  * Respects rate limiting (2s minimum gap) unless force=true.
@@ -842,143 +866,153 @@ export async function flushActivityBatchToThread(
     useBlocks?: boolean;
   }
 ): Promise<void> {
-  const entries = manager.getEntries(conversationKey);
-  if (entries.length === 0) return;
+  return enqueueActivityFlush(conversationKey, async () => {
+    const entries = manager.getEntries(conversationKey);
+    if (entries.length === 0) return;
 
-  // Check rate limiting
-  const batch = (manager as any).batches?.get(conversationKey);
-  const force = options?.force ?? false;
-  if (!force && batch) {
-    const timeSinceLastPost = Date.now() - (batch.lastPostTime || 0);
-    if (timeSinceLastPost < ACTIVITY_BATCH_MIN_GAP_MS) {
-      return; // Skip, too soon
-    }
-  }
-
-  const startIndex = batch?.postedCount ?? 0;
-  const newEntries = entries.slice(startIndex);
-  if (newEntries.length === 0) return;
-
-  // Build set of completed tool IDs from ALL entries to handle race conditions
-  // (tool_complete might arrive before tool_start flush completes)
-  const completedIds = new Set<string>();
-  for (const entry of entries) {
-    if (entry.type === 'tool_complete' && entry.toolUseId) {
-      completedIds.add(entry.toolUseId);
-    }
-  }
-
-  for (const entry of newEntries) {
-    // Skip tool_start if tool_complete already exists (race condition fix)
-    if (entry.type === 'tool_start' && entry.toolUseId && completedIds.has(entry.toolUseId)) {
-      if (batch) batch.postedCount += 1;
-      continue;
-    }
-    const text = formatThreadActivityEntry(entry);
-    if (!text) {
-      if (batch) batch.postedCount += 1;
-      continue;
+    // Check rate limiting
+    const batch = (manager as any).batches?.get(conversationKey);
+    const force = options?.force ?? false;
+    if (!force && batch) {
+      const timeSinceLastPost = Date.now() - (batch.lastPostTime || 0);
+      if (timeSinceLastPost < ACTIVITY_BATCH_MIN_GAP_MS) {
+        return; // Skip, too soon
+      }
     }
 
-    try {
-      // Check if this is a tool_complete and we have an existing message to update
-      const existingToolTs = entry.type === 'tool_complete' && entry.toolUseId && batch?.toolIdToPostedTs
-        ? batch.toolIdToPostedTs.get(entry.toolUseId)
-        : undefined;
+    const startIndex = batch?.postedCount ?? 0;
+    const newEntries = entries.slice(startIndex);
+    if (newEntries.length === 0) return;
 
-      // Check for THINKING update-in-place (same pattern as tools)
-      const existingThinkingTs = entry.type === 'thinking' && entry.thinkingSegmentId && batch?.thinkingIdToPostedTs
-        ? batch.thinkingIdToPostedTs.get(entry.thinkingSegmentId)
-        : undefined;
+    // Build set of completed tool IDs from ALL entries to handle race conditions
+    // (tool_complete might arrive before tool_start flush completes)
+    const completedIds = new Set<string>();
+    for (const entry of entries) {
+      if (entry.type === 'tool_complete' && entry.toolUseId) {
+        completedIds.add(entry.toolUseId);
+      }
+    }
 
-      const existingTs = existingToolTs || existingThinkingTs;
-      let postedTs: string | undefined;
-
-      if (existingTs) {
-        // UPDATE existing tool_start message with completion info (update-in-place)
-        const baseBlocks = options?.useBlocks === false
-          ? undefined
-          : buildActivityEntryBlocks({ text });
-
-        await withSlackRetry(
-          () => client.chat.update({
-            channel,
-            ts: existingTs,
-            text,
-            ...(baseBlocks ? { blocks: baseBlocks } : {}),
-          }),
-          'batch.entry.update-in-place'
-        );
-
-        postedTs = existingTs;
-      } else {
-        // Post new message
-        const baseBlocks = options?.useBlocks === false
-          ? undefined
-          : buildActivityEntryBlocks({ text });
-
-        const result = await withSlackRetry(
-          () => client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text,
-            ...(baseBlocks ? { blocks: baseBlocks, unfurl_links: false, unfurl_media: false } : {}),
-          }),
-          'batch.entry.post'
-        );
-
-        postedTs = (result as any).ts as string | undefined;
-
-        // Track tool_start message ts for update-in-place on completion
-        if (entry.type === 'tool_start' && entry.toolUseId && postedTs && batch?.toolIdToPostedTs) {
-          batch.toolIdToPostedTs.set(entry.toolUseId, postedTs);
-        }
-
-        // Track thinking message ts for update-in-place (same pattern as tools)
-        if (entry.type === 'thinking' && entry.thinkingSegmentId && postedTs && batch?.thinkingIdToPostedTs) {
-          batch.thinkingIdToPostedTs.set(entry.thinkingSegmentId, postedTs);
-        }
+    for (const entry of newEntries) {
+      // Skip tool_start if tool_complete already exists (race condition fix)
+      if (entry.type === 'tool_start' && entry.toolUseId && completedIds.has(entry.toolUseId)) {
+        if (batch) batch.postedCount += 1;
+        continue;
+      }
+      const text = formatThreadActivityEntry(entry);
+      if (!text) {
+        if (batch) batch.postedCount += 1;
+        continue;
       }
 
-      // Add actions if requested (for both new and updated messages)
-      if (postedTs && options?.buildActions) {
-        const actions = options.buildActions(entry, postedTs);
-        if (actions) {
-          const blocks = buildActivityEntryBlocks({ text, actions });
+      try {
+        // Check if this is a tool_complete and we have an existing message to update
+        const existingToolTs = entry.type === 'tool_complete' && entry.toolUseId && batch?.toolIdToPostedTs
+          ? batch.toolIdToPostedTs.get(entry.toolUseId)
+          : undefined;
+
+        // Check for THINKING update-in-place (same pattern as tools)
+        const existingThinkingTs = entry.type === 'thinking' && entry.thinkingSegmentId && batch?.thinkingIdToPostedTs
+          ? batch.thinkingIdToPostedTs.get(entry.thinkingSegmentId)
+          : undefined;
+        const existingResponseTs = entry.type === 'generating' && entry.responseSegmentId && batch?.responseIdToPostedTs
+          ? batch.responseIdToPostedTs.get(entry.responseSegmentId)
+          : undefined;
+
+        const existingTs = existingToolTs || existingThinkingTs || existingResponseTs;
+        let postedTs: string | undefined;
+
+        if (existingTs) {
+          // UPDATE existing tool_start message with completion info (update-in-place)
+          const baseBlocks = options?.useBlocks === false
+            ? undefined
+            : buildActivityEntryBlocks({ text });
+
           await withSlackRetry(
-            () => client.chat.update({ channel, ts: postedTs!, text, blocks }),
-            'batch.entry.actions'
+            () => client.chat.update({
+              channel,
+              ts: existingTs,
+              text,
+              ...(baseBlocks ? { blocks: baseBlocks } : {}),
+            }),
+            'batch.entry.update-in-place'
           );
-        }
-      }
 
-      if (batch) {
-        batch.postedTs = postedTs || batch.postedTs;
-        batch.postedCount += 1;
-        batch.lastPostTime = Date.now();
-        if (entry.toolUseId) {
-          batch.postedToolUseIds.push(entry.toolUseId);
-        }
-      }
+          postedTs = existingTs;
+        } else {
+          // Post new message
+          const baseBlocks = options?.useBlocks === false
+            ? undefined
+            : buildActivityEntryBlocks({ text });
 
-      if (postedTs && options?.mapActivityTs) {
-        options.mapActivityTs(postedTs, entry);
-      }
+          const result = await withSlackRetry(
+            () => client.chat.postMessage({
+              channel,
+              thread_ts: threadTs,
+              text,
+              ...(baseBlocks ? { blocks: baseBlocks, unfurl_links: false, unfurl_media: false } : {}),
+            }),
+            'batch.entry.post'
+          );
 
-      if (postedTs) {
-        entry.threadMessageTs = postedTs;
-        if (!entry.threadMessageLink) {
-          try {
-            entry.threadMessageLink = await getMessagePermalink(client, channel, postedTs);
-          } catch (err) {
-            console.error('[flushActivityBatchToThread] permalink failed:', err);
+          postedTs = (result as any).ts as string | undefined;
+
+          // Track tool_start message ts for update-in-place on completion
+          if (entry.type === 'tool_start' && entry.toolUseId && postedTs && batch?.toolIdToPostedTs) {
+            batch.toolIdToPostedTs.set(entry.toolUseId, postedTs);
+          }
+
+          // Track thinking message ts for update-in-place (same pattern as tools)
+          if (entry.type === 'thinking' && entry.thinkingSegmentId && postedTs && batch?.thinkingIdToPostedTs) {
+            batch.thinkingIdToPostedTs.set(entry.thinkingSegmentId, postedTs);
+          }
+
+          // Track response message ts for update-in-place (same pattern as tools/thinking)
+          if (entry.type === 'generating' && entry.responseSegmentId && postedTs && batch?.responseIdToPostedTs) {
+            batch.responseIdToPostedTs.set(entry.responseSegmentId, postedTs);
           }
         }
+
+        // Add actions if requested (for both new and updated messages)
+        if (postedTs && options?.buildActions) {
+          const actions = options.buildActions(entry, postedTs);
+          if (actions) {
+            const blocks = buildActivityEntryBlocks({ text, actions });
+            await withSlackRetry(
+              () => client.chat.update({ channel, ts: postedTs!, text, blocks }),
+              'batch.entry.actions'
+            );
+          }
+        }
+
+        if (batch) {
+          batch.postedTs = postedTs || batch.postedTs;
+          batch.postedCount += 1;
+          batch.lastPostTime = Date.now();
+          if (entry.toolUseId) {
+            batch.postedToolUseIds.push(entry.toolUseId);
+          }
+        }
+
+        if (postedTs && options?.mapActivityTs) {
+          options.mapActivityTs(postedTs, entry);
+        }
+
+        if (postedTs) {
+          entry.threadMessageTs = postedTs;
+          if (!entry.threadMessageLink) {
+            try {
+              entry.threadMessageLink = await getMessagePermalink(client, channel, postedTs);
+            } catch (err) {
+              console.error('[flushActivityBatchToThread] permalink failed:', err);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[flushActivityBatchToThread] Failed:', err);
       }
-    } catch (err) {
-      console.error('[flushActivityBatchToThread] Failed:', err);
     }
-  }
+  });
 }
 
 /**
@@ -1023,6 +1057,52 @@ export async function updateThinkingEntryInThread(
     return true;
   } catch (err) {
     console.error('[updateThinkingEntryInThread] Failed:', err);
+    return false;
+  }
+}
+
+/**
+ * Update an existing response (generating) entry in the thread with latest content.
+ * Uses update-in-place based on responseSegmentId -> message ts mapping.
+ */
+export async function updateResponseEntryInThread(
+  manager: ActivityThreadManager,
+  conversationKey: string,
+  client: WebClient,
+  channel: string,
+  entry: ActivityEntry,
+  options?: {
+    useBlocks?: boolean;
+  }
+): Promise<boolean> {
+  const batch = (manager as any).batches?.get(conversationKey) as ActivityBatch | undefined;
+  const responseId = entry.responseSegmentId;
+  if (!batch || !responseId) return false;
+
+  const existingTs = batch.responseIdToPostedTs.get(responseId);
+  if (!existingTs) return false;
+
+  const text = formatThreadActivityEntry(entry);
+  if (!text) return false;
+
+  const baseBlocks = options?.useBlocks === false
+    ? undefined
+    : buildActivityEntryBlocks({ text });
+
+  try {
+    await withSlackRetry(
+      () =>
+        client.chat.update({
+          channel,
+          ts: existingTs,
+          text,
+          ...(baseBlocks ? { blocks: baseBlocks } : {}),
+        }),
+      'response.update'
+    );
+    return true;
+  } catch (err) {
+    console.error('[updateResponseEntryInThread] Failed:', err);
     return false;
   }
 }

@@ -52,6 +52,7 @@ import {
   buildActivityLogText,
   flushActivityBatchToThread,
   updateThinkingEntryInThread,
+  updateResponseEntryInThread,
   getThinkingEntryTs,
   getMessagePermalink,
   uploadFilesToThread,
@@ -68,6 +69,7 @@ import { THINKING_MESSAGE_SIZE } from './commands.js';
 const MAX_LIVE_ENTRIES = 300; // Threshold for rolling window
 const ROLLING_WINDOW_SIZE = 20; // Show last N entries when exceeded
 const ACTIVITY_LOG_MAX_CHARS = 1000; // Max chars for activity display
+const RESPONSE_THREAD_PREVIEW_MAX_CHARS = 300; // Inline response preview in thread entries
 const STATUS_SPINNER_FRAMES = ['\u25D0', '\u25D3', '\u25D1', '\u25D2'];
 
 // Extract tail with formatting preserved (ported from ccslack)
@@ -128,6 +130,14 @@ function buildThinkingDisplay(content: string, maxChars: number): { display: str
     return { display: content, truncated: false };
   }
   return { display: extractTailWithFormatting(content, maxChars), truncated: true };
+}
+
+function buildResponsePreview(content: string): string {
+  const cleaned = content.replace(/\s+/g, ' ').trim();
+  if (cleaned.length <= RESPONSE_THREAD_PREVIEW_MAX_CHARS) {
+    return `> ${cleaned}`;
+  }
+  return `> ${cleaned.slice(0, RESPONSE_THREAD_PREVIEW_MAX_CHARS)}...`;
 }
 
 // Item types that should NOT be displayed as tool activity
@@ -284,6 +294,18 @@ interface StreamingState {
   responseMessageTs?: string;
   /** Response message permalink (for jump links) */
   responseMessageLink?: string;
+  /** Per-segment response content (for interleaved response posting) */
+  responseSegments: Map<string, string>;
+  /** Current response segment ID being streamed */
+  currentResponseSegmentId?: string;
+  /** Response segment ID counter (increments when interleaving events split response) */
+  responseSegmentCounter: number;
+  /** Track response segments already posted to thread */
+  postedResponseSegmentIds: Set<string>;
+  /** Last posted response segment ID (to avoid redundant updates) */
+  lastResponsePostedSegmentId?: string;
+  /** Last posted response content (for update-in-place diffing) */
+  lastResponsePostedContent?: string;
   /** Thinking item ID (for matching complete event) */
   thinkingItemId?: string;
   /** Last posted thinking segment ID (to avoid redundant updates) */
@@ -453,6 +475,12 @@ export class StreamingManager {
       thinkingMessageTs: undefined,
       responseMessageTs: undefined,
       responseMessageLink: undefined,
+      responseSegments: new Map(),
+      currentResponseSegmentId: undefined,
+      responseSegmentCounter: 0,
+      postedResponseSegmentIds: new Set(),
+      lastResponsePostedSegmentId: undefined,
+      lastResponsePostedContent: undefined,
       lastThinkingPostedSegmentId: undefined,
       lastThinkingPostedContent: undefined,
       postedThinkingSegmentIds: new Set(),
@@ -746,6 +774,17 @@ export class StreamingManager {
     this.turnIdToKey.set(turnId, conversationKey);
   }
 
+  /**
+   * Split response timeline when an interleaving activity starts.
+   * Next response delta will open a new segment and post as a new thread entry.
+   */
+  private closeActiveResponseSegment(state: StreamingState): void {
+    if (state.currentResponseSegmentId) {
+      state.currentResponseSegmentId = undefined;
+      state.responseSegmentCounter += 1;
+    }
+  }
+
   private setupEventHandlers(): void {
     // Turn started - update turnId and check for pending abort
     this.codex.on('turn:started', ({ threadId, turnId }) => {
@@ -842,8 +881,8 @@ export class StreamingManager {
             }
           }
 
-          // Add response entry if we have response content
-          if (state.text && status === 'completed') {
+          // Add a fallback response entry only when no streamed response segment exists.
+          if (state.text && status === 'completed' && state.responseSegments.size === 0) {
             this.activityManager.addEntry(found.key, {
               type: 'generating',
               timestamp: Date.now(),
@@ -1050,76 +1089,133 @@ export class StreamingManager {
             }
           }
 
-          // Integration point 5: Post response to thread
+          // Integration point 5: Ensure response has a thread post
+          // If live response segments already posted during streaming, reuse that message.
           if (state.text && status === 'completed') {
-            const responseDurationMs = Date.now() - found.context.startTime;
-            const responseResult = await postResponseToThread(
-              this.slack,
-              channelId,
-              state.threadParentTs || originalTs,
-              state.text,
-              responseDurationMs,
-              threadCharLimit
-            ).catch((err) => {
-              console.error('[streaming] Response post failed:', err);
-              return null;
-            });
+            const latestResponseEntry = [...this.activityManager.getEntries(found.key)].reverse().find(
+              (entry) => entry.type === 'generating' && entry.responseSegmentId && entry.threadMessageTs
+            );
+            if (latestResponseEntry?.threadMessageTs) {
+              state.responseMessageTs = latestResponseEntry.threadMessageTs;
+              if (latestResponseEntry.threadMessageLink) {
+                state.responseMessageLink = latestResponseEntry.threadMessageLink;
+              } else {
+                try {
+                  state.responseMessageLink = await getMessagePermalink(
+                    this.slack,
+                    channelId,
+                    latestResponseEntry.threadMessageTs
+                  );
+                } catch (err) {
+                  console.error('[streaming] Response permalink (segment) failed:', err);
+                }
+              }
+            }
 
-            const responseTs = responseResult?.ts;
-            if (responseTs) {
-              state.responseMessageTs = responseTs;
-              try {
-                state.responseMessageLink = await getMessagePermalink(
+            const responseDurationMs = Date.now() - found.context.startTime;
+            if (!state.responseMessageTs) {
+              const responseResult = await postResponseToThread(
+                this.slack,
+                channelId,
+                state.threadParentTs || originalTs,
+                state.text,
+                responseDurationMs,
+                threadCharLimit
+              ).catch((err) => {
+                console.error('[streaming] Response post failed:', err);
+                return null;
+              });
+
+              const responseTs = responseResult?.ts;
+              if (responseTs) {
+                state.responseMessageTs = responseTs;
+                try {
+                  state.responseMessageLink = await getMessagePermalink(
+                    this.slack,
+                    channelId,
+                    responseTs
+                  );
+                } catch (err) {
+                  console.error('[streaming] Response permalink failed:', err);
+                }
+              }
+
+              if (responseResult?.attachmentFailed && responseTs) {
+                const threadSessionKey = found.context.threadTs || originalTs;
+                if (threadSessionKey) {
+                  const fallbackText = responseResult.text
+                    ? responseResult.text.replace('Full response attached', 'Full response not attached')
+                    : `${formatThreadResponseMessage(state.text, responseDurationMs)}\n\n_Full response not attached._`;
+                  await saveThreadSession(channelId, threadSessionKey, {
+                    lastResponseContent: state.text,
+                    lastResponseText: fallbackText,
+                    lastResponseCharCount: state.text.length,
+                    lastResponseDurationMs: responseDurationMs,
+                    lastResponseMessageTs: responseTs,
+                  }).catch((err) => console.error('[streaming] Failed to save lastResponseContent:', err));
+
+                  const text = fallbackText || ':speech_balloon: Response';
+                  const blocks = [
+                    {
+                      type: 'section',
+                      text: { type: 'mrkdwn', text },
+                      expand: true,
+                    },
+                    buildAttachResponseFileButton(
+                      responseTs,
+                      threadSessionKey,
+                      channelId,
+                      state.text.length
+                    ),
+                  ];
+
+                  await withSlackRetry(
+                    () =>
+                      this.slack.chat.update({
+                        channel: channelId,
+                        ts: responseTs,
+                        text,
+                        blocks,
+                      }),
+                    'response.attach.retry'
+                  ).catch((err) => console.error('[streaming] Response retry button update failed:', err));
+                }
+              }
+            } else {
+              // Finalize current response segment in-place when it already exists.
+              const latestSegmentEntry = [...this.activityManager.getEntries(found.key)].reverse().find(
+                (entry) => entry.type === 'generating' && entry.responseSegmentId
+              );
+              if (latestSegmentEntry) {
+                latestSegmentEntry.charCount = state.text.length;
+                latestSegmentEntry.durationMs = responseDurationMs;
+                latestSegmentEntry.message = buildResponsePreview(
+                  state.responseSegments.get(latestSegmentEntry.responseSegmentId || '') || state.text
+                );
+                await updateResponseEntryInThread(
+                  this.activityManager,
+                  found.key,
                   this.slack,
                   channelId,
-                  responseTs
-                );
-              } catch (err) {
-                console.error('[streaming] Response permalink failed:', err);
+                  latestSegmentEntry
+                ).catch((err) => console.error('[streaming] Response segment finalize failed:', err));
               }
             }
 
-            if (responseResult?.attachmentFailed && responseTs) {
+            if (state.responseMessageTs && state.responseMessageLink) {
               const threadSessionKey = found.context.threadTs || originalTs;
               if (threadSessionKey) {
-                const fallbackText = responseResult.text
-                  ? responseResult.text.replace('Full response attached', 'Full response not attached')
-                  : `${formatThreadResponseMessage(state.text, responseDurationMs)}\n\n_Full response not attached._`;
                 await saveThreadSession(channelId, threadSessionKey, {
                   lastResponseContent: state.text,
-                  lastResponseText: fallbackText,
+                  lastResponseText: `${formatThreadResponseMessage(state.text, responseDurationMs)}\n\n${state.text}`,
                   lastResponseCharCount: state.text.length,
                   lastResponseDurationMs: responseDurationMs,
-                  lastResponseMessageTs: responseTs,
+                  lastResponseMessageTs: state.responseMessageTs,
                 }).catch((err) => console.error('[streaming] Failed to save lastResponseContent:', err));
-
-                const text = fallbackText || ':speech_balloon: Response';
-                const blocks = [
-                  {
-                    type: 'section',
-                    text: { type: 'mrkdwn', text },
-                    expand: true,
-                  },
-                  buildAttachResponseFileButton(
-                    responseTs,
-                    threadSessionKey,
-                    channelId,
-                    state.text.length
-                  ),
-                ];
-
-                await withSlackRetry(
-                  () =>
-                    this.slack.chat.update({
-                      channel: channelId,
-                      ts: responseTs,
-                      text,
-                      blocks,
-                    }),
-                  'response.attach.retry'
-                ).catch((err) => console.error('[streaming] Response retry button update failed:', err));
               }
             }
+
+            this.closeActiveResponseSegment(state);
           }
 
           // Integration point 6: Post error to thread
@@ -1210,6 +1306,8 @@ export class StreamingManager {
           // This ensures thinking AFTER a tool starts appears as a separate message
           state.currentThinkingSegmentId = undefined;
           state.thinkingSegmentCounter = (state.thinkingSegmentCounter || 0) + 1;
+          // Split response into a new segment if tools interleave with assistant text.
+          this.closeActiveResponseSegment(state);
 
           // For TodoWrite, store the full structured input for todo extraction
           // For other tools, use the display input string
@@ -1586,7 +1684,73 @@ export class StreamingManager {
       for (const [key, state] of this.states) {
         if (state.isStreaming) {
           state.text += delta;
-          // Timer handles updates, no need to schedule
+          const context = this.contexts.get(key);
+          if (!context) {
+            break;
+          }
+
+          // Open a response segment on first delta (or after interleaving split).
+          if (!state.currentResponseSegmentId) {
+            const segmentId = `response-${state.responseSegmentCounter}`;
+            state.currentResponseSegmentId = segmentId;
+            if (!state.responseSegments.has(segmentId)) {
+              state.responseSegments.set(segmentId, '');
+            }
+            this.activityManager.addEntry(key, {
+              type: 'generating',
+              timestamp: Date.now(),
+              charCount: 0,
+              responseSegmentId: segmentId,
+              message: '',
+            });
+          }
+
+          const segmentId = state.currentResponseSegmentId;
+          if (segmentId) {
+            const updatedSegment = (state.responseSegments.get(segmentId) || '') + delta;
+            state.responseSegments.set(segmentId, updatedSegment);
+
+            const entries = this.activityManager.getEntries(key);
+            for (let i = entries.length - 1; i >= 0; i--) {
+              if (entries[i].type === 'generating' && entries[i].responseSegmentId === segmentId) {
+                entries[i].charCount = updatedSegment.length;
+                entries[i].message = buildResponsePreview(updatedSegment);
+                break;
+              }
+            }
+
+            // Post initial response segment entry immediately (update-rate cadence handles edits).
+            const mutex = getUpdateMutex(key);
+            mutex.runExclusive(async () => {
+              try {
+                if (!state.postedResponseSegmentIds.has(segmentId)) {
+                  await flushActivityBatchToThread(
+                    this.activityManager,
+                    key,
+                    this.slack,
+                    context.channelId,
+                    state.threadParentTs || context.originalTs,
+                    { force: true }
+                  );
+                  state.postedResponseSegmentIds.add(segmentId);
+
+                  // Refresh jump-link target from latest posted response segment.
+                  const latestEntry = [...this.activityManager.getEntries(key)].reverse().find(
+                    (entry) => entry.type === 'generating' && entry.responseSegmentId === segmentId
+                  );
+                  if (latestEntry?.threadMessageTs) {
+                    state.responseMessageTs = latestEntry.threadMessageTs;
+                  }
+                  if (latestEntry?.threadMessageLink) {
+                    state.responseMessageLink = latestEntry.threadMessageLink;
+                  }
+                }
+              } catch (err) {
+                console.error('[item:delta] Response segment flush failed:', err);
+              }
+            });
+          }
+
           break;
         }
       }
@@ -1600,6 +1764,8 @@ export class StreamingManager {
       for (const [key, state] of this.states) {
         if (state.isStreaming) {
           state.thinkingItemId = itemId;
+          // Split response into a new segment if thinking interleaves with assistant text.
+          this.closeActiveResponseSegment(state);
 
           // FIX: Check if segment already created by thinking:delta (event ordering)
           if (!state.currentThinkingSegmentId) {

@@ -279,6 +279,60 @@ describe('flushActivityBatchToThread', () => {
     expect(postCall.text).not.toContain('[in progress]');
     expect(postCall.text).toContain('Bash');
   });
+
+  it('serializes concurrent flush calls so later entries are not skipped', async () => {
+    const key = 'C123_serialized_flush';
+    let postInvocation = 0;
+    let resolveFirstPost: ((value: { ts: string }) => void) | undefined;
+
+    mockClient.chat.postMessage.mockImplementation(() => {
+      postInvocation += 1;
+      if (postInvocation === 1) {
+        return new Promise((resolve) => {
+          resolveFirstPost = resolve;
+        });
+      }
+      return Promise.resolve({ ts: `posted-ts-${postInvocation}` });
+    });
+
+    manager.addEntry(key, {
+      type: 'starting',
+      timestamp: Date.now(),
+    });
+    const flush1 = flushActivityBatchToThread(manager, key, mockClient, 'C123', '456.789', { force: true });
+
+    manager.addEntry(key, {
+      type: 'generating',
+      timestamp: Date.now(),
+      charCount: 5,
+      message: '> first',
+      responseSegmentId: 'response-0',
+    });
+    const flush2 = flushActivityBatchToThread(manager, key, mockClient, 'C123', '456.789', { force: true });
+
+    // Let the first flush reach the delayed postMessage call.
+    for (let i = 0; i < 10 && !resolveFirstPost; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(resolveFirstPost).toBeDefined();
+    resolveFirstPost?.({ ts: 'posted-ts-1' });
+
+    await Promise.all([flush1, flush2]);
+
+    manager.addEntry(key, {
+      type: 'error',
+      timestamp: Date.now(),
+      message: 'third-entry',
+    });
+    await flushActivityBatchToThread(manager, key, mockClient, 'C123', '456.789', { force: true });
+
+    const postedTexts = mockClient.chat.postMessage.mock.calls.map((call: any[]) => call[0]?.text || '');
+
+    // First entry should only be posted once.
+    expect(postedTexts.filter((text: string) => text.includes('Analyzing request')).length).toBe(1);
+    // Third entry must still be posted (was skipped before flush serialization).
+    expect(postedTexts.some((text: string) => text.includes('third-entry'))).toBe(true);
+  });
 });
 
 describe('postThinkingToThread', () => {
