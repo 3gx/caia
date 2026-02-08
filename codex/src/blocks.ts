@@ -1193,6 +1193,7 @@ export interface UnifiedStatusLineParams {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   sandboxMode?: SandboxMode;
+  autoApprove?: boolean;
   sessionId?: string;
   contextPercent?: number;
   contextTokens?: number;
@@ -1223,7 +1224,8 @@ export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string 
   const reasoningLabel = params.reasoningEffort || 'xhigh';
   const modelWithReasoning = `${modelLabel} [${reasoningLabel}]`;
   const sandboxLabel = params.sandboxMode || 'danger-full-access';
-  const modeWithSandbox = `${params.mode} [${sandboxLabel}]`;
+  const autoApproveEnabled = params.autoApprove === true && sandboxLabel !== 'danger-full-access';
+  const modeWithSandbox = `${params.mode} [${sandboxLabel}${autoApproveEnabled ? ', auto-approve' : ''}]`;
   const sessionLabel = params.sessionId || 'n/a';
 
   line1Parts.push(modeWithSandbox);
@@ -1394,6 +1396,7 @@ export interface ActivityBlockParams {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   sandboxMode?: SandboxMode;
+  autoApprove?: boolean;
   sessionId?: string;
   contextPercent?: number;
   contextTokens?: number;
@@ -1429,6 +1432,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
     model,
     reasoningEffort,
     sandboxMode,
+    autoApprove,
     sessionId,
     contextPercent,
     contextTokens,
@@ -1494,6 +1498,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
           model,
           reasoningEffort,
           sandboxMode,
+          autoApprove,
           sessionId,
           contextPercent,
           contextTokens,

@@ -16,7 +16,9 @@ import {
   getEffectiveWorkingDir,
   getEffectiveMode,
   getEffectiveSandboxMode,
+  getEffectiveAutoApprove,
   getEffectiveThreadId,
+  saveAutoApprove,
   DEFAULT_MODE,
   DEFAULT_SANDBOX_MODE,
 } from '../../../codex/src/session-manager.js';
@@ -400,6 +402,112 @@ describe('Session Manager', () => {
 
       const sandboxMode = getEffectiveSandboxMode('C999');
       expect(sandboxMode).toBe(DEFAULT_SANDBOX_MODE);
+    });
+  });
+
+  describe('getEffectiveAutoApprove', () => {
+    it('returns channel auto-approve setting', () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          channels: {
+            C123: {
+              autoApprove: true,
+              sandboxMode: 'read-only',
+              threadId: null,
+              workingDir: '/test',
+              mode: 'bypass',
+              createdAt: 1000,
+              lastActiveAt: 2000,
+              pathConfigured: false,
+              configuredPath: null,
+              configuredBy: null,
+              configuredAt: null,
+            },
+          },
+        })
+      );
+
+      expect(getEffectiveAutoApprove('C123')).toBe(true);
+    });
+
+    it('returns thread auto-approve when threadTs provided', () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          channels: {
+            C123: {
+              autoApprove: false,
+              sandboxMode: 'workspace-write',
+              threadId: null,
+              workingDir: '/test',
+              mode: 'bypass',
+              createdAt: 1000,
+              lastActiveAt: 2000,
+              pathConfigured: false,
+              configuredPath: null,
+              configuredBy: null,
+              configuredAt: null,
+              threads: {
+                '123.456': {
+                  autoApprove: true,
+                  sandboxMode: 'workspace-write',
+                  mode: 'ask',
+                  threadId: null,
+                  forkedFrom: null,
+                  workingDir: '/test',
+                  createdAt: 1000,
+                  lastActiveAt: 2000,
+                  pathConfigured: false,
+                  configuredPath: null,
+                  configuredBy: null,
+                  configuredAt: null,
+                },
+              },
+            },
+          },
+        })
+      );
+
+      expect(getEffectiveAutoApprove('C123', '123.456')).toBe(true);
+    });
+
+    it('returns false by default', () => {
+      mockFs.existsSync.mockReturnValue(false);
+      expect(getEffectiveAutoApprove('C999')).toBe(false);
+    });
+  });
+
+  describe('saveAutoApprove', () => {
+    it('saves to both channel and thread sessions', async () => {
+      let sessionStore = {
+        channels: {
+          C_POLICY: {
+            threadId: null,
+            workingDir: '/test',
+            mode: 'ask',
+            sandboxMode: 'danger-full-access',
+            createdAt: 1000,
+            lastActiveAt: 2000,
+            pathConfigured: false,
+            configuredPath: null,
+            configuredBy: null,
+            configuredAt: null,
+            threads: {},
+          },
+        },
+      };
+
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockImplementation(() => JSON.stringify(sessionStore));
+      mockFs.writeFileSync.mockImplementation((_, data) => {
+        sessionStore = JSON.parse(data as string);
+      });
+
+      await saveAutoApprove('C_POLICY', '123.456', true);
+
+      expect(sessionStore.channels.C_POLICY.autoApprove).toBe(true);
+      expect(sessionStore.channels.C_POLICY.threads['123.456'].autoApprove).toBe(true);
     });
   });
 

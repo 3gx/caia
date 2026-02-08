@@ -35,6 +35,7 @@ import {
   saveSandboxMode,
   mapModeToApprovalPolicy,
   getEffectiveSandboxMode,
+  getEffectiveAutoApprove,
 } from './session-manager.js';
 import {
   buildActivityBlocks,
@@ -1365,6 +1366,7 @@ async function handleUserMessage(
   }
 
   const configuredSandbox = getEffectiveSandboxMode(channelId, postingThreadTs);
+  const effectiveAutoApprove = getEffectiveAutoApprove(channelId, postingThreadTs);
 
   // Start or resume thread
   let effectiveSandbox: SandboxMode;
@@ -1429,6 +1431,7 @@ async function handleUserMessage(
       model: effectiveModel,
       reasoningEffort: effectiveReasoning,
       sandboxMode: effectiveSandbox,
+      autoApprove: effectiveAutoApprove,
       sessionId: threadId,
       spinner: '\u25D0',
     }),
@@ -1479,6 +1482,7 @@ async function handleUserMessage(
     model: effectiveModel,
     reasoningEffort: effectiveReasoning,
     sandboxMode: effectiveSandbox,
+    autoApprove: effectiveAutoApprove,
     startTime: Date.now(),
   };
 

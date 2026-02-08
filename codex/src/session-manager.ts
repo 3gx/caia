@@ -54,6 +54,8 @@ export interface Session {
   reasoningEffort?: ReasoningEffort;
   /** Sandbox mode */
   sandboxMode?: SandboxMode;
+  /** Auto-approve tool/file approval requests (when sandbox is not danger-full-access) */
+  autoApprove?: boolean;
   /** Session creation time */
   createdAt: number;
   /** Last activity time */
@@ -95,6 +97,8 @@ export interface ThreadSession {
   reasoningEffort?: ReasoningEffort;
   /** Sandbox mode (inherited from channel) */
   sandboxMode?: SandboxMode;
+  /** Auto-approve tool/file approval requests (inherited from channel) */
+  autoApprove?: boolean;
   /** Thread creation time */
   createdAt: number;
   /** Last activity time */
@@ -213,6 +217,7 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       model: existing?.model,
       reasoningEffort: existing?.reasoningEffort,
       sandboxMode: existing?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
+      autoApprove: existing?.autoApprove ?? false,
       createdAt: existing?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
       pathConfigured: existing?.pathConfigured ?? false,
@@ -269,6 +274,7 @@ export async function saveThreadSession(
           workingDir: process.cwd(),
           mode: DEFAULT_MODE,
           sandboxMode: DEFAULT_SANDBOX_MODE,
+          autoApprove: false,
           createdAt: Date.now(),
           lastActiveAt: Date.now(),
           pathConfigured: false,
@@ -294,6 +300,7 @@ export async function saveThreadSession(
       model: existingThread?.model ?? mainChannel.model,
       reasoningEffort: existingThread?.reasoningEffort ?? mainChannel.reasoningEffort,
       sandboxMode: existingThread?.sandboxMode ?? mainChannel.sandboxMode ?? DEFAULT_SANDBOX_MODE,
+      autoApprove: existingThread?.autoApprove ?? mainChannel.autoApprove ?? false,
       createdAt: existingThread?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
       pathConfigured: existingThread?.pathConfigured ?? mainChannel.pathConfigured,
@@ -362,6 +369,21 @@ export async function saveSandboxMode(
   await saveSession(channelId, { sandboxMode });
   if (threadTs) {
     await saveThreadSession(channelId, threadTs, { sandboxMode });
+  }
+}
+
+/**
+ * Save auto-approve preference for both channel and thread (if provided).
+ * Ensures new threads inherit the latest selection.
+ */
+export async function saveAutoApprove(
+  channelId: string,
+  threadTs: string | undefined,
+  autoApprove: boolean
+): Promise<void> {
+  await saveSession(channelId, { autoApprove });
+  if (threadTs) {
+    await saveThreadSession(channelId, threadTs, { autoApprove });
   }
 }
 
@@ -705,6 +727,24 @@ export function getEffectiveSandboxMode(
 
   const session = getSession(channelId);
   return session?.sandboxMode ?? DEFAULT_SANDBOX_MODE;
+}
+
+/**
+ * Get effective auto-approve setting for a session.
+ */
+export function getEffectiveAutoApprove(
+  channelId: string,
+  threadTs?: string
+): boolean {
+  if (threadTs) {
+    const threadSession = getThreadSession(channelId, threadTs);
+    if (threadSession?.autoApprove !== undefined) {
+      return threadSession.autoApprove;
+    }
+  }
+
+  const session = getSession(channelId);
+  return session?.autoApprove ?? false;
 }
 
 /**

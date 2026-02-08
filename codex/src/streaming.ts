@@ -212,6 +212,8 @@ export interface StreamingContext {
   reasoningEffort?: ReasoningEffort;
   /** Current sandbox mode */
   sandboxMode?: SandboxMode;
+  /** Whether approval requests should be auto-accepted (non-danger sandboxes only) */
+  autoApprove?: boolean;
   /** Update rate in ms */
   updateRateMs: number;
   /** Model being used */
@@ -1983,6 +1985,7 @@ export class StreamingManager {
         model: context.model,
         reasoningEffort: context.reasoningEffort,
         sandboxMode: context.sandboxMode,
+        autoApprove: context.autoApprove,
         sessionId: context.threadId,
         contextPercent,
         contextTokens: hasContextTokens ? contextTokensValue : undefined,

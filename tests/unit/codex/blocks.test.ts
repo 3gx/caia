@@ -631,6 +631,34 @@ describe('Block Kit Builders', () => {
       expect(lines[0]).toBe('_bypass [workspace-write] | gpt-5.2-codex [xhigh] | abc123_');
     });
 
+    it('includes auto-approve marker when enabled on non-danger sandbox', () => {
+      const line = buildUnifiedStatusLine({
+        mode: 'ask',
+        model: 'gpt-5.2-codex',
+        reasoningEffort: 'high',
+        sandboxMode: 'workspace-write',
+        autoApprove: true,
+        sessionId: 'abc123',
+      });
+
+      const lines = line.split('\n');
+      expect(lines[0]).toBe('_ask [workspace-write, auto-approve] | gpt-5.2-codex [high] | abc123_');
+    });
+
+    it('does not include auto-approve marker for danger-full-access', () => {
+      const line = buildUnifiedStatusLine({
+        mode: 'ask',
+        model: 'gpt-5.2-codex',
+        reasoningEffort: 'high',
+        sandboxMode: 'danger-full-access',
+        autoApprove: true,
+        sessionId: 'abc123',
+      });
+
+      const lines = line.split('\n');
+      expect(lines[0]).toBe('_ask [danger-full-access] | gpt-5.2-codex [high] | abc123_');
+    });
+
     it('status line format: ctx | tokens | cost | duration on line 2 (no activity)', () => {
       const line = buildUnifiedStatusLine({
         mode: 'ask',

@@ -7,6 +7,7 @@ import type { CodexClient } from '../../../codex/src/codex-client.js';
 import {
   handleModeCommand,
   handleSandboxCommand,
+  handleAutoApproveCommand,
   handleModelCommand,
   handleResumeCommand,
   handleMessageSizeCommand,
@@ -23,10 +24,12 @@ vi.mock('../../../codex/src/session-manager.js', () => ({
   saveThreadSession: vi.fn(),
   saveMode: vi.fn(),
   saveSandboxMode: vi.fn(),
+  saveAutoApprove: vi.fn(),
   saveThreadCharLimit: vi.fn(),
   clearSession: vi.fn(),
   getEffectiveWorkingDir: vi.fn(() => '/tmp'),
   getEffectiveSandboxMode: vi.fn(() => 'danger-full-access'),
+  getEffectiveAutoApprove: vi.fn(() => false),
 }));
 
 describe('Command Handlers', () => {
@@ -76,6 +79,27 @@ describe('Command Handlers', () => {
 
     expect(saveSandboxMode).toHaveBeenCalledWith(baseContext.channelId, baseContext.threadTs, 'read-only');
     expect(result.text).toContain('Sandbox changed');
+  });
+
+  it('shows auto-approve status when no args', async () => {
+    const result = await handleAutoApproveCommand({ ...baseContext, text: '' });
+
+    expect(result.text).toContain('Auto-approve is disabled');
+    expect(result.blocks.length).toBeGreaterThan(0);
+  });
+
+  it('returns error for invalid auto-approve value', async () => {
+    const result = await handleAutoApproveCommand({ ...baseContext, text: 'maybe' });
+
+    expect(result.text).toContain('Invalid auto-approve value');
+  });
+
+  it('saves auto-approve when valid', async () => {
+    const { saveAutoApprove } = await import('../../../codex/src/session-manager.js');
+    const result = await handleAutoApproveCommand({ ...baseContext, text: 'yes' });
+
+    expect(saveAutoApprove).toHaveBeenCalledWith(baseContext.channelId, baseContext.threadTs, true);
+    expect(result.text).toContain('Auto-approve changed');
   });
 
   it('shows model selection prompt (no args)', async () => {

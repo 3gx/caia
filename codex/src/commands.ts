@@ -4,6 +4,7 @@
  * Available commands:
  * - /mode - View/set mode (plan/ask/bypass)
  * - /sandbox - View/set sandbox mode
+ * - /auto-approve - View/set automatic approval handling
  * - /clear - Clear session (start fresh)
  * - /model - View/set model
  * - /reasoning - View/set reasoning effort
@@ -24,10 +25,12 @@ import {
   saveThreadSession,
   saveMode,
   saveSandboxMode,
+  saveAutoApprove,
   saveThreadCharLimit,
   clearSession,
   getEffectiveMode,
   getEffectiveSandboxMode,
+  getEffectiveAutoApprove,
   getEffectiveWorkingDir,
   LastUsage,
 } from './session-manager.js';
@@ -203,6 +206,44 @@ export async function handleSandboxCommand(
   return {
     blocks: buildSandboxStatusBlocks({ currentSandbox, newSandbox }),
     text: `Sandbox changed: ${currentSandbox} → ${newSandbox}`,
+  };
+}
+
+/**
+ * Handle /auto-approve command.
+ */
+export async function handleAutoApproveCommand(
+  context: CommandContext
+): Promise<CommandResult> {
+  const { channelId, threadTs, text: args } = context;
+  const currentAutoApprove = getEffectiveAutoApprove(channelId, threadTs);
+
+  if (!args) {
+    return {
+      blocks: buildTextBlocks(
+        `:robot_face: *Auto-approve:* ${currentAutoApprove ? 'enabled' : 'disabled'}\n` +
+        `_Use \`/auto-approve yes\` or \`/auto-approve no\`_`
+      ),
+      text: `Auto-approve is ${currentAutoApprove ? 'enabled' : 'disabled'}`,
+    };
+  }
+
+  const normalizedArg = args.toLowerCase().trim();
+  if (!['yes', 'no'].includes(normalizedArg)) {
+    return {
+      blocks: buildErrorBlocks('Invalid value. Use `/auto-approve yes` or `/auto-approve no`.'),
+      text: 'Invalid auto-approve value',
+    };
+  }
+
+  const nextAutoApprove = normalizedArg === 'yes';
+  await saveAutoApprove(channelId, threadTs, nextAutoApprove);
+
+  return {
+    blocks: buildTextBlocks(
+      `:robot_face: Auto-approve changed: ${currentAutoApprove ? 'enabled' : 'disabled'} -> ${nextAutoApprove ? 'enabled' : 'disabled'}`
+    ),
+    text: `Auto-approve changed: ${currentAutoApprove ? 'enabled' : 'disabled'} -> ${nextAutoApprove ? 'enabled' : 'disabled'}`,
   };
 }
 
@@ -417,6 +458,7 @@ export async function handleStatusCommand(
 
   const workingDir = getEffectiveWorkingDir(channelId, threadTs);
   const mode = getEffectiveMode(channelId, threadTs);
+  const autoApprove = getEffectiveAutoApprove(channelId, threadTs);
 
   // Get account info
   let accountInfo = 'Unknown';
@@ -461,6 +503,7 @@ export async function handleStatusCommand(
     `*Model:* ${modelName} (reasoning ${reasoning})`,
     `*Directory:* \`${workingDir}\``,
     `*Mode:* ${mode}`,
+    `*Auto-approve:* ${autoApprove ? 'enabled' : 'disabled'}`,
     `*Message size:* ${messageSize}${messageSizeSuffix}`,
     `*Account:* ${accountInfo}`,
     `*Session:* \`${effectiveThreadId || 'none'}\``,
@@ -966,6 +1009,7 @@ export function handleHelpCommand(): CommandResult {
 *Configuration:*
 \`/mode [ask|bypass]\` - View/set mode
 \`/sandbox [mode]\` - View/set sandbox mode
+\`/auto-approve [yes|no]\` - View/set auto-approve for approval prompts
 \`/model [model]\` - View/set model
 \`/reasoning [level]\` - View/set reasoning effort
   _Levels: minimal, low, medium, high, xhigh_
@@ -1017,6 +1061,8 @@ export async function handleCommand(
       return handleModeCommand(contextWithArgs);
     case 'sandbox':
       return handleSandboxCommand(contextWithArgs);
+    case 'auto-approve':
+      return handleAutoApproveCommand(contextWithArgs);
     case 'clear':
       return handleClearCommand(contextWithArgs);
     case 'model':

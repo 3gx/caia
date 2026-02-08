@@ -78,6 +78,19 @@ export class CodexPool {
     const approval = new ApprovalHandler(this.slack, codex);
 
     streaming.onApprovalRequest(async (request, context: StreamingContext) => {
+      const shouldAutoApprove =
+        context.autoApprove === true &&
+        (context.sandboxMode ?? 'danger-full-access') !== 'danger-full-access';
+
+      if (shouldAutoApprove && request.rpcId !== undefined) {
+        try {
+          await codex.respondToApproval(request.rpcId, 'accept');
+          return;
+        } catch (error) {
+          console.error(`[codex:${conversationKey}] auto-approve failed:`, error);
+        }
+      }
+
       await approval.handleApprovalRequest(
         request,
         context.channelId,
