@@ -898,6 +898,7 @@ export class StreamingManager {
 
       console.log(`[streaming] turn:completed: FOUND context key="${found.key}"`);
       const state = this.states.get(found.key);
+      try {
       if (state) {
           if (turnId && found.context.turnId !== turnId) {
             this.registerTurnId(found.key, turnId);
@@ -1294,12 +1295,11 @@ export class StreamingManager {
 
           // Clean up activity entries
           this.activityManager.clearEntries(found.key);
-
-          // CRITICAL FIX: Delete context and state from Maps to prevent stale contexts
-          // from being matched by findContextByThreadId on subsequent queries.
-          // Without this, multiple top-level messages sharing the same Codex threadId
-          // would accumulate contexts, and findContextByThreadId would always return
-          // the first (oldest) one, causing turn:completed to be handled on wrong context.
+        }
+      } finally {
+          // CRITICAL: Cleanup and callback MUST run regardless of exceptions or missing state.
+          // Without this, the busy flag in conversationTracker is never cleared, causing
+          // "Another request is already running" errors on subsequent queries.
           if (found.context.turnId) {
             this.turnIdToKey.delete(found.context.turnId);
           }
@@ -1310,7 +1310,7 @@ export class StreamingManager {
           if (this.turnCompletedCallback) {
             this.turnCompletedCallback(found.context, status);
           }
-        }
+      }
     });
 
     // Item started (tool use) - FILTER non-tool items, timer handles updates
