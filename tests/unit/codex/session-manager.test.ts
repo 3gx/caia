@@ -15,8 +15,10 @@ import {
   deleteChannelSession,
   getEffectiveWorkingDir,
   getEffectiveMode,
+  getEffectiveSandboxMode,
   getEffectiveThreadId,
   DEFAULT_MODE,
+  DEFAULT_SANDBOX_MODE,
 } from '../../../codex/src/session-manager.js';
 
 // Mock fs module
@@ -324,6 +326,80 @@ describe('Session Manager', () => {
 
       const mode = getEffectiveMode('C123', '123.456');
       expect(mode).toBe('ask');
+    });
+  });
+
+  describe('getEffectiveSandboxMode', () => {
+    it('returns channel sandbox mode', () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          channels: {
+            C123: {
+              sandboxMode: 'read-only',
+              threadId: null,
+              workingDir: '/test',
+              mode: 'bypass',
+              createdAt: 1000,
+              lastActiveAt: 2000,
+              pathConfigured: false,
+              configuredPath: null,
+              configuredBy: null,
+              configuredAt: null,
+            },
+          },
+        })
+      );
+
+      const sandboxMode = getEffectiveSandboxMode('C123');
+      expect(sandboxMode).toBe('read-only');
+    });
+
+    it('returns thread sandbox mode when threadTs provided', () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          channels: {
+            C123: {
+              sandboxMode: 'danger-full-access',
+              threadId: null,
+              workingDir: '/test',
+              mode: 'bypass',
+              createdAt: 1000,
+              lastActiveAt: 2000,
+              pathConfigured: false,
+              configuredPath: null,
+              configuredBy: null,
+              configuredAt: null,
+              threads: {
+                '123.456': {
+                  sandboxMode: 'workspace-write',
+                  mode: 'ask',
+                  threadId: null,
+                  forkedFrom: null,
+                  workingDir: '/test',
+                  createdAt: 1000,
+                  lastActiveAt: 2000,
+                  pathConfigured: false,
+                  configuredPath: null,
+                  configuredBy: null,
+                  configuredAt: null,
+                },
+              },
+            },
+          },
+        })
+      );
+
+      const sandboxMode = getEffectiveSandboxMode('C123', '123.456');
+      expect(sandboxMode).toBe('workspace-write');
+    });
+
+    it('returns default for unknown channel', () => {
+      mockFs.existsSync.mockReturnValue(false);
+
+      const sandboxMode = getEffectiveSandboxMode('C999');
+      expect(sandboxMode).toBe(DEFAULT_SANDBOX_MODE);
     });
   });
 

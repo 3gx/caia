@@ -8,7 +8,7 @@
 import { App, LogLevel } from '@slack/bolt';
 import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import { Mutex } from 'async-mutex';
-import { ApprovalRequestWithId, TurnContent, ReasoningEffort } from './codex-client.js';
+import { ApprovalRequestWithId, TurnContent, ReasoningEffort, SandboxMode } from './codex-client.js';
 import { makeConversationKey, StreamingContext } from './streaming.js';
 import { CodexPool } from './codex-pool.js';
 import { ConversationTracker, type ActiveContext } from '../../slack/dist/session/conversation-tracker.js';
@@ -32,16 +32,20 @@ import {
   deleteChannelSession,
   saveModelSettings,
   saveMode,
+  saveSandboxMode,
   mapModeToApprovalPolicy,
+  getEffectiveSandboxMode,
 } from './session-manager.js';
 import {
   buildActivityBlocks,
   buildModeStatusBlocks,
+  buildSandboxStatusBlocks,
   buildModelSelectionBlocks,
   buildReasoningSelectionBlocks,
   buildModelConfirmationBlocks,
   buildModelPickerCancelledBlocks,
   buildModePickerCancelledBlocks,
+  buildSandboxPickerCancelledBlocks,
   buildErrorBlocks,
   buildTextBlocks,
   buildAbortConfirmationModalView,
@@ -83,6 +87,12 @@ interface PendingModeSelection {
   threadTs?: string;
 }
 export const pendingModeSelections = new Map<string, PendingModeSelection>();
+interface PendingSandboxSelection {
+  originalTs: string;
+  channelId: string;
+  threadTs?: string;
+}
+export const pendingSandboxSelections = new Map<string, PendingSandboxSelection>();
 
 interface BusyContext extends ActiveContext {
   channelId: string;
@@ -872,6 +882,93 @@ function setupEventHandlers(): void {
     });
   });
 
+  // Handle /sandbox selection buttons
+  app.action(/^sandbox_select_(read-only|workspace-write|danger-full-access)$/, async ({ action, ack, body, client }) => {
+    await ack();
+
+    const actionId = (action as { action_id: string }).action_id;
+    const newSandbox = actionId.replace('sandbox_select_', '') as SandboxMode;
+    const channelId = body.channel?.id;
+    const messageTs = (body as { message?: { ts?: string; thread_ts?: string } }).message?.ts;
+    if (!channelId || !messageTs) return;
+
+    const pending = pendingSandboxSelections.get(messageTs);
+    const threadTs = pending?.threadTs ||
+      (body as { message?: { ts?: string; thread_ts?: string } }).message?.thread_ts ||
+      messageTs;
+    const conversationKey = makeConversationKey(channelId, threadTs);
+    const runtime = getRuntimeIfExists(conversationKey);
+
+    if (runtime?.streaming.isStreaming(conversationKey)) {
+      await client.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        text: 'Cannot change sandbox while processing',
+        blocks: buildErrorBlocks('Cannot change sandbox while a turn is running. Please wait or abort.'),
+      });
+      if (pending) {
+        await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
+        pendingSandboxSelections.delete(messageTs);
+      }
+      return;
+    }
+
+    const currentSandbox = getEffectiveSandboxMode(channelId, threadTs);
+    try {
+      if (runtime) {
+        await runtime.codex.restartWithSandbox(newSandbox);
+      }
+      await saveSandboxMode(channelId, threadTs, newSandbox);
+
+      const context = runtime?.streaming.getContext(conversationKey);
+      if (context) {
+        context.sandboxMode = newSandbox;
+      }
+
+      await client.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        text: `Sandbox changed: ${currentSandbox} → ${newSandbox}`,
+        blocks: buildSandboxStatusBlocks({ currentSandbox, newSandbox }),
+      });
+    } catch (error) {
+      const errMsg = toUserMessage(error);
+      await client.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        text: errMsg,
+        blocks: buildErrorBlocks(errMsg),
+      });
+    } finally {
+      if (pending) {
+        await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
+        pendingSandboxSelections.delete(messageTs);
+      }
+    }
+  });
+
+  // Handle /sandbox cancel button
+  app.action('sandbox_picker_cancel', async ({ ack, body, client }) => {
+    await ack();
+
+    const channelId = body.channel?.id;
+    const messageTs = (body as { message?: { ts?: string } }).message?.ts;
+    if (!channelId || !messageTs) return;
+
+    const pending = pendingSandboxSelections.get(messageTs);
+    if (pending) {
+      await removeProcessingEmoji(client, pending.channelId, pending.originalTs);
+      pendingSandboxSelections.delete(messageTs);
+    }
+
+    await client.chat.update({
+      channel: channelId,
+      ts: messageTs,
+      text: 'Sandbox selection cancelled',
+      blocks: buildSandboxPickerCancelledBlocks(),
+    });
+  });
+
   // Handle model button clicks (Step 1 of 2)
   // Pattern matches model_select_<model_value>
   app.action(/^model_select_(.+)$/, async ({ action, ack, body, client }) => {
@@ -1153,6 +1250,26 @@ async function handleUserMessage(
       return;
     }
 
+    if (commandResult.showSandboxSelection) {
+      await markProcessingStart(app.client, channelId, messageTs);
+      const response = await app.client.chat.postMessage({
+        channel: channelId,
+        thread_ts: postingThreadTs,
+        blocks: commandResult.blocks,
+        text: commandResult.text,
+      });
+
+      if (response.ts) {
+        pendingSandboxSelections.set(response.ts, {
+          originalTs: messageTs,
+          channelId,
+          threadTs: postingThreadTs,
+        });
+        await markApprovalWait(app.client, channelId, messageTs);
+      }
+      return;
+    }
+
     // Send command response in thread
     await app.client.chat.postMessage({
       channel: channelId,
@@ -1263,7 +1380,12 @@ async function handleUserMessage(
   const defaultModel = await resolveDefaultModel(runtime.codex);
   const effectiveModel = session?.model || defaultModel;
   const effectiveReasoning = session?.reasoningEffort || DEFAULT_REASONING;
-  const effectiveSandbox = runtime.codex.getSandboxMode();
+  const configuredSandbox = getEffectiveSandboxMode(channelId, postingThreadTs);
+  const runtimeSandbox = runtime.codex.getSandboxMode() ?? 'danger-full-access';
+  if (runtimeSandbox !== configuredSandbox) {
+    await runtime.codex.restartWithSandbox(configuredSandbox);
+  }
+  const effectiveSandbox = runtime.codex.getSandboxMode() ?? configuredSandbox;
 
   // Post initial "processing" message IN THE THREAD using activity format
   const initialResult = await app.client.chat.postMessage({

@@ -11,13 +11,14 @@
 import fs from 'fs';
 import { SessionStoreManager } from '../../slack/dist/session/base-session-manager.js';
 import type { UnifiedMode } from '../../slack/dist/session/types.js';
-import type { ApprovalPolicy, ReasoningEffort } from './codex-client.js';
+import type { ApprovalPolicy, ReasoningEffort, SandboxMode } from './codex-client.js';
 
 
 /**
  * Default unified mode.
  */
 export const DEFAULT_MODE: UnifiedMode = 'bypass';
+export const DEFAULT_SANDBOX_MODE: SandboxMode = 'danger-full-access';
 
 /**
  * Usage data from the last query (for /status and /context commands).
@@ -51,6 +52,8 @@ export interface Session {
   model?: string;
   /** Reasoning effort level */
   reasoningEffort?: ReasoningEffort;
+  /** Sandbox mode */
+  sandboxMode?: SandboxMode;
   /** Session creation time */
   createdAt: number;
   /** Last activity time */
@@ -90,6 +93,8 @@ export interface ThreadSession {
   model?: string;
   /** Reasoning effort level (inherited from channel) */
   reasoningEffort?: ReasoningEffort;
+  /** Sandbox mode (inherited from channel) */
+  sandboxMode?: SandboxMode;
   /** Thread creation time */
   createdAt: number;
   /** Last activity time */
@@ -207,6 +212,7 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       mode: normalizeMode(existing?.mode),
       model: existing?.model,
       reasoningEffort: existing?.reasoningEffort,
+      sandboxMode: existing?.sandboxMode ?? DEFAULT_SANDBOX_MODE,
       createdAt: existing?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
       pathConfigured: existing?.pathConfigured ?? false,
@@ -262,6 +268,7 @@ export async function saveThreadSession(
           threadId: null,
           workingDir: process.cwd(),
           mode: DEFAULT_MODE,
+          sandboxMode: DEFAULT_SANDBOX_MODE,
           createdAt: Date.now(),
           lastActiveAt: Date.now(),
           pathConfigured: false,
@@ -286,6 +293,7 @@ export async function saveThreadSession(
       mode: normalizeMode(existingThread?.mode ?? mainChannel.mode),
       model: existingThread?.model ?? mainChannel.model,
       reasoningEffort: existingThread?.reasoningEffort ?? mainChannel.reasoningEffort,
+      sandboxMode: existingThread?.sandboxMode ?? mainChannel.sandboxMode ?? DEFAULT_SANDBOX_MODE,
       createdAt: existingThread?.createdAt ?? Date.now(),
       lastActiveAt: Date.now(),
       pathConfigured: existingThread?.pathConfigured ?? mainChannel.pathConfigured,
@@ -339,6 +347,21 @@ export async function saveMode(
   await saveSession(channelId, { mode: normalized });
   if (threadTs) {
     await saveThreadSession(channelId, threadTs, { mode: normalized });
+  }
+}
+
+/**
+ * Save sandbox mode for both channel and thread (if provided).
+ * Ensures new threads inherit the latest selection.
+ */
+export async function saveSandboxMode(
+  channelId: string,
+  threadTs: string | undefined,
+  sandboxMode: SandboxMode
+): Promise<void> {
+  await saveSession(channelId, { sandboxMode });
+  if (threadTs) {
+    await saveThreadSession(channelId, threadTs, { sandboxMode });
   }
 }
 
@@ -664,6 +687,24 @@ export function getEffectiveMode(
 
   const session = getSession(channelId);
   return normalizeMode(session?.mode);
+}
+
+/**
+ * Get effective sandbox mode for a session.
+ */
+export function getEffectiveSandboxMode(
+  channelId: string,
+  threadTs?: string
+): SandboxMode {
+  if (threadTs) {
+    const threadSession = getThreadSession(channelId, threadTs);
+    if (threadSession?.sandboxMode) {
+      return threadSession.sandboxMode;
+    }
+  }
+
+  const session = getSession(channelId);
+  return session?.sandboxMode ?? DEFAULT_SANDBOX_MODE;
 }
 
 /**

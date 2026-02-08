@@ -9,7 +9,7 @@ const capabilities: AgentCapabilities = {
   supportsTerminalWatch: false,
   supportsThinkingTokens: false,
   supportsPlanFile: false,
-  supportsSandbox: false,
+  supportsSandbox: true,
   supportsReasoningEffort: true,
   supportsModelSelection: true,
 };

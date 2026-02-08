@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CodexClient } from '../../../codex/src/codex-client.js';
 import {
   handleModeCommand,
+  handleSandboxCommand,
   handleModelCommand,
   handleResumeCommand,
   handleMessageSizeCommand,
@@ -21,9 +22,11 @@ vi.mock('../../../codex/src/session-manager.js', () => ({
   saveSession: vi.fn(),
   saveThreadSession: vi.fn(),
   saveMode: vi.fn(),
+  saveSandboxMode: vi.fn(),
   saveThreadCharLimit: vi.fn(),
   clearSession: vi.fn(),
   getEffectiveWorkingDir: vi.fn(() => '/tmp'),
+  getEffectiveSandboxMode: vi.fn(() => 'danger-full-access'),
 }));
 
 describe('Command Handlers', () => {
@@ -51,6 +54,28 @@ describe('Command Handlers', () => {
     const result = await handleModeCommand({ ...baseContext, text: 'invalid' });
 
     expect(result.text).toContain('Invalid mode');
+  });
+
+  it('shows sandbox selection prompt when no args', async () => {
+    const result = await handleSandboxCommand({ ...baseContext, text: '' });
+
+    expect(result.blocks.length).toBeGreaterThan(0);
+    expect(result.blocks[0].text?.text).toContain('Select Sandbox');
+    expect(result.showSandboxSelection).toBe(true);
+  });
+
+  it('returns error for invalid sandbox mode', async () => {
+    const result = await handleSandboxCommand({ ...baseContext, text: 'invalid' });
+
+    expect(result.text).toContain('Invalid sandbox mode');
+  });
+
+  it('saves sandbox mode when valid', async () => {
+    const { saveSandboxMode } = await import('../../../codex/src/session-manager.js');
+    const result = await handleSandboxCommand({ ...baseContext, text: 'read-only' });
+
+    expect(saveSandboxMode).toHaveBeenCalledWith(baseContext.channelId, baseContext.threadTs, 'read-only');
+    expect(result.text).toContain('Sandbox changed');
   });
 
   it('shows model selection prompt (no args)', async () => {

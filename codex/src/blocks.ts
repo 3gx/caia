@@ -545,6 +545,11 @@ export interface ModeStatusBlockParams {
   newMode?: UnifiedMode;
 }
 
+export interface SandboxStatusBlockParams {
+  currentSandbox: SandboxMode;
+  newSandbox?: SandboxMode;
+}
+
 /**
  * Build blocks for /mode command response.
  */
@@ -648,6 +653,117 @@ export function buildModePickerCancelledBlocks(): Block[] {
       text: {
         type: 'mrkdwn',
         text: ':x: Mode selection cancelled.',
+      },
+    },
+  ];
+}
+
+/**
+ * Build blocks for /sandbox command response.
+ */
+export function buildSandboxStatusBlocks(params: SandboxStatusBlockParams): Block[] {
+  const { currentSandbox, newSandbox } = params;
+  const blocks: Block[] = [];
+
+  const descriptions: Record<SandboxMode, string> = {
+    'read-only': 'Read-only sandbox (no writes)',
+    'workspace-write': 'Allow writes inside workspace only',
+    'danger-full-access': 'Full access (no sandbox restrictions)',
+  };
+
+  if (newSandbox) {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `:shield: Sandbox changed: *${currentSandbox}* → *${newSandbox}*`,
+      },
+    });
+  } else {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `:shield: *Current Sandbox:* ${currentSandbox}\n_${descriptions[currentSandbox]}_`,
+      },
+    });
+
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: 'Available sandbox modes: read-only, workspace-write, danger-full-access',
+        },
+      ],
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Build blocks for /sandbox selection prompt.
+ */
+export function buildSandboxSelectionBlocks(currentSandbox: SandboxMode): Block[] {
+  const button = (mode: SandboxMode, label: string) => ({
+    type: 'button',
+    text: { type: 'plain_text', text: label },
+    action_id: `sandbox_select_${mode}`,
+    value: mode,
+    ...(currentSandbox === mode ? { style: 'primary' as const } : {}),
+  });
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `:shield: *Select Sandbox*\nCurrent: *${currentSandbox}*`,
+      },
+    },
+    {
+      type: 'actions',
+      block_id: 'sandbox_selection',
+      elements: [
+        button('read-only', ':lock: read-only'),
+        button('workspace-write', ':hammer_and_wrench: workspace-write'),
+        button('danger-full-access', ':warning: danger-full-access'),
+      ],
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: '- *read-only* - No filesystem writes\n- *workspace-write* - Write only in workspace\n- *danger-full-access* - No sandbox restrictions',
+        },
+      ],
+    },
+    {
+      type: 'actions',
+      block_id: 'sandbox_cancel',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Cancel' },
+          action_id: 'sandbox_picker_cancel',
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build blocks for sandbox picker cancellation.
+ */
+export function buildSandboxPickerCancelledBlocks(): Block[] {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: ':x: Sandbox selection cancelled.',
       },
     },
   ];

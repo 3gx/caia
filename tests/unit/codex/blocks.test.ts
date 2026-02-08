@@ -13,6 +13,9 @@ import {
   buildModeStatusBlocks,
   buildModeSelectionBlocks,
   buildModePickerCancelledBlocks,
+  buildSandboxStatusBlocks,
+  buildSandboxSelectionBlocks,
+  buildSandboxPickerCancelledBlocks,
   buildClearBlocks,
   buildTextBlocks,
   buildErrorBlocks,
@@ -263,6 +266,57 @@ describe('Block Kit Builders', () => {
   describe('buildModePickerCancelledBlocks', () => {
     it('shows cancellation message', () => {
       const blocks: any[] = buildModePickerCancelledBlocks();
+      expect(blocks[0].text?.text).toContain('cancelled');
+    });
+  });
+
+  describe('buildSandboxStatusBlocks', () => {
+    it('shows current sandbox when no change', () => {
+      const blocks: any[] = buildSandboxStatusBlocks({
+        currentSandbox: 'danger-full-access',
+      });
+
+      expect(blocks.length).toBeGreaterThanOrEqual(1);
+      expect(blocks[0].text?.text).toContain('danger-full-access');
+    });
+
+    it('shows sandbox change when newSandbox provided', () => {
+      const blocks: any[] = buildSandboxStatusBlocks({
+        currentSandbox: 'danger-full-access',
+        newSandbox: 'read-only',
+      });
+
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].text?.text).toContain('danger-full-access');
+      expect(blocks[0].text?.text).toContain('read-only');
+    });
+  });
+
+  describe('buildSandboxSelectionBlocks', () => {
+    it('shows selection buttons and current sandbox', () => {
+      const blocks: any[] = buildSandboxSelectionBlocks('workspace-write');
+
+      expect(blocks[0].text?.text).toContain('Select Sandbox');
+      expect(blocks[0].text?.text).toContain('workspace-write');
+      expect(blocks[1].type).toBe('actions');
+      const actions = blocks[1].elements as Array<{ action_id: string; style?: string }>;
+      expect(actions.map((a) => a.action_id)).toContain('sandbox_select_workspace-write');
+      const current = actions.find((a) => a.action_id === 'sandbox_select_workspace-write');
+      expect(current?.style).toBe('primary');
+    });
+
+    it('includes cancel button', () => {
+      const blocks: any[] = buildSandboxSelectionBlocks('danger-full-access');
+      const cancelBlock = blocks.find((b) => b.block_id === 'sandbox_cancel');
+      expect(cancelBlock).toBeDefined();
+      const elements = cancelBlock?.elements as Array<{ action_id: string }>;
+      expect(elements[0].action_id).toBe('sandbox_picker_cancel');
+    });
+  });
+
+  describe('buildSandboxPickerCancelledBlocks', () => {
+    it('shows cancellation message', () => {
+      const blocks: any[] = buildSandboxPickerCancelledBlocks();
       expect(blocks[0].text?.text).toContain('cancelled');
     });
   });

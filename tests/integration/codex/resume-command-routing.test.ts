@@ -17,9 +17,11 @@ vi.mock('../../../codex/src/session-manager.js', () => {
     saveSession,
     saveThreadSession,
     saveThreadCharLimit: vi.fn(),
+    saveSandboxMode: vi.fn(),
     clearSession: vi.fn(),
     getEffectiveMode: vi.fn(() => 'ask'),
     getEffectiveWorkingDir: vi.fn(() => '/tmp'),
+    getEffectiveSandboxMode: vi.fn(() => 'danger-full-access'),
   };
 });
 

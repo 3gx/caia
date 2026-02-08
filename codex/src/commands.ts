@@ -3,6 +3,7 @@
  *
  * Available commands:
  * - /mode - View/set mode (plan/ask/bypass)
+ * - /sandbox - View/set sandbox mode
  * - /clear - Clear session (start fresh)
  * - /model - View/set model
  * - /reasoning - View/set reasoning effort
@@ -14,7 +15,7 @@
  */
 
 import type { WebClient } from '@slack/web-api';
-import type { CodexClient, ReasoningEffort } from './codex-client.js';
+import type { CodexClient, ReasoningEffort, SandboxMode } from './codex-client.js';
 import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import {
   getSession,
@@ -22,15 +23,19 @@ import {
   getThreadSession,
   saveThreadSession,
   saveMode,
+  saveSandboxMode,
   saveThreadCharLimit,
   clearSession,
   getEffectiveMode,
+  getEffectiveSandboxMode,
   getEffectiveWorkingDir,
   LastUsage,
 } from './session-manager.js';
 import {
   buildModeStatusBlocks,
   buildModeSelectionBlocks,
+  buildSandboxStatusBlocks,
+  buildSandboxSelectionBlocks,
   buildClearBlocks,
   buildModelSelectionBlocks,
   buildReasoningStatusBlocks,
@@ -83,6 +88,7 @@ export interface CommandResult {
   showModelSelection?: boolean; // Flag to trigger model picker with emoji tracking
   modelOptions?: ModelInfo[]; // Models shown in picker (for follow-up display resolution)
   showModeSelection?: boolean; // Flag to trigger mode picker with emoji tracking
+  showSandboxSelection?: boolean; // Flag to trigger sandbox picker with emoji tracking
 }
 
 /**
@@ -162,6 +168,41 @@ export async function handleModeCommand(
   return {
     blocks: buildModeStatusBlocks({ currentMode, newMode }),
     text: `Mode changed: ${currentMode} → ${newMode}`,
+  };
+}
+
+/**
+ * Handle /sandbox command.
+ */
+export async function handleSandboxCommand(
+  context: CommandContext
+): Promise<CommandResult> {
+  const { channelId, threadTs, text: args } = context;
+  const currentSandbox = getEffectiveSandboxMode(channelId, threadTs);
+
+  if (!args) {
+    return {
+      blocks: buildSandboxSelectionBlocks(currentSandbox),
+      text: `Select sandbox (current: ${currentSandbox})`,
+      showSandboxSelection: true,
+    };
+  }
+
+  const newSandbox = args.toLowerCase().trim() as SandboxMode;
+  const validModes: SandboxMode[] = ['read-only', 'workspace-write', 'danger-full-access'];
+  if (!validModes.includes(newSandbox)) {
+    return {
+      blocks: buildErrorBlocks(
+        `Invalid sandbox mode: "${args}"\nValid sandbox modes: ${validModes.join(', ')}`
+      ),
+      text: `Invalid sandbox mode: ${args}`,
+    };
+  }
+
+  await saveSandboxMode(channelId, threadTs, newSandbox);
+  return {
+    blocks: buildSandboxStatusBlocks({ currentSandbox, newSandbox }),
+    text: `Sandbox changed: ${currentSandbox} → ${newSandbox}`,
   };
 }
 
@@ -924,6 +965,7 @@ export function handleHelpCommand(): CommandResult {
 
 *Configuration:*
 \`/mode [ask|bypass]\` - View/set mode
+\`/sandbox [mode]\` - View/set sandbox mode
 \`/model [model]\` - View/set model
 \`/reasoning [level]\` - View/set reasoning effort
   _Levels: minimal, low, medium, high, xhigh_
@@ -942,6 +984,11 @@ export function handleHelpCommand(): CommandResult {
 *Modes:*
 • \`ask\` - Ask before tool use (default)
 • \`bypass\` - Run tools without approval
+
+*Sandbox Modes:*
+• \`read-only\` - Read-only sandbox
+• \`workspace-write\` - Write inside workspace only
+• \`danger-full-access\` - No sandbox restrictions
 `.trim();
 
   return {
@@ -968,6 +1015,8 @@ export async function handleCommand(
   switch (command) {
     case 'mode':
       return handleModeCommand(contextWithArgs);
+    case 'sandbox':
+      return handleSandboxCommand(contextWithArgs);
     case 'clear':
       return handleClearCommand(contextWithArgs);
     case 'model':
