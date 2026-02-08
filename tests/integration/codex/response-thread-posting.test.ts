@@ -15,12 +15,22 @@ function createSlackMock() {
     chat: {
       update: vi.fn().mockResolvedValue({ ts: '123.456' }),
       postMessage: vi.fn().mockResolvedValue({ ts: 'thread.msg.ts' }),
+      getPermalink: vi.fn().mockImplementation(({ channel, message_ts }: { channel: string; message_ts: string }) =>
+        Promise.resolve({
+          ok: true,
+          permalink: `https://slack.com/archives/${channel}/p${String(message_ts).replace('.', '')}`,
+        })
+      ),
     },
     reactions: {
       add: vi.fn().mockResolvedValue({}),
       remove: vi.fn().mockResolvedValue({}),
     },
   } as unknown as WebClient;
+}
+
+async function tick(ms = 20): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createContext(): StreamingContext {
@@ -69,5 +79,34 @@ describe('Response Thread Posting', () => {
     const calls = (slack.chat.postMessage as any).mock.calls;
     const texts = calls.map((call: any[]) => call[0]?.text || '');
     expect(texts.some((t: string) => t.includes('Short response content'))).toBe(true);
+  });
+
+  it('posts a dedicated Response thread message even when response segments were streamed earlier', async () => {
+    const context = createContext();
+    streaming.startStreaming(context);
+
+    codex.emit('item:delta', { itemId: 'msg-1', delta: 'Segment text from streaming' });
+    await tick();
+
+    codex.emit('turn:completed', {
+      threadId: context.threadId,
+      turnId: context.turnId,
+      status: 'completed',
+    });
+    await tick(30);
+
+    const payloads = (slack.chat.postMessage as any).mock.calls.map((call: any[]) => call[0]);
+    const postedTexts = payloads.map((payload: any) => String(payload?.text || ''));
+
+    const generatingIndex = postedTexts.findIndex(
+      (text: string) => text.includes('*Generating*') && text.includes('Segment text from streaming')
+    );
+    const responseIndex = postedTexts.findIndex(
+      (text: string) => text.includes(':speech_balloon: *Response*') && text.includes('Segment text from streaming')
+    );
+
+    expect(generatingIndex).toBeGreaterThanOrEqual(0);
+    expect(responseIndex).toBeGreaterThanOrEqual(0);
+    expect(responseIndex).toBeGreaterThan(generatingIndex);
   });
 });
