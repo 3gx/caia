@@ -52,7 +52,7 @@ async function tick(ms = 20): Promise<void> {
 }
 
 describe('response segment posting linearity', () => {
-  it('posts first response segment during streaming and links response in status panel', async () => {
+  it('posts first response segment during streaming and links Response only after completion', async () => {
     const slack = createSlackMock();
     const codex = new EventEmitter() as unknown as CodexClient;
     const streaming = new StreamingManager(slack, codex);
@@ -78,8 +78,18 @@ describe('response segment posting linearity', () => {
     const latestUpdate = updateCalls[updateCalls.length - 1]?.[0];
     const activityText = latestUpdate?.blocks?.[0]?.text?.text || '';
 
-    expect(activityText).toContain(':speech_balloon:');
-    expect(activityText).toContain('|Response>');
+    expect(activityText).not.toContain(':speech_balloon:');
+    expect(activityText).not.toContain('|Response>');
+
+    codex.emit('turn:completed', { threadId: context.threadId, turnId: context.turnId, status: 'completed' });
+    await tick(30);
+
+    const finalUpdateCalls = (slack.chat.update as any).mock.calls;
+    const finalUpdate = finalUpdateCalls[finalUpdateCalls.length - 1]?.[0];
+    const finalActivityText = finalUpdate?.blocks?.[0]?.text?.text || '';
+
+    expect(finalActivityText).toContain(':speech_balloon:');
+    expect(finalActivityText).toContain('|Response>');
 
     streaming.stopStreaming(key);
   });

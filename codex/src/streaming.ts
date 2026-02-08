@@ -1712,16 +1712,8 @@ export class StreamingManager {
                   );
                   state.postedResponseSegmentIds.add(segmentId);
 
-                  // Refresh jump-link target from latest posted response segment.
-                  const latestEntry = [...this.activityManager.getEntries(key)].reverse().find(
-                    (entry) => entry.type === 'generating' && entry.responseSegmentId === segmentId
-                  );
-                  if (latestEntry?.threadMessageTs) {
-                    state.responseMessageTs = latestEntry.threadMessageTs;
-                  }
-                  if (latestEntry?.threadMessageLink) {
-                    state.responseMessageLink = latestEntry.threadMessageLink;
-                  }
+                  // Keep response jump-link reserved for the final :speech_balloon: response post.
+                  // Segment posts are timeline activity and should not claim final response linkage.
                 }
               } catch (err) {
                 console.error('[item:delta] Response segment flush failed:', err);
@@ -2045,9 +2037,9 @@ export class StreamingManager {
         activityText = `_... ${hidden} earlier entries ..._\n` + activityText;
       }
 
-      // Add response preview if we have response content
-      // (Generating entry shows "Generating...", this shows final "Response" with preview)
-      if (state.text) {
+      // Add response preview only after final response thread post exists.
+      // Prevents misleading duplicate "Response" lines while stream is still generating.
+      if (state.text && state.responseMessageTs) {
         const preview = state.text.slice(0, 200).replace(/\n/g, ' ');
         const responseLabel = state.responseMessageLink
           ? `*<${state.responseMessageLink}|Response>*`
