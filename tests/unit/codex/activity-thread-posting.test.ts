@@ -11,6 +11,7 @@ import {
   postResponseToThread,
   postErrorToThread,
   uploadMarkdownAndPngWithResponse,
+  syncResponseSegmentEntryInThread,
   ActivityThreadManager,
   MESSAGE_SIZE_DEFAULT,
   ActivityEntry,
@@ -394,6 +395,95 @@ describe('postResponseToThread', () => {
     await postResponseToThread(mockClient, 'C123', '456.789', longContent, 10000);
 
     expect(mockClient.files.uploadV2).toHaveBeenCalled();
+  });
+});
+
+describe('syncResponseSegmentEntryInThread', () => {
+  let mockClient: ReturnType<typeof createMockClient>;
+  let manager: ActivityThreadManager;
+
+  beforeEach(() => {
+    mockClient = createMockClient();
+    manager = new ActivityThreadManager();
+    vi.clearAllMocks();
+  });
+
+  it('updates streamed response segment inline when under limit', async () => {
+    const key = 'C123_segment_short';
+    const entry: ActivityEntry = {
+      type: 'generating',
+      timestamp: Date.now(),
+      responseSegmentId: 'response-0',
+      charCount: 5,
+      message: 'hello',
+    };
+
+    manager.addEntry(key, entry);
+    await flushActivityBatchToThread(manager, key, mockClient, 'C123', '456.789', { force: true });
+
+    const ok = await syncResponseSegmentEntryInThread(
+      manager,
+      key,
+      mockClient,
+      'C123',
+      '456.789',
+      entry,
+      'short inline response',
+      { durationMs: 1200 }
+    );
+
+    expect(ok).toBe(true);
+    expect(mockClient.chat.update).toHaveBeenCalled();
+    const latestUpdate = mockClient.chat.update.mock.calls[mockClient.chat.update.mock.calls.length - 1][0];
+    expect(String(latestUpdate.text)).toContain(':speech_balloon: *Response*');
+    expect(String(latestUpdate.text)).toContain('short inline response');
+    expect(mockClient.files.uploadV2).not.toHaveBeenCalled();
+  });
+
+  it('uploads .md/.png once for over-limit streamed segment and marks attached', async () => {
+    const key = 'C123_segment_long';
+    const entry: ActivityEntry = {
+      type: 'generating',
+      timestamp: Date.now(),
+      responseSegmentId: 'response-1',
+      charCount: 5,
+      message: 'hello',
+    };
+
+    manager.addEntry(key, entry);
+    await flushActivityBatchToThread(manager, key, mockClient, 'C123', '456.789', { force: true });
+
+    const longContent = 'L'.repeat(MESSAGE_SIZE_DEFAULT + 400);
+
+    const ok = await syncResponseSegmentEntryInThread(
+      manager,
+      key,
+      mockClient,
+      'C123',
+      '456.789',
+      entry,
+      longContent,
+      { durationMs: 2300 }
+    );
+
+    expect(ok).toBe(true);
+    expect(mockClient.chat.update).toHaveBeenCalled();
+    const latestUpdate = mockClient.chat.update.mock.calls[mockClient.chat.update.mock.calls.length - 1][0];
+    expect(String(latestUpdate.text)).toContain('_Full response attached._');
+    expect(mockClient.files.uploadV2).toHaveBeenCalledTimes(1);
+
+    await syncResponseSegmentEntryInThread(
+      manager,
+      key,
+      mockClient,
+      'C123',
+      '456.789',
+      entry,
+      longContent,
+      { durationMs: 2400 }
+    );
+
+    expect(mockClient.files.uploadV2).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -4,6 +4,10 @@ import type { WebClient } from '@slack/web-api';
 import type { CodexClient } from '../../../codex/src/codex-client.js';
 import { StreamingManager, makeConversationKey, type StreamingContext } from '../../../codex/src/streaming.js';
 
+vi.mock('../../../slack/dist/markdown-png.js', () => ({
+  markdownToPng: vi.fn().mockResolvedValue(Buffer.from('fake-png-data')),
+}));
+
 function createSlackMock() {
   let postCounter = 0;
   return {
@@ -23,6 +27,29 @@ function createSlackMock() {
     reactions: {
       add: vi.fn().mockResolvedValue({}),
       remove: vi.fn().mockResolvedValue({}),
+    },
+    files: {
+      uploadV2: vi.fn().mockResolvedValue({
+        files: [
+          {
+            id: 'FSEGMENT1',
+            shares: {
+              public: {
+                C123: [{ ts: 'file.1' }],
+              },
+            },
+          },
+        ],
+      }),
+      info: vi.fn().mockResolvedValue({
+        file: {
+          shares: {
+            public: {
+              C123: [{ ts: 'file.1' }],
+            },
+          },
+        },
+      }),
     },
   } as unknown as WebClient;
 }
@@ -137,6 +164,33 @@ describe('response segment posting linearity', () => {
     expect(responseSegments.length).toBeGreaterThanOrEqual(2);
     expect(responseSegments[0].responseSegmentId).toBe('response-0');
     expect(responseSegments[1].responseSegmentId).toBe('response-1');
+
+    streaming.stopStreaming(key);
+  });
+
+  it('applies final-style attachment semantics to streamed over-limit segment', async () => {
+    const slack = createSlackMock() as any;
+    const codex = new EventEmitter() as unknown as CodexClient;
+    const streaming = new StreamingManager(slack, codex);
+    const context = createContext();
+
+    streaming.startStreaming(context);
+    const key = makeConversationKey(context.channelId, context.threadTs);
+
+    const overLimitChunk = 'R'.repeat(3600);
+    codex.emit('item:delta', { itemId: 'msg-1', delta: overLimitChunk });
+    await tick(40);
+
+    const postedTexts = (slack.chat.postMessage as any).mock.calls.map((call: any[]) => String(call[0]?.text || ''));
+    const updatedTexts = (slack.chat.update as any).mock.calls.map((call: any[]) => String(call[0]?.text || ''));
+
+    expect(postedTexts.some((text: string) => text.includes('*Response*'))).toBe(true);
+    expect(updatedTexts.some((text: string) => text.includes('_Full response attached._'))).toBe(true);
+    expect((slack.files.uploadV2 as any).mock.calls.length).toBe(1);
+
+    const entries = (streaming as any).activityManager.getEntries(key);
+    const responseEntry = entries.find((entry: any) => entry.type === 'generating' && entry.responseSegmentId);
+    expect(responseEntry?.threadMessageLink).toBeDefined();
 
     streaming.stopStreaming(key);
   });

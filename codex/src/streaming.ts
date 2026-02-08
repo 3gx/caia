@@ -54,7 +54,7 @@ import {
   buildActivityLogText,
   flushActivityBatchToThread,
   updateThinkingEntryInThread,
-  updateResponseEntryInThread,
+  syncResponseSegmentEntryInThread,
   getThinkingEntryTs,
   getMessagePermalink,
   uploadFilesToThread,
@@ -795,6 +795,54 @@ export class StreamingManager {
     }
   }
 
+  private getThreadCharLimit(context: StreamingContext): number | undefined {
+    const sessionForLimit = context.threadTs
+      ? getThreadSession(context.channelId, context.threadTs)
+      : getSession(context.channelId);
+    return sessionForLimit?.threadCharLimit;
+  }
+
+  private async syncActiveResponseSegment(
+    conversationKey: string,
+    context: StreamingContext,
+    state: StreamingState,
+    segmentId: string
+  ): Promise<void> {
+    const content = state.responseSegments.get(segmentId) || '';
+    if (!content.trim()) {
+      return;
+    }
+
+    const entries = this.activityManager.getEntries(conversationKey);
+    const segmentEntry = [...entries]
+      .reverse()
+      .find((entry) => entry.type === 'generating' && entry.responseSegmentId === segmentId);
+
+    if (!segmentEntry) {
+      return;
+    }
+
+    segmentEntry.charCount = content.length;
+    segmentEntry.message = buildResponsePreview(content);
+    const durationMs = Date.now() - context.startTime;
+    segmentEntry.durationMs = durationMs;
+
+    await syncResponseSegmentEntryInThread(
+      this.activityManager,
+      conversationKey,
+      this.slack,
+      context.channelId,
+      state.threadParentTs || context.originalTs,
+      segmentEntry,
+      content,
+      {
+        durationMs,
+        charLimit: this.getThreadCharLimit(context),
+        userId: context.userId,
+      }
+    );
+  }
+
   private setupEventHandlers(): void {
     // Turn started - update turnId and check for pending abort
     this.codex.on('turn:started', ({ threadId, turnId }) => {
@@ -1176,18 +1224,15 @@ export class StreamingManager {
               (entry) => entry.type === 'generating' && entry.responseSegmentId
             );
             if (latestSegmentEntry) {
-              latestSegmentEntry.charCount = state.text.length;
-              latestSegmentEntry.durationMs = responseDurationMs;
-              latestSegmentEntry.message = buildResponsePreview(
-                state.responseSegments.get(latestSegmentEntry.responseSegmentId || '') || state.text
-              );
-              await updateResponseEntryInThread(
-                this.activityManager,
-                found.key,
-                this.slack,
-                channelId,
-                latestSegmentEntry
-              ).catch((err) => console.error('[streaming] Response segment finalize failed:', err));
+              const latestSegmentId = latestSegmentEntry.responseSegmentId;
+              if (latestSegmentId) {
+                await this.syncActiveResponseSegment(
+                  found.key,
+                  found.context,
+                  state,
+                  latestSegmentId
+                ).catch((err) => console.error('[streaming] Response segment finalize failed:', err));
+              }
             }
 
             if (state.responseMessageTs && state.responseMessageLink) {
@@ -1294,8 +1339,16 @@ export class StreamingManager {
           // This ensures thinking AFTER a tool starts appears as a separate message
           state.currentThinkingSegmentId = undefined;
           state.thinkingSegmentCounter = (state.thinkingSegmentCounter || 0) + 1;
+          const context = this.contexts.get(key);
+          const closingResponseSegmentId = state.currentResponseSegmentId;
           // Split response into a new segment if tools interleave with assistant text.
           this.closeActiveResponseSegment(state);
+          if (context && closingResponseSegmentId) {
+            const mutex = getUpdateMutex(key);
+            mutex.runExclusive(async () => {
+              await this.syncActiveResponseSegment(key, context, state, closingResponseSegmentId);
+            }).catch((err) => console.error('[item:started] Response segment finalize failed:', err));
+          }
 
           // For TodoWrite, store the full structured input for todo extraction
           // For other tools, use the display input string
@@ -1335,7 +1388,6 @@ export class StreamingManager {
             toolUseId: itemId,
           });
 
-          const context = this.contexts.get(key);
           if (context) {
             flushActivityBatchToThread(
               this.activityManager,
@@ -1707,7 +1759,7 @@ export class StreamingManager {
               }
             }
 
-            // Post initial response segment entry immediately (update-rate cadence handles edits).
+            // Keep the streamed response segment in sync in-thread (same semantics as final response).
             const mutex = getUpdateMutex(key);
             mutex.runExclusive(async () => {
               try {
@@ -1721,12 +1773,11 @@ export class StreamingManager {
                     { force: true }
                   );
                   state.postedResponseSegmentIds.add(segmentId);
-
-                  // Keep response jump-link reserved for the final :speech_balloon: response post.
-                  // Segment posts are timeline activity and should not claim final response linkage.
                 }
+
+                await this.syncActiveResponseSegment(key, context, state, segmentId);
               } catch (err) {
-                console.error('[item:delta] Response segment flush failed:', err);
+                console.error('[item:delta] Response segment sync failed:', err);
               }
             });
           }
@@ -1744,8 +1795,16 @@ export class StreamingManager {
       for (const [key, state] of this.states) {
         if (state.isStreaming) {
           state.thinkingItemId = itemId;
+          const context = this.contexts.get(key);
+          const closingResponseSegmentId = state.currentResponseSegmentId;
           // Split response into a new segment if thinking interleaves with assistant text.
           this.closeActiveResponseSegment(state);
+          if (context && closingResponseSegmentId) {
+            const mutex = getUpdateMutex(key);
+            mutex.runExclusive(async () => {
+              await this.syncActiveResponseSegment(key, context, state, closingResponseSegmentId);
+            }).catch((err) => console.error('[thinking:started] Response segment finalize failed:', err));
+          }
 
           // FIX: Check if segment already created by thinking:delta (event ordering)
           if (!state.currentThinkingSegmentId) {
@@ -1771,7 +1830,6 @@ export class StreamingManager {
 
           // FIX: Use existing mutex pattern (fire-and-forget - no await needed in sync handler)
           // Mutex serializes work internally even without await
-          const context = this.contexts.get(key);
           const segmentId = state.currentThinkingSegmentId;
           const alreadyPosted = segmentId ? state.postedThinkingSegmentIds.has(segmentId) : false;
           if (context && segmentId && !alreadyPosted) {

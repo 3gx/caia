@@ -128,6 +128,7 @@ export interface ActivityBatch {
   toolIdToPostedTs: Map<string, string>; // toolUseId → message ts for update-in-place
   thinkingIdToPostedTs: Map<string, string>; // thinkingSegmentId → message ts for update-in-place
   responseIdToPostedTs: Map<string, string>; // responseSegmentId → message ts for update-in-place
+  responseIdToAttachmentTs: Map<string, string>; // responseSegmentId → attachment message ts (if uploaded)
 }
 
 // Spinner frames for animated status
@@ -174,6 +175,7 @@ export class ActivityThreadManager {
       toolIdToPostedTs: new Map(),
       thinkingIdToPostedTs: new Map(),
       responseIdToPostedTs: new Map(),
+      responseIdToAttachmentTs: new Map(),
     };
     batch.entries.push(entry);
     this.batches.set(conversationKey, batch);
@@ -1109,6 +1111,159 @@ export async function updateResponseEntryInThread(
     console.error('[updateResponseEntryInThread] Failed:', err);
     return false;
   }
+}
+
+/**
+ * Sync a streamed response segment thread entry with final response semantics.
+ * - Short content: inline full text
+ * - Long content: inline preview + .md/.png attachment (once per segment)
+ */
+export async function syncResponseSegmentEntryInThread(
+  manager: ActivityThreadManager,
+  conversationKey: string,
+  client: WebClient,
+  channel: string,
+  threadTs: string,
+  entry: ActivityEntry,
+  content: string,
+  options?: {
+    durationMs?: number;
+    charLimit?: number;
+    userId?: string;
+    useBlocks?: boolean;
+  }
+): Promise<boolean> {
+  const batch = (manager as any).batches?.get(conversationKey) as ActivityBatch | undefined;
+  const responseId = entry.responseSegmentId;
+  if (!batch || !responseId) return false;
+
+  const existingTs = batch.responseIdToPostedTs.get(responseId);
+  const limit = options?.charLimit ?? MESSAGE_SIZE_DEFAULT;
+  const durationMs = options?.durationMs ?? entry.durationMs;
+  const responseText = content.trim();
+  const header = formatThreadResponseMessage(responseText, durationMs);
+
+  if (!responseText) {
+    return updateResponseEntryInThread(manager, conversationKey, client, channel, entry, {
+      useBlocks: options?.useBlocks,
+    });
+  }
+
+  let messageText = `${header}\n\n${responseText}`;
+  let requiresAttachment = false;
+
+  if (responseText.length > limit) {
+    requiresAttachment = true;
+    const slackFormatted = markdownToSlack(responseText);
+    const attachedSuffix = '_Full response attached._';
+    const previewLimit = Math.max(0, limit - attachedSuffix.length - 2);
+    const preview =
+      slackFormatted.length <= previewLimit
+        ? slackFormatted
+        : truncateWithClosedFormatting(slackFormatted, previewLimit);
+    messageText = `${header}\n\n${preview}\n${attachedSuffix}`;
+  }
+
+  const baseBlocks = options?.useBlocks === false
+    ? undefined
+    : buildActivityEntryBlocks({ text: messageText });
+
+  let postedTs = existingTs;
+
+  try {
+    if (postedTs) {
+      await withSlackRetry(
+        () =>
+          client.chat.update({
+            channel,
+            ts: postedTs!,
+            text: messageText,
+            ...(baseBlocks ? { blocks: baseBlocks } : {}),
+          }),
+        'response.segment.update'
+      );
+    } else {
+      const result = await withSlackRetry(
+        () =>
+          client.chat.postMessage({
+            channel,
+            thread_ts: threadTs,
+            text: messageText,
+            ...(baseBlocks ? { blocks: baseBlocks, unfurl_links: false, unfurl_media: false } : {}),
+          }),
+        'response.segment.post'
+      );
+      postedTs = (result as any).ts as string | undefined;
+      if (postedTs) {
+        batch.responseIdToPostedTs.set(responseId, postedTs);
+      }
+    }
+  } catch (err) {
+    console.error('[syncResponseSegmentEntryInThread] Failed to post/update response segment:', err);
+    return false;
+  }
+
+  if (postedTs) {
+    entry.threadMessageTs = postedTs;
+    if (!entry.threadMessageLink) {
+      try {
+        entry.threadMessageLink = await getMessagePermalink(client, channel, postedTs);
+      } catch (err) {
+        console.error('[syncResponseSegmentEntryInThread] permalink failed:', err);
+      }
+    }
+  }
+
+  if (!requiresAttachment || !postedTs) {
+    return true;
+  }
+
+  // Keep attachment semantics consistent with final response: upload .md/.png once per segment.
+  if (batch.responseIdToAttachmentTs.get(responseId)) {
+    return true;
+  }
+
+  try {
+    const msgLink = entry.threadMessageLink || (await getMessagePermalink(client, channel, postedTs));
+    const uploadResult = await uploadFilesToThread(
+      client,
+      channel,
+      threadTs,
+      responseText,
+      `_Content for <${msgLink}|this response block>._`,
+      options?.userId
+    );
+
+    if (uploadResult.success && uploadResult.fileMessageTs) {
+      batch.responseIdToAttachmentTs.set(responseId, uploadResult.fileMessageTs);
+      return true;
+    }
+  } catch (err) {
+    console.error('[syncResponseSegmentEntryInThread] attachment upload failed:', err);
+  }
+
+  // Reflect attachment failure explicitly in the segment message.
+  const fallbackText = messageText.replace('_Full response attached._', '_Full response not attached._');
+  const fallbackBlocks = options?.useBlocks === false
+    ? undefined
+    : buildActivityEntryBlocks({ text: fallbackText });
+
+  try {
+    await withSlackRetry(
+      () =>
+        client.chat.update({
+          channel,
+          ts: postedTs!,
+          text: fallbackText,
+          ...(fallbackBlocks ? { blocks: fallbackBlocks } : {}),
+        }),
+      'response.segment.attachment-fallback'
+    );
+  } catch (err) {
+    console.error('[syncResponseSegmentEntryInThread] attachment fallback update failed:', err);
+  }
+
+  return true;
 }
 
 /**
