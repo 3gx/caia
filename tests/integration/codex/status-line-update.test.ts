@@ -56,7 +56,7 @@ describe('Streaming status line', () => {
     const blocks = call.blocks as Array<{ type: string; elements?: Array<{ text: string }> }>;
 
     expect(blocks[1].elements?.[0].text).toContain('['); // spinner line
-    expect(blocks[2].elements?.[0].text).toContain('ask');
+    expect(blocks[2].elements?.[0].text).toContain('ask [workspace-write]');
     expect(blocks[2].elements?.[0].text).toContain('codex-mini [high]');
     expect(blocks[2].elements?.[0].text).toContain('thread-abc');
 
@@ -116,10 +116,9 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':memo:');
     expect(statusLineText).not.toContain(':brain:');
 
-    // Status line SHOULD include mode/model/session/stats (but NOT sandbox per unified UX)
-    expect(statusLineText).toContain('ask');
+    // Status line SHOULD include mode+sandbox/model/session/stats
+    expect(statusLineText).toContain('ask [danger-full-access]');
     expect(statusLineText).toContain('codex-mini [high]');
-    expect(statusLineText).not.toContain('danger-full-access'); // Removed per unified UX plan
     expect(statusLineText).toContain('thread-abc');
 
     streaming.stopStreaming(conversationKey);
@@ -176,10 +175,9 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':memo:');
     expect(statusLineText).not.toContain(':brain:');
 
-    // Should show expected metadata (but NOT sandbox per unified UX plan)
-    expect(statusLineText).toContain('ask');
+    // Should show expected metadata including sandbox
+    expect(statusLineText).toContain('ask [workspace-write]');
     expect(statusLineText).toContain('gpt-5.2-codex [xhigh]');
-    expect(statusLineText).not.toContain('workspace-write'); // Removed per unified UX plan
     expect(statusLineText).toContain('thread-xyz');
 
     streaming.stopStreaming(conversationKey);

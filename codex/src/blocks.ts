@@ -1211,7 +1211,7 @@ export interface UnifiedStatusLineParams {
 
 /**
  * Build a unified status line showing mode, model, session, and stats.
- * Line 1: mode | model [reason] | session (NO sandbox - unified with Claude format)
+ * Line 1: mode [sandbox] | model [reason] | session
  * Line 2: ctx | tokens | cost | duration (only when available)
  */
 export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string {
@@ -1222,11 +1222,11 @@ export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string 
   const modelLabel = params.model || 'gpt-5.2-codex';
   const reasoningLabel = params.reasoningEffort || 'xhigh';
   const modelWithReasoning = `${modelLabel} [${reasoningLabel}]`;
-  // NOTE: sandboxMode removed from display per unified UX plan - Codex always uses danger-full-access
-  // so displaying it adds no information and differs from Claude's format
+  const sandboxLabel = params.sandboxMode || 'danger-full-access';
+  const modeWithSandbox = `${params.mode} [${sandboxLabel}]`;
   const sessionLabel = params.sessionId || 'n/a';
 
-  line1Parts.push(params.mode);
+  line1Parts.push(modeWithSandbox);
   line1Parts.push(modelWithReasoning);
   line1Parts.push(sessionLabel);
 

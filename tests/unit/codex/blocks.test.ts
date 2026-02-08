@@ -543,9 +543,8 @@ describe('Block Kit Builders', () => {
       });
 
       expect(line).toContain('ask');
+      expect(line).toContain('[workspace-write]');
       expect(line).toContain('codex-mini [high]');
-      // NOTE: sandbox mode removed from display per unified UX plan
-      expect(line).not.toContain('workspace-write');
       expect(line).toContain('thread-123');
       // New format: "X% left, Y used / Z" instead of compact threshold
       expect(line).toContain('58% left'); // 100 - 42.5 = 57.5, rounded to 58
@@ -563,11 +562,10 @@ describe('Block Kit Builders', () => {
       });
 
       expect(line).toContain('ask');
+      expect(line).toContain('[danger-full-access]');
       // Default model: gpt-5.2-codex with xhigh reasoning
       expect(line).toContain('gpt-5.2-codex');
       expect(line).toContain('[xhigh]');
-      // NOTE: danger-full-access removed from display per unified UX plan
-      expect(line).not.toContain('danger-full-access');
       // Session shows 'n/a' when not set
       expect(line).toContain('n/a');
     });
@@ -610,9 +608,8 @@ describe('Block Kit Builders', () => {
       const lines = line.split('\n');
       expect(lines.length).toBe(2);
       expect(lines[0]).toContain('ask');
+      expect(lines[0]).toContain('[workspace-write]');
       expect(lines[0]).toContain('codex-mini [high]');
-      // NOTE: sandbox mode removed from display per unified UX plan
-      expect(lines[0]).not.toContain('workspace-write');
       expect(lines[0]).toContain('thread-123');
       expect(lines[1]).toContain('50% left');
       expect(lines[1]).toContain('5.0k/1.0k');
@@ -620,18 +617,18 @@ describe('Block Kit Builders', () => {
       expect(lines[1]).toContain('10.0s');
     });
 
-    it('status line format: mode | model [reasoning] | session on line 1 (no sandbox per unified UX)', () => {
+    it('status line format: mode [sandbox] | model [reasoning] | session on line 1', () => {
       const line = buildUnifiedStatusLine({
         mode: 'bypass',
         model: 'gpt-5.2-codex',
         reasoningEffort: 'xhigh',
-        sandboxMode: 'workspace-write', // passed but not displayed
+        sandboxMode: 'workspace-write',
         sessionId: 'abc123',
       });
 
       const lines = line.split('\n');
-      // Line 1 should have exact format: _mode | model [reasoning] | session_ (NO sandbox)
-      expect(lines[0]).toBe('_bypass | gpt-5.2-codex [xhigh] | abc123_');
+      // Line 1 should have exact format: _mode [sandbox] | model [reasoning] | session_
+      expect(lines[0]).toBe('_bypass [workspace-write] | gpt-5.2-codex [xhigh] | abc123_');
     });
 
     it('status line format: ctx | tokens | cost | duration on line 2 (no activity)', () => {
