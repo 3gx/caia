@@ -157,7 +157,12 @@ describe('thinking-tool-lifecycle', () => {
       ],
     });
 
-    // Only emit text → session.idle (no tool events received via SSE)
+    // Emit tool as 'running' only (completion event missed via SSE)
+    // This creates a non-terminal entry in toolStates, triggering recovery
+    emitEvent(makeToolEvent('tool_missed', 'Read', 'running'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Emit text and message.updated
     emitEvent({
       payload: {
         type: 'message.part.updated',

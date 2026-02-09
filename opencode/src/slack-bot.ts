@@ -1208,7 +1208,14 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
 
   // Safety net: fetch authoritative messages from session API to recover
   // any text or tool parts that were not received via SSE events.
-  if (state.workingDir) {
+  // Only call the API when there's evidence something was missed:
+  //   - empty fullResponse (text dropped)
+  //   - toolStates has non-terminal entries (tool completion missed)
+  const hasNonTerminalTools = [...state.toolStates.values()].some(
+    s => s !== 'completed' && s !== 'error'
+  );
+  const needsRecovery = !state.fullResponse.trim() || hasNonTerminalTools;
+  if (needsRecovery && state.workingDir) {
     try {
       const instance = await serverPool.getOrCreate(state.channelId);
       const client = instance.client.getClient();
@@ -1218,48 +1225,56 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
       });
       const authMessages = response.data ?? [];
 
-      // Recover text response if empty
-      if (!state.fullResponse.trim()) {
+      // Find the current assistant message (by ID if known, else last assistant msg)
+      let currentAssistantMsg: (typeof authMessages)[number] | undefined;
+      if (state.assistantMessageId) {
+        currentAssistantMsg = authMessages.find(m => m.info?.id === state.assistantMessageId);
+      }
+      if (!currentAssistantMsg) {
         for (let i = authMessages.length - 1; i >= 0; i--) {
-          const msg = authMessages[i];
-          if (msg.info?.role !== 'assistant') continue;
-          const textParts = (msg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
-          if (textParts.length > 0) {
-            const text = textParts.map((p: any) => p.text).join('');
-            if (text.trim()) {
-              console.log('[opencode] Using authoritative response from session API');
-              state.fullResponse = text;
-              state.currentResponseSegment = text;
-              if (!state.generatingEntry) {
-                const now = Date.now();
-                state.generatingEntry = {
-                  timestamp: now,
-                  type: 'generating',
-                  generatingInProgress: false,
-                  generatingContent: text,
-                  generatingTruncated: text.slice(0, 500),
-                  generatingChars: text.length,
-                };
-                state.generatingSegmentStartTime = now;
-                state.activityLog.push(state.generatingEntry);
-              }
-              break;
+          if (authMessages[i].info?.role === 'assistant') {
+            currentAssistantMsg = authMessages[i];
+            break;
+          }
+        }
+      }
+
+      // Recover text response if empty
+      if (!state.fullResponse.trim() && currentAssistantMsg) {
+        const textParts = (currentAssistantMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
+        if (textParts.length > 0) {
+          const text = textParts.map((p: any) => p.text).join('');
+          if (text.trim()) {
+            console.log('[opencode] Using authoritative response from session API');
+            state.fullResponse = text;
+            state.currentResponseSegment = text;
+            if (!state.generatingEntry) {
+              const now = Date.now();
+              state.generatingEntry = {
+                timestamp: now,
+                type: 'generating',
+                generatingInProgress: false,
+                generatingContent: text,
+                generatingTruncated: text.slice(0, 500),
+                generatingChars: text.length,
+              };
+              state.generatingSegmentStartTime = now;
+              state.activityLog.push(state.generatingEntry);
             }
           }
         }
       }
 
-      // Recover missed tool entries.
+      // Recover missed tool entries from the CURRENT assistant message only.
       // toolStates stores ANY seen status (pending/running/completed/error).
       // Check if the LAST seen status is already a terminal state rather than
       // using has(), since a tool seen as 'running' still needs recovery for 'completed'.
       // handleToolPart sets state.status = 'thinking' on completed/error.
       // Since we already set status to 'complete', save/restore to avoid breaking
       // the finalizeResponseSegment guard.
-      const preRecoveryStatus = state.status;
-      for (const msg of authMessages) {
-        if (msg.info?.role !== 'assistant') continue;
-        for (const part of (msg.parts ?? [])) {
+      if (currentAssistantMsg) {
+        const preRecoveryStatus = state.status;
+        for (const part of (currentAssistantMsg.parts ?? [])) {
           if ((part as any).type !== 'tool') continue;
           const toolPart = part as ToolPart;
           const toolKey = toolPart.callID || toolPart.id || toolPart.tool || 'tool';
@@ -1273,8 +1288,8 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
             await handleToolPart(toolPart, state);
           }
         }
+        state.status = preRecoveryStatus;
       }
-      state.status = preRecoveryStatus;
     } catch (err) {
       console.error('[opencode] Failed to fetch authoritative messages:', err);
     }
