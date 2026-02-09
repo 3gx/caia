@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { registeredHandlers, eventSubscribers, mockWrapper } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
-import { postErrorToThread, postResponseToThread, postThinkingToThread } from '../../../opencode/src/activity-thread.js';
+import { postResponseToThread, postThinkingToThread } from '../../../opencode/src/activity-thread.js';
 
 describe('pending-parts-flush', () => {
   beforeEach(async () => {
@@ -106,37 +106,6 @@ describe('pending-parts-flush', () => {
     expect(mockMessages).toHaveBeenCalled();
     expect(postResponseToThread).toHaveBeenCalled();
     expect((postResponseToThread as any).mock.calls[0][3]).toBe('Authoritative answer');
-  });
-
-  it('does not replay previous-turn assistant text when current turn has no assistant response yet', async () => {
-    await triggerMention();
-
-    const mockMessages = mockWrapper.getClient().session.messages;
-    mockMessages.mockResolvedValueOnce({
-      data: [
-        {
-          info: { id: 'user_prev', role: 'user', time: { completed: 1 } },
-          parts: [{ type: 'text', id: 'u1', text: 'tell me a joke' }],
-        },
-        {
-          info: { id: 'assistant_prev', role: 'assistant', time: { completed: 2 } },
-          parts: [{ type: 'text', id: 'a1', text: 'Why did the chicken cross the road?' }],
-        },
-        {
-          info: { id: 'user_current', role: 'user', time: { completed: 3 } },
-          parts: [{ type: 'text', id: 'u2', text: 'hello' }],
-        },
-      ],
-    });
-
-    eventSubscribers[0]?.({
-      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(postResponseToThread).not.toHaveBeenCalled();
-    expect(postErrorToThread).toHaveBeenCalled();
-    expect((postErrorToThread as any).mock.calls[0][3]).toBe('Final response text missing');
   });
 
   it('message.updated before session.idle still works (happy path regression)', async () => {

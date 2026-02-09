@@ -164,8 +164,6 @@ interface ProcessingState {
   finalizeStage: FinalizeStage;
   lastProgressAt: number;
   watchdogTriggered: boolean;
-  turnUserMessageId?: string;
-  turnQueryTextNormalized: string;
 
   // Activity thread batch infrastructure
   activityThreadMsgTs: string | null;
@@ -518,13 +516,6 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
   }
 
   if (info.role === 'user' && info.id) {
-    if (!state.turnUserMessageId) {
-      state.turnUserMessageId = info.id;
-      writeStructuredLog('turn_anchor_user_message', {
-        turnUserMessageId: info.id,
-        ...correlationFromState(state),
-      });
-    }
     await addSlackOriginatedUserUuid(state.channelId, info.id, state.sessionThreadTs);
   }
 
@@ -1437,69 +1428,8 @@ function hasAssistantTextContent(message: any): boolean {
   return parts.some((p: any) => p.type === 'text' && typeof p.text === 'string' && p.text.trim().length > 0);
 }
 
-function normalizeMessageText(text: string | undefined): string {
-  if (!text) return '';
-  return text.trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-function getMessageText(message: any): string {
-  const parts = Array.isArray(message?.parts) ? message.parts : [];
-  return parts
-    .filter((p: any) => p?.type === 'text' && typeof p?.text === 'string')
-    .map((p: any) => p.text as string)
-    .join('');
-}
-
-function resolveTurnAnchorIndex(authMessages: any[], state: ProcessingState): number {
-  if (state.turnUserMessageId) {
-    const idAnchor = authMessages.findIndex((m) => m?.info?.id === state.turnUserMessageId);
-    if (idAnchor >= 0) return idAnchor;
-  }
-
-  if (!state.turnQueryTextNormalized) return -1;
-  for (let i = authMessages.length - 1; i >= 0; i -= 1) {
-    const msg = authMessages[i];
-    if (msg?.info?.role !== 'user') continue;
-    const userText = normalizeMessageText(getMessageText(msg));
-    if (!userText) continue;
-    if (
-      userText === state.turnQueryTextNormalized
-      || userText.includes(state.turnQueryTextNormalized)
-      || state.turnQueryTextNormalized.includes(userText)
-    ) {
-      return i;
-    }
-  }
-
-  return -1;
-}
-
-function selectTurnAssistantMessages(authMessages: any[], state: ProcessingState): any[] {
+function selectCurrentAssistantMessage(authMessages: any[], assistantMessageId?: string): any | undefined {
   const assistants = authMessages.filter((m) => m?.info?.role === 'assistant');
-  if (assistants.length === 0) return assistants;
-
-  const anchorIndex = resolveTurnAnchorIndex(authMessages, state);
-  if (anchorIndex >= 0) {
-    return authMessages
-      .slice(anchorIndex + 1)
-      .filter((m) => m?.info?.role === 'assistant');
-  }
-
-  const hasUserMessages = authMessages.some((m) => m?.info?.role === 'user');
-  if (!hasUserMessages) {
-    // Fallback for API payloads/mocks that only return assistants.
-    return assistants;
-  }
-
-  if (state.assistantMessageId) {
-    return assistants.filter((m) => m?.info?.id === state.assistantMessageId);
-  }
-
-  // Avoid replaying previous-turn assistant text when turn anchor cannot be resolved.
-  return [];
-}
-
-function selectCurrentAssistantMessage(assistants: any[], assistantMessageId?: string): any | undefined {
   if (assistants.length === 0) return undefined;
 
   const preferred = assistantMessageId
@@ -1516,7 +1446,8 @@ function selectCurrentAssistantMessage(assistants: any[], assistantMessageId?: s
   return preferred ?? sorted[0];
 }
 
-function selectAssistantMessageForFinalResponse(assistants: any[], assistantMessageId?: string): any | undefined {
+function selectAssistantMessageForFinalResponse(authMessages: any[], assistantMessageId?: string): any | undefined {
+  const assistants = authMessages.filter((m) => m?.info?.role === 'assistant');
   if (assistants.length === 0) return undefined;
 
   const textAssistants = assistants.filter((m) => hasAssistantTextContent(m));
@@ -1637,9 +1568,8 @@ async function handleSessionIdle(
   }
 
   if (authMessages && authMessages.length > 0) {
-    const turnAssistants = selectTurnAssistantMessages(authMessages, state);
-    const currentAssistantMsg = selectCurrentAssistantMessage(turnAssistants, state.assistantMessageId);
-    const finalResponseMsg = selectAssistantMessageForFinalResponse(turnAssistants, state.assistantMessageId);
+    const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
+    const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
 
     if (finalResponseMsg?.info?.id) {
       writeStructuredLog('final_response_source', {
@@ -1900,11 +1830,10 @@ async function maybeFinalizeFromWatchdog(state: ProcessingState): Promise<boolea
       query: { directory: state.workingDir },
     });
     const authMessages = response.data ?? [];
-    const turnAssistants = selectTurnAssistantMessages(authMessages, state);
-    const finalResponseMsg = selectAssistantMessageForFinalResponse(turnAssistants, state.assistantMessageId);
+    const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
     if (!finalResponseMsg) {
       writeStructuredLog('watchdog_skipped', {
-        reason: 'no_text_bearing_current_turn_assistant_message',
+        reason: 'no_text_bearing_assistant_message',
         ...correlationFromState(state),
       });
       state.watchdogTriggered = false;
@@ -2591,8 +2520,6 @@ async function handleUserMessage(params: {
       finalizeStage: 'awaiting_text',
       lastProgressAt: Date.now(),
       watchdogTriggered: false,
-      turnUserMessageId: undefined,
-      turnQueryTextNormalized: normalizeMessageText(userText),
 
     // Activity thread batch infrastructure
     activityThreadMsgTs: null,
