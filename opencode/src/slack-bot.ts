@@ -1161,6 +1161,59 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     });
   }
 
+  // Flush any pending message parts that haven't been assigned a role yet.
+  // When the session is idle, buffered text parts must be from the assistant.
+  // Save and restore status because appendTextDelta sets it to 'generating'.
+  const preFlushStatus = state.status;
+  for (const [messageId] of state.pendingMessageParts) {
+    state.messageRoles.set(messageId, 'assistant');
+    await flushPendingParts(state, messageId);
+  }
+  state.status = preFlushStatus;
+
+  // Safety net: if fullResponse is still empty after flushing, fetch the
+  // authoritative latest assistant message from the OpenCode session API.
+  if (!state.fullResponse.trim() && state.workingDir) {
+    try {
+      const instance = await serverPool.getOrCreate(state.channelId);
+      const client = instance.client.getClient();
+      const response = await client.session.messages({
+        path: { id: state.sessionId },
+        query: { directory: state.workingDir },
+      });
+      const messages = response.data ?? [];
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.info?.role !== 'assistant') continue;
+        const textParts = (msg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
+        if (textParts.length > 0) {
+          const text = textParts.map((p: any) => p.text).join('');
+          if (text.trim()) {
+            console.log('[opencode] Using authoritative response from session API');
+            state.fullResponse = text;
+            state.currentResponseSegment = text;
+            if (!state.generatingEntry) {
+              const now = Date.now();
+              state.generatingEntry = {
+                timestamp: now,
+                type: 'generating',
+                generatingInProgress: false,
+                generatingContent: text,
+                generatingTruncated: text.slice(0, 500),
+                generatingChars: text.length,
+              };
+              state.generatingSegmentStartTime = now;
+              state.activityLog.push(state.generatingEntry);
+            }
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[opencode] Failed to fetch authoritative response:', err);
+    }
+  }
+
   if (state.status === 'complete') {
     await finalizeResponseSegment(state);
   }
