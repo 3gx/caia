@@ -897,6 +897,20 @@ export class StreamingManager {
       }
 
       console.log(`[streaming] turn:completed: FOUND context key="${found.key}"`);
+
+      // IMMEDIATELY clear the busy flag. The Codex turn is complete;
+      // remaining work is Slack UI post-processing that must not block
+      // new queries. Previously this ran in the finally block, but the
+      // ~10 awaited Slack/RPC calls between here and finally created a
+      // race window where new messages saw isBusy()=true.
+      if (this.turnCompletedCallback) {
+        try {
+          this.turnCompletedCallback(found.context, status);
+        } catch (err) {
+          console.error('[streaming] turnCompletedCallback failed:', err);
+        }
+      }
+
       const state = this.states.get(found.key);
       try {
       if (state) {
@@ -1297,19 +1311,14 @@ export class StreamingManager {
           this.activityManager.clearEntries(found.key);
         }
       } finally {
-          // CRITICAL: Cleanup and callback MUST run regardless of exceptions or missing state.
-          // Without this, the busy flag in conversationTracker is never cleared, causing
-          // "Another request is already running" errors on subsequent queries.
+          // Clean up maps. The busy-flag callback already fired above (early),
+          // so this block only handles internal map cleanup.
           if (found.context.turnId) {
             this.turnIdToKey.delete(found.context.turnId);
           }
           this.contexts.delete(found.key);
           this.states.delete(found.key);
           console.log(`[streaming] Cleaned up context and state for key="${found.key}"`);
-
-          if (this.turnCompletedCallback) {
-            this.turnCompletedCallback(found.context, status);
-          }
       }
     });
 

@@ -239,11 +239,11 @@ describe('StreamingManager turn:completed try/finally guarantee', () => {
       status: 'completed' as TurnStatus,
     });
 
-    await vi.waitFor(() => expect(callbackSpy).toHaveBeenCalled());
-
-    // Maps should be cleaned up
-    expect((streaming as any).contexts.has(key)).toBe(false);
+    // Callback fires early, but map cleanup happens in finally (after async work).
+    // Wait for the maps to be cleaned up by the finally block.
+    await vi.waitFor(() => expect((streaming as any).contexts.has(key)).toBe(false));
     expect((streaming as any).states.has(key)).toBe(false);
+    expect(callbackSpy).toHaveBeenCalled();
   });
 
   it('callback fires on failed status', async () => {
@@ -264,6 +264,38 @@ describe('StreamingManager turn:completed try/finally guarantee', () => {
       expect.objectContaining({ threadId: ctx.threadId }),
       'failed'
     );
+  });
+
+  it('callback fires BEFORE slow post-processing completes (race window fix)', async () => {
+    const callbackSpy = vi.fn();
+    streaming.onTurnCompleted(callbackSpy);
+
+    const ctx = createContext();
+    streaming.startStreaming(ctx);
+
+    // Make getThreadTurnCount slow to simulate the RPC delay that
+    // created the race window (the user could send a new message
+    // while the handler was still doing post-processing).
+    let rpcResolve: () => void;
+    const slowRpc = new Promise<number>((resolve) => {
+      rpcResolve = () => resolve(5);
+    });
+    (codex as any).getThreadTurnCount.mockReturnValue(slowRpc);
+
+    (codex as unknown as EventEmitter).emit('turn:completed', {
+      threadId: ctx.threadId,
+      turnId: ctx.turnId,
+      status: 'completed' as TurnStatus,
+    });
+
+    // Callback should fire immediately, BEFORE the slow RPC completes
+    await vi.waitFor(() => expect(callbackSpy).toHaveBeenCalled());
+
+    // The RPC hasn't resolved yet — verify the map cleanup hasn't happened
+    // (map cleanup is in the finally block which runs after the RPC)
+    // This proves the callback fired early, not in finally.
+    // Now resolve the RPC to let the handler finish cleanly.
+    rpcResolve!();
   });
 
   it('callback fires on interrupted status', async () => {
