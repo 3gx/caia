@@ -219,7 +219,7 @@ export class ActivityThreadManager {
       try {
         await withSlackRetry(
           () => client.chat.update({ channel, ts: batch.postedTs!, text }),
-          'activity.update'
+          'codex.activity.batch.update'
         );
       } catch {
         // If update fails (message too old), post new
@@ -941,7 +941,7 @@ export async function flushActivityBatchToThread(
               text,
               ...(baseBlocks ? { blocks: baseBlocks } : {}),
             }),
-            'batch.entry.update-in-place'
+            'codex.activity.entry.update_in_place'
           );
 
           postedTs = existingTs;
@@ -958,7 +958,7 @@ export async function flushActivityBatchToThread(
               text,
               ...(baseBlocks ? { blocks: baseBlocks, unfurl_links: false, unfurl_media: false } : {}),
             }),
-            'batch.entry.post'
+            'codex.activity.entry.post'
           );
 
           postedTs = (result as any).ts as string | undefined;
@@ -986,7 +986,7 @@ export async function flushActivityBatchToThread(
             const blocks = buildActivityEntryBlocks({ text, actions });
             await withSlackRetry(
               () => client.chat.update({ channel, ts: postedTs!, text, blocks }),
-              'batch.entry.actions'
+              'codex.activity.entry.actions'
             );
           }
         }
@@ -1058,7 +1058,7 @@ export async function updateThinkingEntryInThread(
           text,
           ...(baseBlocks ? { blocks: baseBlocks } : {}),
         }),
-      'thinking.update'
+      'codex.thinking.update'
     );
     return true;
   } catch (err) {
@@ -1180,7 +1180,7 @@ export async function syncResponseSegmentEntryInThread(
             text: messageText,
             ...(baseBlocks ? { blocks: baseBlocks } : {}),
           }),
-        'response.segment.update'
+        'codex.response.segment.update'
       );
     } else {
       const result = await withSlackRetry(
@@ -1191,7 +1191,7 @@ export async function syncResponseSegmentEntryInThread(
             text: messageText,
             ...(baseBlocks ? { blocks: baseBlocks, unfurl_links: false, unfurl_media: false } : {}),
           }),
-        'response.segment.post'
+        'codex.response.segment.post'
       );
       postedTs = (result as any).ts as string | undefined;
       if (postedTs) {
@@ -1257,7 +1257,7 @@ export async function syncResponseSegmentEntryInThread(
           text: fallbackText,
           ...(fallbackBlocks ? { blocks: fallbackBlocks } : {}),
         }),
-      'response.segment.attachment-fallback'
+      'codex.response.segment.attachment_fallback'
     );
   } catch (err) {
     console.error('[syncResponseSegmentEntryInThread] attachment fallback update failed:', err);

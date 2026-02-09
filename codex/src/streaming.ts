@@ -312,10 +312,18 @@ interface StreamingState {
   responseSegmentCounter: number;
   /** Track response segments already posted to thread */
   postedResponseSegmentIds: Set<string>;
+  /** Response segments currently being bootstrapped (prevents duplicate first-sync races) */
+  bootstrappingResponseSegmentIds: Set<string>;
   /** Last posted response segment ID (to avoid redundant updates) */
   lastResponsePostedSegmentId?: string;
   /** Last posted response content (for update-in-place diffing) */
   lastResponsePostedContent?: string;
+  /** Latest response segment waiting to be synced */
+  pendingResponseSyncSegmentId?: string;
+  /** Timeout handle for throttled response syncing */
+  responseSyncTimer?: ReturnType<typeof setTimeout>;
+  /** Last successful response sync timestamp */
+  responseSyncLastRunAt: number;
   /** Thinking item ID (for matching complete event) */
   thinkingItemId?: string;
   /** Last posted thinking segment ID (to avoid redundant updates) */
@@ -434,14 +442,20 @@ export class StreamingManager {
     // 2. State corruption from overlapping contexts
     // 3. Wrong emoji removal when turn:completed arrives for old turn
     const existingState = this.states.get(key);
-    if (existingState) {
-      console.log(`[streaming] Cleaning up existing state for ${key} before starting new turn`);
-      if (existingState.updateTimer) {
-        clearInterval(existingState.updateTimer);
-      }
-      if (existingState.pendingAbortTimeout) {
-        clearTimeout(existingState.pendingAbortTimeout);
-      }
+      if (existingState) {
+        console.log(`[streaming] Cleaning up existing state for ${key} before starting new turn`);
+        if (existingState.updateTimer) {
+          clearInterval(existingState.updateTimer);
+        }
+        if (existingState.responseSyncTimer) {
+          clearTimeout(existingState.responseSyncTimer);
+          existingState.responseSyncTimer = undefined;
+        }
+        existingState.pendingResponseSyncSegmentId = undefined;
+        existingState.bootstrappingResponseSegmentIds.clear();
+        if (existingState.pendingAbortTimeout) {
+          clearTimeout(existingState.pendingAbortTimeout);
+        }
       // Remove emoji from OLD message if still present (best effort)
       const existingContext = this.contexts.get(key);
       if (existingContext) {
@@ -489,8 +503,12 @@ export class StreamingManager {
       currentResponseSegmentId: undefined,
       responseSegmentCounter: 0,
       postedResponseSegmentIds: new Set(),
+      bootstrappingResponseSegmentIds: new Set(),
       lastResponsePostedSegmentId: undefined,
       lastResponsePostedContent: undefined,
+      pendingResponseSyncSegmentId: undefined,
+      responseSyncTimer: undefined,
+      responseSyncLastRunAt: 0,
       lastThinkingPostedSegmentId: undefined,
       lastThinkingPostedContent: undefined,
       postedThinkingSegmentIds: new Set(),
@@ -549,6 +567,14 @@ export class StreamingManager {
     if (state?.updateTimer) {
       clearInterval(state.updateTimer);
     }
+    if (state?.responseSyncTimer) {
+      clearTimeout(state.responseSyncTimer);
+      state.responseSyncTimer = undefined;
+    }
+    if (state) {
+      state.pendingResponseSyncSegmentId = undefined;
+      state.bootstrappingResponseSegmentIds.clear();
+    }
     cleanupMutex(conversationKey);
     this.activityManager.clearEntries(conversationKey);
     const context = this.contexts.get(conversationKey);
@@ -570,6 +596,12 @@ export class StreamingManager {
         clearInterval(state.updateTimer);
         state.updateTimer = null;
       }
+      if (state.responseSyncTimer) {
+        clearTimeout(state.responseSyncTimer);
+        state.responseSyncTimer = undefined;
+      }
+      state.pendingResponseSyncSegmentId = undefined;
+      state.bootstrappingResponseSegmentIds.clear();
       // Clear pending abort timeout (from abort fix)
       if (state.pendingAbortTimeout) {
         clearTimeout(state.pendingAbortTimeout);
@@ -593,6 +625,14 @@ export class StreamingManager {
     if (state?.updateTimer) {
       clearInterval(state.updateTimer);
       state.updateTimer = null;
+    }
+    if (state?.responseSyncTimer) {
+      clearTimeout(state.responseSyncTimer);
+      state.responseSyncTimer = undefined;
+    }
+    if (state) {
+      state.pendingResponseSyncSegmentId = undefined;
+      state.bootstrappingResponseSegmentIds.clear();
     }
     cleanupMutex(conversationKey);
   }
@@ -666,6 +706,12 @@ export class StreamingManager {
       clearTimeout(state.pendingAbortTimeout);
       state.pendingAbortTimeout = undefined;
     }
+    if (state.responseSyncTimer) {
+      clearTimeout(state.responseSyncTimer);
+      state.responseSyncTimer = undefined;
+    }
+    state.pendingResponseSyncSegmentId = undefined;
+    state.bootstrappingResponseSegmentIds.clear();
     state.pendingAbort = false;
     state.isStreaming = false;
     state.status = 'failed';
@@ -843,6 +889,173 @@ export class StreamingManager {
     );
   }
 
+  private clearPendingResponseSync(conversationKey: string, reason: string): void {
+    const state = this.states.get(conversationKey);
+    if (!state) return;
+
+    if (state.responseSyncTimer) {
+      clearTimeout(state.responseSyncTimer);
+      state.responseSyncTimer = undefined;
+      console.log(`[streaming][resp-sync] cleared timer key="${conversationKey}" reason="${reason}"`);
+    }
+
+    state.pendingResponseSyncSegmentId = undefined;
+    state.bootstrappingResponseSegmentIds.clear();
+  }
+
+  private flushPendingResponseSync(conversationKey: string, reason: string): void {
+    const context = this.contexts.get(conversationKey);
+    const state = this.states.get(conversationKey);
+    if (!context || !state || !state.isStreaming) {
+      console.log(`[streaming][resp-sync] skip flush (inactive) key="${conversationKey}" reason="${reason}"`);
+      return;
+    }
+
+    const segmentId = state.pendingResponseSyncSegmentId;
+    if (!segmentId) return;
+
+    state.pendingResponseSyncSegmentId = undefined;
+
+    const mutex = getUpdateMutex(conversationKey);
+    mutex.runExclusive(async () => {
+      const latestContext = this.contexts.get(conversationKey);
+      const latestState = this.states.get(conversationKey);
+      if (!latestContext || !latestState || !latestState.isStreaming) {
+        console.log(`[streaming][resp-sync] skip sync inside mutex (inactive) key="${conversationKey}" reason="${reason}"`);
+        return;
+      }
+
+      await this.syncActiveResponseSegment(
+        conversationKey,
+        latestContext,
+        latestState,
+        segmentId
+      );
+      latestState.responseSyncLastRunAt = Date.now();
+      console.log(
+        `[streaming][resp-sync] synced key="${conversationKey}" segment="${segmentId}" reason="${reason}"`
+      );
+    }).catch((err) => {
+      console.error('[streaming][resp-sync] sync failed:', err);
+    }).finally(() => {
+      const latestState = this.states.get(conversationKey);
+      if (!latestState || !latestState.isStreaming) return;
+      const pendingSegmentId = latestState.pendingResponseSyncSegmentId;
+      if (pendingSegmentId) {
+        this.scheduleResponseSync(conversationKey, pendingSegmentId, 'delta');
+      }
+    });
+  }
+
+  private scheduleResponseSync(
+    conversationKey: string,
+    segmentId: string,
+    trigger: 'bootstrap' | 'delta'
+  ): void {
+    const context = this.contexts.get(conversationKey);
+    const state = this.states.get(conversationKey);
+    if (!context || !state || !state.isStreaming) return;
+
+    state.pendingResponseSyncSegmentId = segmentId;
+
+    if (state.bootstrappingResponseSegmentIds.has(segmentId)) {
+      console.log(
+        `[streaming][resp-sync] coalesced during bootstrap key="${conversationKey}" segment="${segmentId}" trigger="${trigger}"`
+      );
+      return;
+    }
+
+    const intervalMs = Math.max(250, context.updateRateMs);
+    const elapsedMs = Date.now() - state.responseSyncLastRunAt;
+
+    if (trigger === 'bootstrap' || elapsedMs >= intervalMs) {
+      this.flushPendingResponseSync(conversationKey, `immediate:${trigger}`);
+      return;
+    }
+
+    if (state.responseSyncTimer) {
+      console.log(
+        `[streaming][resp-sync] coalesced key="${conversationKey}" segment="${segmentId}" trigger="${trigger}"`
+      );
+      return;
+    }
+
+    const delayMs = intervalMs - elapsedMs;
+    console.log(
+      `[streaming][resp-sync] throttled key="${conversationKey}" segment="${segmentId}" trigger="${trigger}" delayMs=${delayMs}`
+    );
+
+    state.responseSyncTimer = setTimeout(() => {
+      const latestState = this.states.get(conversationKey);
+      if (latestState) {
+        latestState.responseSyncTimer = undefined;
+      }
+      this.flushPendingResponseSync(conversationKey, 'timer');
+    }, delayMs);
+  }
+
+  private bootstrapResponseSegment(conversationKey: string, segmentId: string): void {
+    const context = this.contexts.get(conversationKey);
+    const state = this.states.get(conversationKey);
+    if (!context || !state || !state.isStreaming) return;
+
+    if (state.postedResponseSegmentIds.has(segmentId)) {
+      this.scheduleResponseSync(conversationKey, segmentId, 'delta');
+      return;
+    }
+
+    if (state.bootstrappingResponseSegmentIds.has(segmentId)) {
+      this.scheduleResponseSync(conversationKey, segmentId, 'delta');
+      return;
+    }
+
+    state.bootstrappingResponseSegmentIds.add(segmentId);
+    state.pendingResponseSyncSegmentId = segmentId;
+    console.log(`[streaming][resp-sync] bootstrap start key="${conversationKey}" segment="${segmentId}"`);
+
+    const mutex = getUpdateMutex(conversationKey);
+    mutex.runExclusive(async () => {
+      const latestContext = this.contexts.get(conversationKey);
+      const latestState = this.states.get(conversationKey);
+      if (!latestContext || !latestState || !latestState.isStreaming) {
+        return;
+      }
+
+      if (!latestState.postedResponseSegmentIds.has(segmentId)) {
+        await flushActivityBatchToThread(
+          this.activityManager,
+          conversationKey,
+          this.slack,
+          latestContext.channelId,
+          latestState.threadParentTs || latestContext.originalTs,
+          { force: true }
+        );
+        latestState.postedResponseSegmentIds.add(segmentId);
+      }
+
+      await this.syncActiveResponseSegment(
+        conversationKey,
+        latestContext,
+        latestState,
+        segmentId
+      );
+      latestState.responseSyncLastRunAt = Date.now();
+      latestState.pendingResponseSyncSegmentId = undefined;
+      console.log(`[streaming][resp-sync] bootstrap done key="${conversationKey}" segment="${segmentId}"`);
+    }).catch((err) => {
+      console.error('[streaming][resp-sync] bootstrap failed:', err);
+    }).finally(() => {
+      const latestState = this.states.get(conversationKey);
+      if (!latestState) return;
+      latestState.bootstrappingResponseSegmentIds.delete(segmentId);
+      if (!latestState.isStreaming) return;
+      const pendingSegmentId = latestState.pendingResponseSyncSegmentId;
+      if (pendingSegmentId) {
+        this.scheduleResponseSync(conversationKey, pendingSegmentId, 'delta');
+      }
+    });
+  }
+
   private setupEventHandlers(): void {
     // Turn started - update turnId and check for pending abort
     this.codex.on('turn:started', ({ threadId, turnId }) => {
@@ -922,6 +1135,7 @@ export class StreamingManager {
             clearInterval(state.updateTimer);
             state.updateTimer = null;
           }
+          this.clearPendingResponseSync(found.key, 'turn-completed');
 
           // Check if aborted (takes precedence over other statuses)
           const wasAborted = isAborted(found.key);
@@ -1733,8 +1947,7 @@ export class StreamingManager {
       for (const [key, state] of this.states) {
         if (state.isStreaming) {
           state.text += delta;
-          const context = this.contexts.get(key);
-          if (!context) {
+          if (!this.contexts.has(key)) {
             break;
           }
 
@@ -1768,27 +1981,13 @@ export class StreamingManager {
               }
             }
 
-            // Keep the streamed response segment in sync in-thread (same semantics as final response).
-            const mutex = getUpdateMutex(key);
-            mutex.runExclusive(async () => {
-              try {
-                if (!state.postedResponseSegmentIds.has(segmentId)) {
-                  await flushActivityBatchToThread(
-                    this.activityManager,
-                    key,
-                    this.slack,
-                    context.channelId,
-                    state.threadParentTs || context.originalTs,
-                    { force: true }
-                  );
-                  state.postedResponseSegmentIds.add(segmentId);
-                }
-
-                await this.syncActiveResponseSegment(key, context, state, segmentId);
-              } catch (err) {
-                console.error('[item:delta] Response segment sync failed:', err);
-              }
-            });
+            // Keep the streamed response segment in sync in-thread, throttled to /update-rate.
+            // Bootstrap runs once per segment to create/update the initial thread entry immediately.
+            if (!state.postedResponseSegmentIds.has(segmentId)) {
+              this.bootstrapResponseSegment(key, segmentId);
+            } else {
+              this.scheduleResponseSync(key, segmentId, 'delta');
+            }
           }
 
           break;
@@ -2231,7 +2430,7 @@ export class StreamingManager {
                 blocks,
                 text: fallbackText,
               }),
-            'activity.update'
+            'codex.activity.status.update'
           );
         } else {
           const result = await withSlackRetry(
