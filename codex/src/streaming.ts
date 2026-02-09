@@ -1163,110 +1163,90 @@ export class StreamingManager {
           }
 
           // Integration point 5: Ensure response has a dedicated thread post.
-          // If a streamed segment is already posted, finalize it in-place
-          // instead of creating a duplicate message via postResponseToThread.
+          // Response segments are activity timeline entries; they are not the final response post.
           if (state.text && status === 'completed') {
             const responseDurationMs = Date.now() - found.context.startTime;
+            const responseResult = await postResponseToThread(
+              this.slack,
+              channelId,
+              state.threadParentTs || originalTs,
+              state.text,
+              responseDurationMs,
+              threadCharLimit
+            ).catch((err) => {
+              console.error('[streaming] Response post failed:', err);
+              return null;
+            });
 
-            // First, finalize the latest streamed response segment (full content + attachments).
+            const responseTs = responseResult?.ts;
+            if (responseTs) {
+              state.responseMessageTs = responseTs;
+              try {
+                state.responseMessageLink = await getMessagePermalink(
+                  this.slack,
+                  channelId,
+                  responseTs
+                );
+              } catch (err) {
+                console.error('[streaming] Response permalink failed:', err);
+              }
+            }
+
+            if (responseResult?.attachmentFailed && responseTs) {
+              const threadSessionKey = found.context.threadTs || originalTs;
+              if (threadSessionKey) {
+                const fallbackText = responseResult.text
+                  ? responseResult.text.replace('Full response attached', 'Full response not attached')
+                  : `${formatThreadResponseMessage(state.text, responseDurationMs)}\n\n_Full response not attached._`;
+                await saveThreadSession(channelId, threadSessionKey, {
+                  lastResponseContent: state.text,
+                  lastResponseText: fallbackText,
+                  lastResponseCharCount: state.text.length,
+                  lastResponseDurationMs: responseDurationMs,
+                  lastResponseMessageTs: responseTs,
+                }).catch((err) => console.error('[streaming] Failed to save lastResponseContent:', err));
+
+                const text = fallbackText || ':speech_balloon: Response';
+                const blocks = [
+                  {
+                    type: 'section',
+                    text: { type: 'mrkdwn', text },
+                    expand: true,
+                  },
+                  buildAttachResponseFileButton(
+                    responseTs,
+                    threadSessionKey,
+                    channelId,
+                    state.text.length
+                  ),
+                ];
+
+                await withSlackRetry(
+                  () =>
+                    this.slack.chat.update({
+                      channel: channelId,
+                      ts: responseTs,
+                      text,
+                      blocks,
+                    }),
+                  'response.attach.retry'
+                ).catch((err) => console.error('[streaming] Response retry button update failed:', err));
+              }
+            }
+
+            // Finalize latest streamed response segment in-place for timeline consistency.
             const latestSegmentEntry = [...this.activityManager.getEntries(found.key)].reverse().find(
               (entry) => entry.type === 'generating' && entry.responseSegmentId
             );
-            if (latestSegmentEntry?.responseSegmentId) {
-              await this.syncActiveResponseSegment(
-                found.key,
-                found.context,
-                state,
-                latestSegmentEntry.responseSegmentId
-              ).catch((err) => console.error('[streaming] Response segment finalize failed:', err));
-            }
-
-            // Check if the segment already has a posted thread message we can reuse.
-            const existingSegmentTs = latestSegmentEntry?.threadMessageTs;
-
-            if (existingSegmentTs) {
-              // Reuse the finalized segment message as the response (no duplicate post).
-              state.responseMessageTs = existingSegmentTs;
-              state.responseMessageLink = latestSegmentEntry?.threadMessageLink;
-              if (!state.responseMessageLink) {
-                try {
-                  state.responseMessageLink = await getMessagePermalink(
-                    this.slack,
-                    channelId,
-                    existingSegmentTs
-                  );
-                } catch (err) {
-                  console.error('[streaming] Response permalink failed:', err);
-                }
-              }
-            } else {
-              // No segment posted (e.g., very fast response) — post a new message.
-              const responseResult = await postResponseToThread(
-                this.slack,
-                channelId,
-                state.threadParentTs || originalTs,
-                state.text,
-                responseDurationMs,
-                threadCharLimit
-              ).catch((err) => {
-                console.error('[streaming] Response post failed:', err);
-                return null;
-              });
-
-              const responseTs = responseResult?.ts;
-              if (responseTs) {
-                state.responseMessageTs = responseTs;
-                try {
-                  state.responseMessageLink = await getMessagePermalink(
-                    this.slack,
-                    channelId,
-                    responseTs
-                  );
-                } catch (err) {
-                  console.error('[streaming] Response permalink failed:', err);
-                }
-              }
-
-              if (responseResult?.attachmentFailed && responseTs) {
-                const threadSessionKey = found.context.threadTs || originalTs;
-                if (threadSessionKey) {
-                  const fallbackText = responseResult.text
-                    ? responseResult.text.replace('Full response attached', 'Full response not attached')
-                    : `${formatThreadResponseMessage(state.text, responseDurationMs)}\n\n_Full response not attached._`;
-                  await saveThreadSession(channelId, threadSessionKey, {
-                    lastResponseContent: state.text,
-                    lastResponseText: fallbackText,
-                    lastResponseCharCount: state.text.length,
-                    lastResponseDurationMs: responseDurationMs,
-                    lastResponseMessageTs: responseTs,
-                  }).catch((err) => console.error('[streaming] Failed to save lastResponseContent:', err));
-
-                  const text = fallbackText || ':speech_balloon: Response';
-                  const blocks = [
-                    {
-                      type: 'section',
-                      text: { type: 'mrkdwn', text },
-                      expand: true,
-                    },
-                    buildAttachResponseFileButton(
-                      responseTs,
-                      threadSessionKey,
-                      channelId,
-                      state.text.length
-                    ),
-                  ];
-
-                  await withSlackRetry(
-                    () =>
-                      this.slack.chat.update({
-                        channel: channelId,
-                        ts: responseTs,
-                        text,
-                        blocks,
-                      }),
-                    'response.attach.retry'
-                  ).catch((err) => console.error('[streaming] Response retry button update failed:', err));
-                }
+            if (latestSegmentEntry) {
+              const latestSegmentId = latestSegmentEntry.responseSegmentId;
+              if (latestSegmentId) {
+                await this.syncActiveResponseSegment(
+                  found.key,
+                  found.context,
+                  state,
+                  latestSegmentId
+                ).catch((err) => console.error('[streaming] Response segment finalize failed:', err));
               }
             }
 

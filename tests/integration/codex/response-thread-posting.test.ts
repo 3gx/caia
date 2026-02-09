@@ -81,7 +81,7 @@ describe('Response Thread Posting', () => {
     expect(texts.some((t: string) => t.includes('Short response content'))).toBe(true);
   });
 
-  it('reuses existing segment message instead of posting a duplicate when segments were streamed', async () => {
+  it('posts a dedicated Response thread message even when response segments were streamed earlier', async () => {
     const context = createContext();
     streaming.startStreaming(context);
 
@@ -96,11 +96,20 @@ describe('Response Thread Posting', () => {
     await tick(30);
 
     const payloads = (slack.chat.postMessage as any).mock.calls.map((call: any[]) => call[0]);
-    const responseTexts = payloads
-      .map((payload: any) => String(payload?.text || ''))
-      .filter((text: string) => text.includes(':speech_balloon: *Response*') && text.includes('Segment text from streaming'));
+    const postedTexts = payloads.map((payload: any) => String(payload?.text || ''));
 
-    // Should have exactly ONE response message (the segment), not two.
-    expect(responseTexts.length).toBe(1);
+    const streamingResponseIndex = postedTexts.findIndex(
+      (text: string) => text.includes(':speech_balloon: *Response*') && text.includes('Segment text from streaming')
+    );
+    const responseIndex = postedTexts.findIndex(
+      (text: string, index: number) =>
+        text.includes(':speech_balloon: *Response*') &&
+        index > streamingResponseIndex &&
+        text.includes('Segment text from streaming')
+    );
+
+    expect(streamingResponseIndex).toBeGreaterThanOrEqual(0);
+    expect(responseIndex).toBeGreaterThanOrEqual(0);
+    expect(responseIndex).toBeGreaterThan(streamingResponseIndex);
   });
 });
