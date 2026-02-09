@@ -7,6 +7,8 @@ import type { WebClient } from '@slack/web-api';
 import { Mutex } from 'async-mutex';
 import type { GlobalEvent, OpencodeClient, Part, ToolPart, Todo } from '@opencode-ai/sdk';
 import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 
 import { ServerPool } from './server-pool.js';
 import type { OpencodeClientWrapper } from './opencode-client.js';
@@ -18,6 +20,8 @@ import {
   saveThreadSession,
   getOrCreateThreadSession,
   saveMessageMapping,
+  getFinalResponseDelivery,
+  saveFinalResponseDelivery,
   findForkPointMessageId,
   addSlackOriginatedUserUuid,
   clearSyncedMessageUuids,
@@ -73,6 +77,16 @@ import {
 
 const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const STATUS_UPDATE_INTERVAL_MS = 1000;
+const WATCHDOG_IDLE_TIMEOUT_MS = Math.max(
+  1000,
+  parseInt(process.env.OPENCODE_WATCHDOG_IDLE_TIMEOUT_MS || '15000', 10)
+);
+const STRUCTURED_LOG_FILE = process.env.OPENCODE_EVENT_LOG_FILE
+  || path.join(process.cwd(), 'opencode-events.log');
+const BOT_LOCK_FILE = process.env.OPENCODE_BOT_LOCK_FILE
+  || '/tmp/caia-opencode-bot.lock';
+
+let lockAcquired = false;
 
 interface BusyContext extends ActiveContext {
   channelId: string;
@@ -100,6 +114,7 @@ interface PendingPermission {
 }
 
 type StatusState = 'starting' | 'thinking' | 'tool' | 'generating' | 'complete' | 'error' | 'aborted';
+type FinalizeStage = 'awaiting_text' | 'awaiting_delivery' | 'complete';
 
 interface ProcessingState {
   conversationKey: string;
@@ -146,6 +161,9 @@ interface ProcessingState {
   pendingMessageParts: Map<string, Array<{ part: Part; delta?: string }>>;
   finalizingResponseSegment: Promise<void> | null;
   seenMessagePartMessageIds: Set<string>;
+  finalizeStage: FinalizeStage;
+  lastProgressAt: number;
+  watchdogTriggered: boolean;
 
   // Activity thread batch infrastructure
   activityThreadMsgTs: string | null;
@@ -174,6 +192,159 @@ const pendingPermissions = new Map<string, PendingPermission>();
 const processedIncomingMessageTs = new Set<string>();
 
 let app: App | null = null;
+
+function shouldUseBotLock(): boolean {
+  if (process.env.OPENCODE_DISABLE_BOT_LOCK === '1') return false;
+  if (process.env.VITEST) return false;
+  if (process.env.NODE_ENV === 'test') return false;
+  return true;
+}
+
+function writeStructuredLog(event: string, fields: Record<string, unknown> = {}): void {
+  const payload = {
+    ts: new Date().toISOString(),
+    event,
+    ...fields,
+  };
+  try {
+    fs.appendFileSync(STRUCTURED_LOG_FILE, `${JSON.stringify(payload)}\n`);
+  } catch (error) {
+    console.error('[opencode] Failed to write structured log:', error);
+  }
+}
+
+function correlationFromState(state: ProcessingState): Record<string, unknown> {
+  return {
+    sessionId: state.sessionId,
+    conversationKey: state.conversationKey,
+    threadTs: state.postingThreadTs,
+    assistantMessageId: state.assistantMessageId,
+    channelId: state.channelId,
+  };
+}
+
+function markProgress(state: ProcessingState, source: string): void {
+  state.lastProgressAt = Date.now();
+  state.watchdogTriggered = false;
+  writeStructuredLog('progress', {
+    source,
+    ...correlationFromState(state),
+  });
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireBotLock(): void {
+  if (!shouldUseBotLock()) {
+    return;
+  }
+  const payload = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+
+  try {
+    fs.writeFileSync(BOT_LOCK_FILE, payload, { flag: 'wx' });
+    lockAcquired = true;
+    return;
+  } catch (error: any) {
+    if (error?.code !== 'EEXIST') {
+      throw error;
+    }
+  }
+
+  let existingPid: number | null = null;
+  try {
+    const raw = fs.readFileSync(BOT_LOCK_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const pid = Number(parsed?.pid);
+    if (Number.isFinite(pid)) {
+      existingPid = pid;
+    }
+  } catch {
+    // Ignore parse errors and attempt to replace stale lock.
+  }
+
+  if (existingPid && existingPid !== process.pid && isPidAlive(existingPid)) {
+    throw new Error(`Another opencode bot process is active (pid=${existingPid}).`);
+  }
+
+  try {
+    fs.unlinkSync(BOT_LOCK_FILE);
+  } catch {
+    // Ignore unlink errors (race-safe with next write).
+  }
+
+  fs.writeFileSync(BOT_LOCK_FILE, payload, { flag: 'wx' });
+  lockAcquired = true;
+}
+
+function releaseBotLock(): void {
+  if (!shouldUseBotLock()) {
+    return;
+  }
+  if (!lockAcquired) return;
+  try {
+    const raw = fs.readFileSync(BOT_LOCK_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Number(parsed?.pid) === process.pid) {
+      fs.unlinkSync(BOT_LOCK_FILE);
+    }
+  } catch {
+    // Ignore lock cleanup failures.
+  } finally {
+    lockAcquired = false;
+  }
+}
+
+function logBuildMetadata(): void {
+  const distFile = path.join(process.cwd(), 'dist', 'slack-bot.js');
+  try {
+    if (!fs.existsSync(distFile)) {
+      writeStructuredLog('build_info', { distFile, exists: false });
+      console.warn('[opencode] dist/slack-bot.js not found at startup.');
+      return;
+    }
+
+    const data = fs.readFileSync(distFile);
+    const stat = fs.statSync(distFile);
+    const buildSha = crypto.createHash('sha1').update(data).digest('hex').slice(0, 12);
+    const buildTimestamp = stat.mtime.toISOString();
+    writeStructuredLog('build_info', {
+      distFile,
+      buildSha,
+      buildTimestamp,
+      exists: true,
+    });
+    console.log(`[opencode] Build sha=${buildSha} timestamp=${buildTimestamp}`);
+  } catch (error) {
+    console.error('[opencode] Failed to read build metadata:', error);
+  }
+}
+
+function hasActiveProcessingForChannel(channelId: string): boolean {
+  for (const state of processingBySession.values()) {
+    if (state.channelId === channelId) return true;
+  }
+  return false;
+}
+
+async function shutdownServerIfChannelIdle(channelId: string): Promise<void> {
+  if (hasActiveProcessingForChannel(channelId)) {
+    return;
+  }
+  try {
+    await serverPool.shutdown(channelId);
+    writeStructuredLog('server_shutdown', { channelId, reason: 'query_complete' });
+  } catch (error) {
+    console.error('[opencode] Failed to shutdown channel server:', error);
+  }
+}
 
 function shouldProcessIncomingMessage(channelId: string, messageTs?: string): boolean {
   if (!messageTs) return true;
@@ -229,6 +400,11 @@ function hasPendingFinalResponse(state: ProcessingState): boolean {
   return Boolean(pendingSegment.trim()) && !state.responseMessageTs;
 }
 
+function buildFinalDeliveryKey(state: ProcessingState): string | null {
+  if (!state.assistantMessageId) return null;
+  return `${state.sessionId}:${state.assistantMessageId}`;
+}
+
 function resolveAgent(session: Session): 'plan' | 'build' {
   if (session.mode === 'plan') return 'plan';
   return 'build';
@@ -273,6 +449,13 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
     const state = processingBySession.get(sessionId);
     if (!state) return;
 
+    writeStructuredLog('sdk_event', {
+      eventType: type,
+      sessionId,
+      ...correlationFromState(state),
+    });
+    markProgress(state, `sdk:${type}`);
+
     switch (type) {
       case 'message.part.updated':
         await handleMessagePartUpdated(payload?.properties?.part as Part | undefined, payload?.properties?.delta as string | undefined, state);
@@ -283,7 +466,7 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
       case 'session.status': {
         const statusType = payload?.properties?.status?.type;
         if (statusType === 'idle') {
-          await handleSessionIdle(state);
+          await handleSessionIdle(state, { source: 'idle_event' });
         }
         break;
       }
@@ -291,7 +474,7 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
         await handlePermissionUpdated(payload?.properties, state);
         break;
       case 'session.idle':
-        await handleSessionIdle(state);
+        await handleSessionIdle(state, { source: 'idle_event' });
         break;
       case 'session.compacted':
         state.customStatus = 'Compacted';
@@ -500,50 +683,108 @@ async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
     entry.durationMs = Math.max(0, Date.now() - (state.generatingSegmentStartTime ?? entry.timestamp));
 
     if (state.threadParentTs && segment.trim() && !state.responseMessageTs) {
-      const maxAttempts = 3;
-      let responseResult: Awaited<ReturnType<typeof postResponseToThread>> = null;
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        responseResult = await postResponseToThread(
-          app!.client as WebClient,
+      const deliveryKey = buildFinalDeliveryKey(state);
+      if (deliveryKey) {
+        const existingDelivery = getFinalResponseDelivery(
           state.channelId,
-          state.threadParentTs,
-          segment,
-          entry.durationMs,
-          state.charLimit,
-          state.userId
-        ).catch((err) => {
-          console.error('[Activity Thread] Failed to post response segment:', err);
-          return null;
-        });
-
-        if (responseResult?.ts) {
-          break;
-        }
-        if (attempt < maxAttempts) {
-          await sleep(250 * attempt);
+          deliveryKey,
+          state.sessionThreadTs
+        );
+        if (existingDelivery?.responseMessageTs) {
+          state.responseMessageTs = existingDelivery.responseMessageTs;
+          try {
+            state.responseMessageLink = await getMessagePermalink(
+              app!.client as WebClient,
+              state.channelId,
+              existingDelivery.responseMessageTs
+            );
+          } catch {
+            state.responseMessageLink = undefined;
+          }
+          writeStructuredLog('post_response_reused', {
+            deliveryKey,
+            responseMessageTs: existingDelivery.responseMessageTs,
+            ...correlationFromState(state),
+          });
         }
       }
 
-      if (!responseResult?.ts) {
-        // Keep pending response state intact so it can be retried/recovered.
-        console.error('[Activity Thread] Response segment was not delivered after retries');
-        return;
-      }
+      if (!state.responseMessageTs) {
+        const maxAttempts = 3;
+        let responseResult: Awaited<ReturnType<typeof postResponseToThread>> = null;
 
-      entry.threadMessageTs = responseResult.ts;
-      entry.threadMessageLink = responseResult.permalink;
-      state.responseMessageTs = responseResult.ts;
-      state.responseMessageLink = responseResult.permalink;
-      state.responseAttachmentFailed = Boolean(responseResult.attachmentFailed);
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          writeStructuredLog('post_response_attempt', {
+            attempt,
+            maxAttempts,
+            responseChars: segment.length,
+            ...correlationFromState(state),
+          });
 
-      if (state.assistantMessageId) {
-        await saveMessageMapping(state.channelId, responseResult.ts, {
-          sdkMessageId: state.assistantMessageId,
-          sessionId: state.sessionId,
-          type: 'assistant',
-          parentSlackTs: state.originalTs,
-        });
+          responseResult = await postResponseToThread(
+            app!.client as WebClient,
+            state.channelId,
+            state.threadParentTs,
+            segment,
+            entry.durationMs,
+            state.charLimit,
+            state.userId
+          ).catch((err) => {
+            console.error('[Activity Thread] Failed to post response segment:', err);
+            return null;
+          });
+
+          if (responseResult?.ts) {
+            writeStructuredLog('post_response_success', {
+              attempt,
+              responseMessageTs: responseResult.ts,
+              ...correlationFromState(state),
+            });
+            break;
+          }
+          if (attempt < maxAttempts) {
+            await sleep(250 * attempt);
+          }
+        }
+
+        if (!responseResult?.ts) {
+          // Keep pending response state intact so it can be retried/recovered.
+          writeStructuredLog('post_response_failed', {
+            attempts: maxAttempts,
+            ...correlationFromState(state),
+          });
+          console.error('[Activity Thread] Response segment was not delivered after retries');
+          return;
+        }
+
+        entry.threadMessageTs = responseResult.ts;
+        entry.threadMessageLink = responseResult.permalink;
+        state.responseMessageTs = responseResult.ts;
+        state.responseMessageLink = responseResult.permalink;
+        state.responseAttachmentFailed = Boolean(responseResult.attachmentFailed);
+
+        const deliveryKey = buildFinalDeliveryKey(state);
+        if (deliveryKey && state.assistantMessageId) {
+          await saveFinalResponseDelivery(
+            state.channelId,
+            deliveryKey,
+            {
+              assistantMessageId: state.assistantMessageId,
+              responseMessageTs: responseResult.ts,
+              deliveredAt: Date.now(),
+            },
+            state.sessionThreadTs
+          );
+        }
+
+        if (state.assistantMessageId) {
+          await saveMessageMapping(state.channelId, responseResult.ts, {
+            sdkMessageId: state.assistantMessageId,
+            sessionId: state.sessionId,
+            type: 'assistant',
+            parentSlackTs: state.originalTs,
+          });
+        }
       }
     }
 
@@ -552,6 +793,9 @@ async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
       state.currentResponseSegment = '';
       state.generatingEntry = undefined;
       state.generatingSegmentStartTime = undefined;
+      if (state.responseMessageTs) {
+        state.finalizeStage = 'complete';
+      }
     }
   })();
 
@@ -1223,17 +1467,30 @@ function selectAssistantMessageForFinalResponse(authMessages: any[], assistantMe
   return latestText;
 }
 
-async function handleSessionIdle(state: ProcessingState): Promise<void> {
+async function handleSessionIdle(
+  state: ProcessingState,
+  options: { source?: 'idle_event' | 'watchdog' | 'abort'; authoritativeMessages?: any[] } = {}
+): Promise<void> {
   if ((state.status === 'complete' || state.status === 'error') && !hasPendingFinalResponse(state)) return;
+
+  const source = options.source ?? 'idle_event';
+  writeStructuredLog('finalize_begin', {
+    source,
+    status: state.status,
+    finalizeStage: state.finalizeStage,
+    hasPendingFinalResponse: hasPendingFinalResponse(state),
+    ...correlationFromState(state),
+  });
 
   const session = state.sessionThreadTs
     ? getThreadSession(state.channelId, state.sessionThreadTs)
     : getSession(state.channelId);
-
-  if (state.status !== 'error') {
-    state.status = state.status === 'aborted' ? 'aborted' : 'complete';
-  }
   if (!session) return;
+
+  if (state.status !== 'error' && state.status !== 'aborted') {
+    state.status = 'thinking';
+    state.finalizeStage = 'awaiting_text';
+  }
 
   if (state.statusUpdateTimer) {
     clearInterval(state.statusUpdateTimer);
@@ -1273,7 +1530,6 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     }
   }
 
-  // Flush any remaining activity batch on completion
   if (state.activityBatch.length > 0 && state.threadParentTs) {
     await flushActivityBatch(
       state,
@@ -1282,14 +1538,11 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
       state.charLimit,
       'complete',
       state.userId
-    ).catch(err => {
+    ).catch((err) => {
       console.error('[Activity Thread] Failed to flush batch on completion:', err);
     });
   }
 
-  // Flush any pending message parts that haven't been assigned a role yet.
-  // When the session is idle, buffered text parts must be from the assistant.
-  // Save and restore status because appendTextDelta sets it to 'generating'.
   const preFlushStatus = state.status;
   for (const [messageId] of state.pendingMessageParts) {
     state.messageRoles.set(messageId, 'assistant');
@@ -1297,9 +1550,8 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
   }
   state.status = preFlushStatus;
 
-  // Safety net: fetch authoritative messages from session API at idle.
-  // This protects against dropped/late SSE events for response/tool/thinking parts.
-  if (state.workingDir) {
+  let authMessages = options.authoritativeMessages;
+  if (!authMessages && state.workingDir) {
     try {
       const instance = await serverPool.getOrCreate(state.channelId);
       const client = instance.client.getClient();
@@ -1307,127 +1559,115 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
         path: { id: state.sessionId },
         query: { directory: state.workingDir },
       });
-      const authMessages = response.data ?? [];
-
-      // Select the best authoritative assistant message for THIS turn.
-      // Prefer known assistantMessageId when it has content, otherwise fallback
-      // to latest assistant message that contains text/reasoning/terminal tool parts.
-      const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
-      const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
-
-      if (finalResponseMsg?.info?.id && state.assistantMessageId !== finalResponseMsg.info.id) {
-        console.log(`[opencode] Final response source switched to text-bearing message ${finalResponseMsg.info.id}`);
-        state.assistantMessageId = finalResponseMsg.info.id;
-      }
-
-      if (finalResponseMsg) {
-        // Always reconcile the final response with authoritative session data.
-        const textParts = (finalResponseMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
-        if (textParts.length > 0) {
-          const text = textParts.map((p: any) => p.text).join('');
-          if (text.trim()) {
-            if (state.fullResponse !== text) {
-              console.log('[opencode] Using authoritative response from session API');
-            }
-            state.fullResponse = text;
-            state.currentResponseSegment = text;
-            if (!state.generatingEntry) {
-              const now = Date.now();
-              state.generatingEntry = {
-                timestamp: now,
-                type: 'generating',
-                generatingInProgress: false,
-                generatingContent: text,
-                generatingTruncated: text.slice(0, 500),
-                generatingChars: text.length,
-              };
-              state.generatingSegmentStartTime = now;
-              state.activityLog.push(state.generatingEntry);
-            } else {
-              state.generatingEntry.generatingContent = text;
-              state.generatingEntry.generatingChars = text.length;
-              state.generatingEntry.generatingTruncated = text.slice(0, 500);
-            }
-          }
-        }
-      }
-
-      if (currentAssistantMsg) {
-        // Recover reasoning blocks when SSE reasoning events were missed entirely.
-        // Only synthesize from authoritative data when no thinking entries exist yet.
-        const hasThinkingEntries = state.activityLog.some((entry) => entry.type === 'thinking');
-        if (!hasThinkingEntries) {
-          const reasoningParts = (currentAssistantMsg.parts ?? [])
-            .filter((p: any) => p.type === 'reasoning' && typeof p.text === 'string' && p.text.length > 0);
-          for (let i = 0; i < reasoningParts.length; i += 1) {
-            const part = reasoningParts[i] as any;
-            const reasoningText = part.text as string;
-            const now = Date.now();
-            const thinkingEntry: ActivityEntry = {
-              timestamp: now,
-              type: 'thinking',
-              thinkingContent: reasoningText,
-              thinkingTruncated: reasoningText.length > 500 ? `...${reasoningText.slice(-500)}` : reasoningText,
-              thinkingInProgress: false,
-              thinkingPartId: part.id || `reasoning-${i}`,
-              durationMs: part?.time?.start && part?.time?.end
-                ? Math.max(0, part.time.end - part.time.start)
-                : undefined,
-            };
-            state.reasoningParts.set(thinkingEntry.thinkingPartId || `reasoning-${i}`, reasoningText);
-
-            const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
-            if (generatingIndex >= 0) {
-              state.activityLog.splice(generatingIndex, 0, thinkingEntry);
-            } else {
-              state.activityLog.push(thinkingEntry);
-            }
-
-            if (state.threadParentTs) {
-              await postThinkingToThread(
-                app!.client as WebClient,
-                state.channelId,
-                state.threadParentTs,
-                thinkingEntry,
-                THINKING_MESSAGE_SIZE,
-                state.userId
-              ).catch((err) => {
-                console.error('[Activity Thread] Failed to post recovered thinking:', err);
-              });
-            }
-          }
-        }
-
-        // Recover missed tool entries from the CURRENT assistant message only.
-        // toolStates stores ANY seen status (pending/running/completed/error).
-        // Check if the LAST seen status is already a terminal state rather than
-        // using has(), since a tool seen as 'running' still needs recovery for 'completed'.
-        // handleToolPart sets state.status = 'thinking' on completed/error.
-        // Since we already set status to 'complete', save/restore to avoid breaking
-        // the finalizeResponseSegment guard.
-        const preRecoveryStatus = state.status;
-        for (const part of (currentAssistantMsg.parts ?? [])) {
-          if ((part as any).type !== 'tool') continue;
-          const toolPart = part as ToolPart;
-          const toolKey = toolPart.callID || toolPart.id || toolPart.tool || 'tool';
-          const status = normalizeToolStatus(toolPart.state?.status);
-          const lastSeen = state.toolStates.get(toolKey);
-          // Only recover if API has a terminal state AND we haven't already
-          // processed a terminal state for this tool (running → completed upgrade)
-          if ((status === 'completed' || status === 'error')
-              && lastSeen !== 'completed' && lastSeen !== 'error') {
-            console.log(`[opencode] Recovering missed tool: ${toolPart.tool} (${toolKey})`);
-            await handleToolPart(toolPart, state);
-          }
-        }
-        state.status = preRecoveryStatus;
-      }
+      authMessages = response.data ?? [];
+      markProgress(state, 'authoritative_fetch');
     } catch (err) {
       console.error('[opencode] Failed to fetch authoritative messages:', err);
+      authMessages = [];
     }
   }
 
-  // Re-flush activity batch if tool recovery added new entries
+  if (authMessages && authMessages.length > 0) {
+    const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
+    const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
+
+    if (finalResponseMsg?.info?.id) {
+      writeStructuredLog('final_response_source', {
+        selectedAssistantMessageId: finalResponseMsg.info.id,
+        previousAssistantMessageId: state.assistantMessageId,
+        ...correlationFromState(state),
+      });
+      state.assistantMessageId = finalResponseMsg.info.id;
+    }
+
+    if (finalResponseMsg) {
+      const textParts = (finalResponseMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
+      if (textParts.length > 0) {
+        const text = textParts.map((p: any) => p.text).join('');
+        if (text.trim()) {
+          state.fullResponse = text;
+          state.currentResponseSegment = text;
+          if (!state.generatingEntry) {
+            const now = Date.now();
+            state.generatingEntry = {
+              timestamp: now,
+              type: 'generating',
+              generatingInProgress: false,
+              generatingContent: text,
+              generatingTruncated: text.slice(0, 500),
+              generatingChars: text.length,
+            };
+            state.generatingSegmentStartTime = now;
+            state.activityLog.push(state.generatingEntry);
+          } else {
+            state.generatingEntry.generatingContent = text;
+            state.generatingEntry.generatingChars = text.length;
+            state.generatingEntry.generatingTruncated = text.slice(0, 500);
+          }
+        }
+      }
+    }
+
+    if (currentAssistantMsg) {
+      const hasThinkingEntries = state.activityLog.some((entry) => entry.type === 'thinking');
+      if (!hasThinkingEntries) {
+        const reasoningParts = (currentAssistantMsg.parts ?? [])
+          .filter((p: any) => p.type === 'reasoning' && typeof p.text === 'string' && p.text.length > 0);
+        for (let i = 0; i < reasoningParts.length; i += 1) {
+          const part = reasoningParts[i] as any;
+          const reasoningText = part.text as string;
+          const now = Date.now();
+          const thinkingEntry: ActivityEntry = {
+            timestamp: now,
+            type: 'thinking',
+            thinkingContent: reasoningText,
+            thinkingTruncated: reasoningText.length > 500 ? `...${reasoningText.slice(-500)}` : reasoningText,
+            thinkingInProgress: false,
+            thinkingPartId: part.id || `reasoning-${i}`,
+            durationMs: part?.time?.start && part?.time?.end
+              ? Math.max(0, part.time.end - part.time.start)
+              : undefined,
+          };
+          state.reasoningParts.set(thinkingEntry.thinkingPartId || `reasoning-${i}`, reasoningText);
+
+          const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
+          if (generatingIndex >= 0) {
+            state.activityLog.splice(generatingIndex, 0, thinkingEntry);
+          } else {
+            state.activityLog.push(thinkingEntry);
+          }
+
+          if (state.threadParentTs) {
+            await postThinkingToThread(
+              app!.client as WebClient,
+              state.channelId,
+              state.threadParentTs,
+              thinkingEntry,
+              THINKING_MESSAGE_SIZE,
+              state.userId
+            ).catch((err) => {
+              console.error('[Activity Thread] Failed to post recovered thinking:', err);
+            });
+          }
+        }
+      }
+
+      const preRecoveryStatus = state.status;
+      for (const part of (currentAssistantMsg.parts ?? [])) {
+        if ((part as any).type !== 'tool') continue;
+        const toolPart = part as ToolPart;
+        const toolKey = toolPart.callID || toolPart.id || toolPart.tool || 'tool';
+        const status = normalizeToolStatus(toolPart.state?.status);
+        const lastSeen = state.toolStates.get(toolKey);
+        if ((status === 'completed' || status === 'error')
+            && lastSeen !== 'completed' && lastSeen !== 'error') {
+          await handleToolPart(toolPart, state);
+        }
+      }
+      state.status = preRecoveryStatus;
+    }
+  }
+
   if (state.activityBatch.length > 0 && state.threadParentTs) {
     await flushActivityBatch(
       state,
@@ -1436,19 +1676,35 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
       state.charLimit,
       'complete',
       state.userId
-    ).catch(err => {
+    ).catch((err) => {
       console.error('[Activity Thread] Failed to flush recovered batch:', err);
     });
   }
 
-  if (state.status === 'complete') {
-    await finalizeResponseSegment(state);
-    if (hasPendingFinalResponse(state)) {
+  if (state.status !== 'error' && state.status !== 'aborted') {
+    if (hasPendingFinalResponse(state) || (state.fullResponse.trim().length > 0 && !state.responseMessageTs)) {
+      state.finalizeStage = 'awaiting_delivery';
+      await finalizeResponseSegment(state);
+    }
+
+    if (state.responseMessageTs) {
+      state.status = 'complete';
+      state.finalizeStage = 'complete';
+    } else {
       state.status = 'error';
-      state.customStatus = 'Final response delivery failed';
-    } else if (state.threadParentTs && !state.responseMessageTs) {
-      state.status = 'error';
-      state.customStatus = 'Final response text missing';
+      state.customStatus = state.fullResponse.trim().length > 0
+        ? 'Final response delivery failed'
+        : 'Final response text missing';
+      if (state.threadParentTs) {
+        await postErrorToThread(
+          app!.client as WebClient,
+          state.channelId,
+          state.threadParentTs,
+          state.customStatus
+        ).catch((err) => {
+          console.error('[Activity Thread] Failed to post terminal error:', err);
+        });
+      }
     }
   }
 
@@ -1482,6 +1738,15 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
   conversationTracker.stopProcessing(state.sessionId);
   processingBySession.delete(state.sessionId);
   processingByConversation.delete(state.conversationKey);
+
+  await shutdownServerIfChannelIdle(state.channelId);
+  writeStructuredLog('finalize_end', {
+    source,
+    status: state.status,
+    finalizeStage: state.finalizeStage,
+    responseMessageTs: state.responseMessageTs,
+    ...correlationFromState(state),
+  });
 }
 
 async function updateStatusMessage(state: ProcessingState, session: Session | ThreadSession, client: WebClient): Promise<void> {
@@ -1538,11 +1803,66 @@ async function updateStatusMessage(state: ProcessingState, session: Session | Th
   });
 }
 
+async function maybeFinalizeFromWatchdog(state: ProcessingState): Promise<boolean> {
+  if (state.status === 'complete' || state.status === 'error' || state.status === 'aborted') {
+    return false;
+  }
+  if (state.watchdogTriggered) {
+    return false;
+  }
+
+  const idleForMs = Date.now() - state.lastProgressAt;
+  if (idleForMs < WATCHDOG_IDLE_TIMEOUT_MS) {
+    return false;
+  }
+
+  state.watchdogTriggered = true;
+  writeStructuredLog('watchdog_triggered', {
+    idleForMs,
+    timeoutMs: WATCHDOG_IDLE_TIMEOUT_MS,
+    ...correlationFromState(state),
+  });
+
+  try {
+    const instance = await serverPool.getOrCreate(state.channelId);
+    const response = await instance.client.getClient().session.messages({
+      path: { id: state.sessionId },
+      query: { directory: state.workingDir },
+    });
+    const authMessages = response.data ?? [];
+    const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
+    if (!finalResponseMsg) {
+      writeStructuredLog('watchdog_skipped', {
+        reason: 'no_text_bearing_assistant_message',
+        ...correlationFromState(state),
+      });
+      state.watchdogTriggered = false;
+      return false;
+    }
+
+    await handleSessionIdle(state, { source: 'watchdog', authoritativeMessages: authMessages });
+    return true;
+  } catch (error) {
+    console.error('[opencode] Watchdog finalize failed:', error);
+    writeStructuredLog('watchdog_error', {
+      error: String(error),
+      ...correlationFromState(state),
+    });
+    state.watchdogTriggered = false;
+    return false;
+  }
+}
+
 function startStatusUpdater(state: ProcessingState, session: Session | ThreadSession, client: WebClient): void {
   const eventMutex = getEventMutex(state.sessionId);
   state.statusUpdateTimer = setInterval(() => {
     void eventMutex.runExclusive(async () => {
       if (state.status === 'complete' || state.status === 'error' || state.status === 'aborted') {
+        return;
+      }
+
+      const finalizedByWatchdog = await maybeFinalizeFromWatchdog(state);
+      if (finalizedByWatchdog) {
         return;
       }
 
@@ -1716,6 +2036,14 @@ async function handleUserMessage(params: {
 }): Promise<void> {
   const { channelId, threadTs, userId, originalTs, client } = params;
   let { userText, inlineMode } = params;
+
+  writeStructuredLog('incoming_slack_message', {
+    channelId,
+    threadTs,
+    originalTs,
+    userId,
+    textChars: userText.length,
+  });
 
   if (!shouldProcessIncomingMessage(channelId, originalTs)) {
     return;
@@ -1977,183 +2305,185 @@ async function handleUserMessage(params: {
   // Prepare server instance and ensure event stream
   const instance = await serverPool.getOrCreate(channelId);
   await ensureEventSubscription(channelId, instance.client);
+  let queryRegistered = false;
 
-  if (session.model) {
-    const models = await getAvailableModels(instance.client.getClient());
-    const available = models.some((m) => m.value === session.model);
-    if (!available) {
+  try {
+    if (session.model) {
+      const models = await getAvailableModels(instance.client.getClient());
+      const available = models.some((m) => m.value === session.model);
+      if (!available) {
+        await withSlackRetry(() =>
+          client.chat.postMessage({
+            channel: channelId,
+            thread_ts: postingThreadTs,
+            text: `Model ${session.model} is no longer available.`,
+            blocks: buildModelDeprecatedBlocks(session!.model!, models),
+          })
+        );
+        return;
+      }
+    }
+
+    // Thread fork if needed
+    if (sessionThreadTs && isNewThreadFork) {
+      const forkPoint = findForkPointMessageId(channelId, sessionThreadTs);
+      const parentSessionId = (session as ThreadSession).forkedFrom || getSession(channelId)?.sessionId || null;
+      let forkMessageId = (session as ThreadSession).resumeSessionAtMessageId || forkPoint?.messageId || null;
+
+      if (parentSessionId && !forkMessageId) {
+        try {
+          const msgs = await instance.client.getClient().session.messages({ path: { id: parentSessionId } });
+          const assistants = (msgs.data || []).filter((m: any) => m.info?.role === 'assistant');
+          const last = assistants.sort((a: any, b: any) => (a.info?.time?.created || 0) - (b.info?.time?.created || 0)).pop();
+          forkMessageId = last?.info?.id || null;
+        } catch {
+          // Ignore
+        }
+      }
+
+      if (parentSessionId && forkMessageId) {
+        const forkedSessionId = await instance.client.forkSession(parentSessionId, forkMessageId, session.workingDir);
+        await saveThreadSession(channelId, sessionThreadTs, {
+          sessionId: forkedSessionId,
+          forkedFrom: parentSessionId,
+          resumeSessionAtMessageId: forkMessageId,
+        });
+        (session as ThreadSession).sessionId = forkedSessionId;
+      }
+    }
+
+    // Ensure session exists
+    let isNewSession = false;
+    if (!session.sessionId) {
+      const newSessionId = await instance.client.createSession(`Slack ${channelId}`, session.workingDir, undefined);
+      session.sessionId = newSessionId;
+      isNewSession = true;
+      if (sessionThreadTs) {
+        await saveThreadSession(channelId, sessionThreadTs, { sessionId: newSessionId });
+      } else {
+        await saveSession(channelId, { sessionId: newSessionId });
+      }
+    }
+
+    if (conversationTracker.isBusy(session.sessionId!)) {
       await withSlackRetry(() =>
         client.chat.postMessage({
           channel: channelId,
           thread_ts: postingThreadTs,
-          text: `Model ${session.model} is no longer available.`,
-          blocks: buildModelDeprecatedBlocks(session!.model!, models),
+          text: 'Another request is already running for this session. Please wait or abort.',
         })
       );
       return;
     }
-  }
 
-  // Thread fork if needed
-  if (sessionThreadTs && isNewThreadFork) {
-    const forkPoint = findForkPointMessageId(channelId, sessionThreadTs);
-    const parentSessionId = (session as ThreadSession).forkedFrom || getSession(channelId)?.sessionId || null;
-    let forkMessageId = (session as ThreadSession).resumeSessionAtMessageId || forkPoint?.messageId || null;
-
-    if (parentSessionId && !forkMessageId) {
-      try {
-        const msgs = await instance.client.getClient().session.messages({ path: { id: parentSessionId } });
-        const assistants = (msgs.data || []).filter((m: any) => m.info?.role === 'assistant');
-        const last = assistants.sort((a: any, b: any) => (a.info?.time?.created || 0) - (b.info?.time?.created || 0)).pop();
-        forkMessageId = last?.info?.id || null;
-      } catch {
-        // Ignore
-      }
-    }
-
-    if (parentSessionId && forkMessageId) {
-      const forkedSessionId = await instance.client.forkSession(parentSessionId, forkMessageId, session.workingDir);
-      await saveThreadSession(channelId, sessionThreadTs, {
-        sessionId: forkedSessionId,
-        forkedFrom: parentSessionId,
-        resumeSessionAtMessageId: forkMessageId,
-      });
-      (session as ThreadSession).sessionId = forkedSessionId;
-    }
-  }
-
-  // Ensure session exists
-  let isNewSession = false;
-  if (!session.sessionId) {
-    const newSessionId = await instance.client.createSession(`Slack ${channelId}`, session.workingDir, undefined);
-    session.sessionId = newSessionId;
-    isNewSession = true;
-    if (sessionThreadTs) {
-      await saveThreadSession(channelId, sessionThreadTs, { sessionId: newSessionId });
-    } else {
-      await saveSession(channelId, { sessionId: newSessionId });
-    }
-  }
-
-  if (conversationTracker.isBusy(session.sessionId!)) {
-    await withSlackRetry(() =>
-      client.chat.postMessage({
-        channel: channelId,
-        thread_ts: postingThreadTs,
-        text: 'Another request is already running for this session. Please wait or abort.',
-      })
-    );
-    return;
-  }
-
-  const conversationKey = makeConversationKey(channelId, sessionThreadTs);
-  const activeContext: BusyContext = {
-    conversationKey,
-    sessionId: session.sessionId!,
-    statusMsgTs: '',
-    originalTs: originalTs || '',
-    startTime: Date.now(),
-    userId,
-    query: userText,
-    channelId,
-    threadTs: sessionThreadTs,
-  };
-
-  if (!conversationTracker.startProcessing(session.sessionId!, activeContext)) {
-    await withSlackRetry(() =>
-      client.chat.postMessage({
-        channel: channelId,
-        thread_ts: postingThreadTs,
-        text: 'Another request is already running for this session. Please wait or abort.',
-      })
-    );
-    return;
-  }
-
-  if (originalTs) {
-    await markProcessingStart(client, channelId, originalTs);
-  }
-
-  // Process files
-  let processedFiles = { files: [], warnings: [] } as { files: any[]; warnings: string[] };
-  if (params.files && params.files.length > 0) {
-    const token = process.env.SLACK_BOT_TOKEN || '';
-    const guardResult = await processSlackFilesWithGuard(
-      params.files,
-      token,
-      { writeTempFile, inlineImages: 'always' },
-      { allowInlineFallback: true }
-    );
-    if (guardResult.hasFailedFiles) {
-      await withSlackRetry(() =>
-        client.chat.postMessage({
-          channel: channelId,
-          thread_ts: postingThreadTs,
-          text: guardResult.failureMessage ?? 'Some attached files could not be processed.',
-        })
-      );
-      if (originalTs) {
-        await markError(client, channelId, originalTs);
-      }
-      conversationTracker.stopProcessing(session.sessionId!);
-      return;
-    }
-    processedFiles = guardResult;
-  }
-
-  const parts = buildMessageContent(userText, processedFiles.files, processedFiles.warnings);
-
-  // Post initial status message
-  const initialActivity: ActivityEntry = {
-    timestamp: Date.now(),
-    type: 'starting',
-  };
-  const statusBlocks = buildCombinedStatusBlocks({
-    activityLog: [initialActivity],
-    inProgress: true,
-    status: 'starting',
-    mode: session.mode,
-    model: session.model,
-    currentTool: undefined,
-    toolsCompleted: 0,
-    elapsedMs: 0,
-    conversationKey,
-    spinner: SPINNER_FRAMES[0],
-    sessionId: session.sessionId!,
-    isNewSession,
-    isFinalSegment: false,
-    forkInfo: {
-      threadTs: postingThreadTs,
+    const conversationKey = makeConversationKey(channelId, sessionThreadTs);
+    const activeContext: BusyContext = {
       conversationKey,
-      sdkMessageId: undefined,
       sessionId: session.sessionId!,
-    },
-  });
+      statusMsgTs: '',
+      originalTs: originalTs || '',
+      startTime: Date.now(),
+      userId,
+      query: userText,
+      channelId,
+      threadTs: sessionThreadTs,
+    };
 
-  const statusMsg = await withSlackRetry(() =>
-    client.chat.postMessage({
-      channel: channelId,
-      thread_ts: postingThreadTs,
-      text: 'Processing...',
-      blocks: statusBlocks,
-    })
-  ) as { ts?: string };
+    if (!conversationTracker.startProcessing(session.sessionId!, activeContext)) {
+      await withSlackRetry(() =>
+        client.chat.postMessage({
+          channel: channelId,
+          thread_ts: postingThreadTs,
+          text: 'Another request is already running for this session. Please wait or abort.',
+        })
+      );
+      return;
+    }
 
-  // Post starting entry FIRST (before streaming session) to ensure correct thread order
-  const threadParentTs = statusMsg.ts!;
-  const startingEntry = initialActivity;
-  await postStartingToThread(client, channelId, threadParentTs, startingEntry).catch(err => {
-    console.error('[Activity Thread] Failed to post starting entry:', err);
-  });
+    if (originalTs) {
+      await markProcessingStart(client, channelId, originalTs);
+    }
 
-  // Codex-style: do NOT stream response to Slack. Post response once on completion.
-  const streaming = createNoopStreamingSession();
+    // Process files
+    let processedFiles = { files: [], warnings: [] } as { files: any[]; warnings: string[] };
+    if (params.files && params.files.length > 0) {
+      const token = process.env.SLACK_BOT_TOKEN || '';
+      const guardResult = await processSlackFilesWithGuard(
+        params.files,
+        token,
+        { writeTempFile, inlineImages: 'always' },
+        { allowInlineFallback: true }
+      );
+      if (guardResult.hasFailedFiles) {
+        await withSlackRetry(() =>
+          client.chat.postMessage({
+            channel: channelId,
+            thread_ts: postingThreadTs,
+            text: guardResult.failureMessage ?? 'Some attached files could not be processed.',
+          })
+        );
+        if (originalTs) {
+          await markError(client, channelId, originalTs);
+        }
+        conversationTracker.stopProcessing(session.sessionId!);
+        return;
+      }
+      processedFiles = guardResult;
+    }
 
-  const processingState: ProcessingState = {
-    conversationKey,
-    channelId,
-    sessionThreadTs,
-    postingThreadTs,
+    const parts = buildMessageContent(userText, processedFiles.files, processedFiles.warnings);
+
+    // Post initial status message
+    const initialActivity: ActivityEntry = {
+      timestamp: Date.now(),
+      type: 'starting',
+    };
+    const statusBlocks = buildCombinedStatusBlocks({
+      activityLog: [initialActivity],
+      inProgress: true,
+      status: 'starting',
+      mode: session.mode,
+      model: session.model,
+      currentTool: undefined,
+      toolsCompleted: 0,
+      elapsedMs: 0,
+      conversationKey,
+      spinner: SPINNER_FRAMES[0],
+      sessionId: session.sessionId!,
+      isNewSession,
+      isFinalSegment: false,
+      forkInfo: {
+        threadTs: postingThreadTs,
+        conversationKey,
+        sdkMessageId: undefined,
+        sessionId: session.sessionId!,
+      },
+    });
+
+    const statusMsg = await withSlackRetry(() =>
+      client.chat.postMessage({
+        channel: channelId,
+        thread_ts: postingThreadTs,
+        text: 'Processing...',
+        blocks: statusBlocks,
+      })
+    ) as { ts?: string };
+
+    // Post starting entry FIRST (before streaming session) to ensure correct thread order
+    const threadParentTs = statusMsg.ts!;
+    const startingEntry = initialActivity;
+    await postStartingToThread(client, channelId, threadParentTs, startingEntry).catch(err => {
+      console.error('[Activity Thread] Failed to post starting entry:', err);
+    });
+
+    // Codex-style: do NOT stream response to Slack. Post response once on completion.
+    const streaming = createNoopStreamingSession();
+
+    const processingState: ProcessingState = {
+      conversationKey,
+      channelId,
+      sessionThreadTs,
+      postingThreadTs,
     sessionId: session.sessionId!,
     workingDir: session.workingDir,
     statusMsgTs: statusMsg.ts!,
@@ -2185,8 +2515,11 @@ async function handleUserMessage(params: {
     completedThinkingPartIds: new Set(),
     messageRoles: new Map(),
     pendingMessageParts: new Map(),
-    finalizingResponseSegment: null,
-    seenMessagePartMessageIds: new Set(),
+      finalizingResponseSegment: null,
+      seenMessagePartMessageIds: new Set(),
+      finalizeStage: 'awaiting_text',
+      lastProgressAt: Date.now(),
+      watchdogTriggered: false,
 
     // Activity thread batch infrastructure
     activityThreadMsgTs: null,
@@ -2199,67 +2532,82 @@ async function handleUserMessage(params: {
     postedBatchTs: null,
     postedBatchToolUseIds: new Set(),
     pendingThinkingUpdate: null,
-  };
+    };
 
-  // Set threadParentTs to statusMsgTs for activity thread replies
-  // (starting entry was already posted earlier, before streaming session)
-  processingState.threadParentTs = threadParentTs;
+    // Set threadParentTs to statusMsgTs for activity thread replies
+    // (starting entry was already posted earlier, before streaming session)
+    processingState.threadParentTs = threadParentTs;
 
-  processingBySession.set(session.sessionId!, processingState);
-  processingByConversation.set(conversationKey, processingState);
+    processingBySession.set(session.sessionId!, processingState);
+    processingByConversation.set(conversationKey, processingState);
+    queryRegistered = true;
+    writeStructuredLog('state_transition', {
+      from: 'starting',
+      to: 'processing',
+      reason: 'query_registered',
+      ...correlationFromState(processingState),
+    });
 
-  startStatusUpdater(processingState, session, client);
+    startStatusUpdater(processingState, session, client);
 
-  const model = session.model ? decodeModelId(session.model) : null;
-  const promptOptions = {
-    model: model ? { providerID: model.providerID, modelID: model.modelID } : undefined,
-    agent: resolveAgent(session as Session),
-    workingDir: session.workingDir,
-  };
+    const model = session.model ? decodeModelId(session.model) : null;
+    const promptOptions = {
+      model: model ? { providerID: model.providerID, modelID: model.modelID } : undefined,
+      agent: resolveAgent(session as Session),
+      workingDir: session.workingDir,
+    };
 
-  try {
-    await instance.client.promptAsync(session.sessionId!, parts, promptOptions);
-  } catch (error) {
-    processingState.status = 'error';
-    processingState.customStatus = toUserMessage(error);
+    try {
+      await instance.client.promptAsync(session.sessionId!, parts, promptOptions);
+      markProgress(processingState, 'prompt_dispatched');
+    } catch (error) {
+      processingState.status = 'error';
+      processingState.customStatus = toUserMessage(error);
 
-    // Flush any pending batch on error
-    if (processingState.activityBatch.length > 0 && processingState.threadParentTs) {
-      await flushActivityBatch(
-        processingState,
-        client,
-        channelId,
-        processingState.charLimit,
-        'complete',
-        processingState.userId
-      ).catch(err => {
-        console.error('[Activity Thread] Failed to flush batch on error:', err);
-      });
+      // Flush any pending batch on error
+      if (processingState.activityBatch.length > 0 && processingState.threadParentTs) {
+        await flushActivityBatch(
+          processingState,
+          client,
+          channelId,
+          processingState.charLimit,
+          'complete',
+          processingState.userId
+        ).catch(err => {
+          console.error('[Activity Thread] Failed to flush batch on error:', err);
+        });
+      }
+
+      // Post error to activity thread
+      if (processingState.threadParentTs) {
+        await postErrorToThread(
+          client,
+          channelId,
+          processingState.threadParentTs,
+          toUserMessage(error)
+        ).catch(err => {
+          console.error('[Activity Thread] Failed to post error:', err);
+        });
+      }
+
+      await updateStatusMessage(processingState, session, client);
+      if (originalTs) {
+        await markError(client, channelId, originalTs);
+      }
+      if (processingState.statusUpdateTimer) {
+        clearInterval(processingState.statusUpdateTimer);
+        processingState.statusUpdateTimer = undefined;
+      }
+      conversationTracker.stopProcessing(session.sessionId!);
+      processingBySession.delete(session.sessionId!);
+      processingByConversation.delete(conversationKey);
+      queryRegistered = false;
+      await shutdownServerIfChannelIdle(channelId);
     }
-
-    // Post error to activity thread
-    if (processingState.threadParentTs) {
-      await postErrorToThread(
-        client,
-        channelId,
-        processingState.threadParentTs,
-        toUserMessage(error)
-      ).catch(err => {
-        console.error('[Activity Thread] Failed to post error:', err);
-      });
+  } finally {
+    if (!queryRegistered) {
+      await shutdownServerIfChannelIdle(channelId);
     }
-
-    await updateStatusMessage(processingState, session, client);
-    if (originalTs) {
-      await markError(client, channelId, originalTs);
-    }
-    if (processingState.statusUpdateTimer) {
-      clearInterval(processingState.statusUpdateTimer);
-      processingState.statusUpdateTimer = undefined;
-    }
-    conversationTracker.stopProcessing(session.sessionId!);
-    processingBySession.delete(session.sessionId!);
-    processingByConversation.delete(conversationKey);
   }
 }
 
@@ -2559,7 +2907,7 @@ function registerActionHandlers(appInstance: App): void {
       const instance = await serverPool.getOrCreate(state.channelId);
       await instance.client.abort(state.sessionId);
       state.status = 'aborted';
-      await handleSessionIdle(state);
+      await handleSessionIdle(state, { source: 'abort' });
     } catch (error) {
       console.error('[opencode] Abort failed:', error);
     }
@@ -3151,32 +3499,45 @@ export async function startBot(): Promise<void> {
     throw new Error('Missing Slack credentials (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET)');
   }
 
-  processedIncomingMessageTs.clear();
+  acquireBotLock();
+  logBuildMetadata();
+  try {
+    processedIncomingMessageTs.clear();
 
-  app = new App({
-    token: botToken,
-    appToken,
-    signingSecret,
-    socketMode: true,
-    logLevel: LogLevel.INFO,
-  });
+    app = new App({
+      token: botToken,
+      appToken,
+      signingSecret,
+      socketMode: true,
+      logLevel: LogLevel.INFO,
+    });
 
-  registerMessageHandlers(app);
-  registerActionHandlers(app);
+    registerMessageHandlers(app);
+    registerActionHandlers(app);
 
-  await app.start();
-  console.log('OpenCode Slack bot is running.');
+    await app.start();
+    writeStructuredLog('bot_started', { pid: process.pid });
+    console.log('OpenCode Slack bot is running.');
+  } catch (error) {
+    releaseBotLock();
+    throw error;
+  }
 }
 
 export async function stopBot(): Promise<void> {
-  stopAllWatchers();
-  await serverPool.shutdownAll();
-  for (const unsubscribe of eventSubscriptions.values()) {
-    unsubscribe();
-  }
-  eventSubscriptions.clear();
-  if (app) {
-    await app.stop();
-    app = null;
+  try {
+    stopAllWatchers();
+    await serverPool.shutdownAll();
+    for (const unsubscribe of eventSubscriptions.values()) {
+      unsubscribe();
+    }
+    eventSubscriptions.clear();
+    if (app) {
+      await app.stop();
+      app = null;
+    }
+  } finally {
+    releaseBotLock();
+    writeStructuredLog('bot_stopped', { pid: process.pid });
   }
 }
