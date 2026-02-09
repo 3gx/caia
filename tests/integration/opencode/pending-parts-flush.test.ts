@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { registeredHandlers, eventSubscribers, mockWrapper } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
-import { postResponseToThread } from '../../../opencode/src/activity-thread.js';
+import { postResponseToThread, postThinkingToThread } from '../../../opencode/src/activity-thread.js';
 
 describe('pending-parts-flush', () => {
   beforeEach(async () => {
@@ -141,5 +141,69 @@ describe('pending-parts-flush', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(postResponseToThread).toHaveBeenCalledTimes(1);
     expect((postResponseToThread as any).mock.calls[0][3]).toBe('Normal response');
+  });
+
+  it('prefers authoritative final response on idle even when partial stream text exists', async () => {
+    await triggerMention();
+
+    // Streamed partial text arrives first.
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: { type: 'text', id: 't1', text: 'Partial streamed response' },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    // Authoritative session API contains the final full response.
+    const mockMessages = mockWrapper.getClient().session.messages;
+    mockMessages.mockResolvedValueOnce({
+      data: [
+        {
+          info: { id: 'msg_1', role: 'assistant', time: { completed: 1 } },
+          parts: [{ type: 'text', id: 't2', text: 'Authoritative final response' }],
+        },
+      ],
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(postResponseToThread).toHaveBeenCalled();
+    const lastResponseCall = (postResponseToThread as any).mock.calls[(postResponseToThread as any).mock.calls.length - 1];
+    expect(lastResponseCall[3]).toBe('Authoritative final response');
+  });
+
+  it('recovers missing thinking activity from authoritative reasoning parts on idle', async () => {
+    await triggerMention();
+
+    const mockMessages = mockWrapper.getClient().session.messages;
+    mockMessages.mockResolvedValueOnce({
+      data: [
+        {
+          info: { id: 'msg_1', role: 'assistant', time: { completed: 1 } },
+          parts: [
+            { type: 'reasoning', id: 'r1', text: 'Recovered thinking content', time: { start: 1000, end: 2500 } },
+            { type: 'text', id: 't1', text: 'Recovered response content' },
+          ],
+        },
+      ],
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(postThinkingToThread).toHaveBeenCalled();
+    const lastThinkingCall = (postThinkingToThread as any).mock.calls[(postThinkingToThread as any).mock.calls.length - 1];
+    expect(lastThinkingCall[3].thinkingContent).toBe('Recovered thinking content');
+    expect(postResponseToThread).toHaveBeenCalled();
+    const lastResponseCall = (postResponseToThread as any).mock.calls[(postResponseToThread as any).mock.calls.length - 1];
+    expect(lastResponseCall[3]).toBe('Recovered response content');
   });
 });

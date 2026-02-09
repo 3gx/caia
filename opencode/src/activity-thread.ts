@@ -122,6 +122,26 @@ export interface ActivityBatchState {
   postedBatchToolUseIds: Set<string>;      // tool_use_ids in the posted batch
 }
 
+const ACTIVITY_FLUSH_QUEUES = new WeakMap<ActivityBatchState, Promise<void>>();
+
+function enqueueActivityFlush(
+  state: ActivityBatchState,
+  work: () => Promise<void>
+): Promise<void> {
+  const previous = ACTIVITY_FLUSH_QUEUES.get(state) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(work)
+    .finally(() => {
+      if (ACTIVITY_FLUSH_QUEUES.get(state) === next) {
+        ACTIVITY_FLUSH_QUEUES.delete(state);
+      }
+    });
+
+  ACTIVITY_FLUSH_QUEUES.set(state, next);
+  return next;
+}
+
 /**
  * Flush pending activity batch to thread.
  *
@@ -143,63 +163,70 @@ export async function flushActivityBatch(
   reason: 'timer' | 'long_content' | 'complete',
   userId?: string
 ): Promise<void> {
-  // Nothing to flush
-  if (state.activityBatch.length === 0) {
-    return;
-  }
-
-  // Need a parent to post to
-  if (!state.threadParentTs) {
-    console.warn('[activity-thread] No thread parent ts, cannot flush batch');
-    return;
-  }
-
-  // Format the batch
-  const content = formatThreadActivityBatch(state.activityBatch);
-  if (!content) {
-    // Clear batch even if empty content
-    state.activityBatch = [];
-    return;
-  }
-
-  try {
-    // Post to thread
-    const result = await postActivityToThread(
-      client,
-      channelId,
-      state.threadParentTs,
-      content,
-      { charLimit, userId }
-    );
-
-    if (result?.ts) {
-      // Store for potential updates when tool_result arrives
-      state.postedBatchTs = result.ts;
-      state.postedBatchToolUseIds = new Set(
-        state.activityBatch
-          .filter(e => e.type === 'tool_complete' && e.toolUseId)
-          .map(e => e.toolUseId!)
-      );
-      // Update last post time for rate limiting
-      state.lastActivityPostTime = Date.now();
-
-      // Capture permalink and store on all batch entries for clickable activity links
-      try {
-        const permalink = await getMessagePermalink(client, channelId, result.ts);
-        for (const entry of state.activityBatch) {
-          entry.threadMessageTs = result.ts;
-          entry.threadMessageLink = permalink;
-        }
-      } catch (permalinkError) {
-        console.error('[activity-thread] Failed to get permalink for batch:', permalinkError);
-      }
+  return enqueueActivityFlush(state, async () => {
+    // Nothing to flush
+    if (state.activityBatch.length === 0) {
+      return;
     }
-  } catch (error) {
-    console.error('[activity-thread] Failed to flush batch:', error);
-  }
 
-  // Clear batch after posting (success or failure)
-  state.activityBatch = [];
+    // Need a parent to post to
+    if (!state.threadParentTs) {
+      console.warn('[activity-thread] No thread parent ts, cannot flush batch');
+      return;
+    }
+
+    // Snapshot and clear immediately to avoid duplicate/lost entries when flushes overlap.
+    const batchEntries = [...state.activityBatch];
+    state.activityBatch = [];
+
+    // Format the batch snapshot
+    const content = formatThreadActivityBatch(batchEntries);
+    if (!content) {
+      return;
+    }
+
+    try {
+      // Post to thread
+      const result = await postActivityToThread(
+        client,
+        channelId,
+        state.threadParentTs,
+        content,
+        { charLimit, userId }
+      );
+
+      if (result?.ts) {
+        // Store for potential updates when tool_result arrives.
+        // Include tool_start IDs too, so completions can update previously posted starts.
+        state.postedBatchTs = result.ts;
+        state.postedBatchToolUseIds = new Set(
+          batchEntries
+            .filter(e => e.toolUseId)
+            .map(e => e.toolUseId!)
+        );
+        // Update last post time for rate limiting
+        state.lastActivityPostTime = Date.now();
+
+        // Capture permalink and store on all batch entries for clickable activity links
+        try {
+          const permalink = await getMessagePermalink(client, channelId, result.ts);
+          for (const entry of batchEntries) {
+            entry.threadMessageTs = result.ts;
+            entry.threadMessageLink = permalink;
+          }
+        } catch (permalinkError) {
+          console.error('[activity-thread] Failed to get permalink for batch:', permalinkError);
+        }
+      } else {
+        // Post failed/empty response: requeue to avoid dropping activity.
+        state.activityBatch = [...batchEntries, ...state.activityBatch];
+      }
+    } catch (error) {
+      console.error('[activity-thread] Failed to flush batch:', error);
+      // Requeue failed batch in front to preserve original ordering.
+      state.activityBatch = [...batchEntries, ...state.activityBatch];
+    }
+  });
 }
 
 /**

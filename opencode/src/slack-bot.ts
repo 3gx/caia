@@ -1206,16 +1206,9 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
   }
   state.status = preFlushStatus;
 
-  // Safety net: fetch authoritative messages from session API to recover
-  // any text or tool parts that were not received via SSE events.
-  // Only call the API when there's evidence something was missed:
-  //   - empty fullResponse (text dropped)
-  //   - toolStates has non-terminal entries (tool completion missed)
-  const hasNonTerminalTools = [...state.toolStates.values()].some(
-    s => s !== 'completed' && s !== 'error'
-  );
-  const needsRecovery = !state.fullResponse.trim() || hasNonTerminalTools;
-  if (needsRecovery && state.workingDir) {
+  // Safety net: fetch authoritative messages from session API at idle.
+  // This protects against dropped/late SSE events for response/tool/thinking parts.
+  if (state.workingDir) {
     try {
       const instance = await serverPool.getOrCreate(state.channelId);
       const client = instance.client.getClient();
@@ -1239,13 +1232,15 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
         }
       }
 
-      // Recover text response if empty
-      if (!state.fullResponse.trim() && currentAssistantMsg) {
+      if (currentAssistantMsg) {
+        // Always reconcile the final response with authoritative session data.
         const textParts = (currentAssistantMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
         if (textParts.length > 0) {
           const text = textParts.map((p: any) => p.text).join('');
           if (text.trim()) {
-            console.log('[opencode] Using authoritative response from session API');
+            if (state.fullResponse !== text) {
+              console.log('[opencode] Using authoritative response from session API');
+            }
             state.fullResponse = text;
             state.currentResponseSegment = text;
             if (!state.generatingEntry) {
@@ -1260,19 +1255,66 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
               };
               state.generatingSegmentStartTime = now;
               state.activityLog.push(state.generatingEntry);
+            } else {
+              state.generatingEntry.generatingContent = text;
+              state.generatingEntry.generatingChars = text.length;
+              state.generatingEntry.generatingTruncated = text.slice(0, 500);
             }
           }
         }
-      }
 
-      // Recover missed tool entries from the CURRENT assistant message only.
-      // toolStates stores ANY seen status (pending/running/completed/error).
-      // Check if the LAST seen status is already a terminal state rather than
-      // using has(), since a tool seen as 'running' still needs recovery for 'completed'.
-      // handleToolPart sets state.status = 'thinking' on completed/error.
-      // Since we already set status to 'complete', save/restore to avoid breaking
-      // the finalizeResponseSegment guard.
-      if (currentAssistantMsg) {
+        // Recover reasoning blocks when SSE reasoning events were missed entirely.
+        // Only synthesize from authoritative data when no thinking entries exist yet.
+        const hasThinkingEntries = state.activityLog.some((entry) => entry.type === 'thinking');
+        if (!hasThinkingEntries) {
+          const reasoningParts = (currentAssistantMsg.parts ?? [])
+            .filter((p: any) => p.type === 'reasoning' && typeof p.text === 'string' && p.text.length > 0);
+          for (let i = 0; i < reasoningParts.length; i += 1) {
+            const part = reasoningParts[i] as any;
+            const reasoningText = part.text as string;
+            const now = Date.now();
+            const thinkingEntry: ActivityEntry = {
+              timestamp: now,
+              type: 'thinking',
+              thinkingContent: reasoningText,
+              thinkingTruncated: reasoningText.length > 500 ? `...${reasoningText.slice(-500)}` : reasoningText,
+              thinkingInProgress: false,
+              thinkingPartId: part.id || `reasoning-${i}`,
+              durationMs: part?.time?.start && part?.time?.end
+                ? Math.max(0, part.time.end - part.time.start)
+                : undefined,
+            };
+            state.reasoningParts.set(thinkingEntry.thinkingPartId || `reasoning-${i}`, reasoningText);
+
+            const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
+            if (generatingIndex >= 0) {
+              state.activityLog.splice(generatingIndex, 0, thinkingEntry);
+            } else {
+              state.activityLog.push(thinkingEntry);
+            }
+
+            if (state.threadParentTs) {
+              await postThinkingToThread(
+                app!.client as WebClient,
+                state.channelId,
+                state.threadParentTs,
+                thinkingEntry,
+                THINKING_MESSAGE_SIZE,
+                state.userId
+              ).catch((err) => {
+                console.error('[Activity Thread] Failed to post recovered thinking:', err);
+              });
+            }
+          }
+        }
+
+        // Recover missed tool entries from the CURRENT assistant message only.
+        // toolStates stores ANY seen status (pending/running/completed/error).
+        // Check if the LAST seen status is already a terminal state rather than
+        // using has(), since a tool seen as 'running' still needs recovery for 'completed'.
+        // handleToolPart sets state.status = 'thinking' on completed/error.
+        // Since we already set status to 'complete', save/restore to avoid breaking
+        // the finalizeResponseSegment guard.
         const preRecoveryStatus = state.status;
         for (const part of (currentAssistantMsg.parts ?? [])) {
           if ((part as any).type !== 'tool') continue;
