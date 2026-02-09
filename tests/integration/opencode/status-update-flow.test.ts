@@ -4,6 +4,7 @@ import { registeredHandlers, eventSubscribers } from './slack-bot-mocks.js';
 import { setupBot, teardownBot } from './slack-bot-test-utils.js';
 import { createMockWebClient } from '../../__fixtures__/opencode/slack-mocks.js';
 import { buildCombinedStatusBlocks } from '../../../opencode/src/blocks.js';
+import { getSession } from '../../../opencode/src/session-manager.js';
 
 describe('status-update-flow', () => {
   beforeEach(async () => {
@@ -51,7 +52,7 @@ describe('status-update-flow', () => {
     });
 
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
 
     expect(vi.mocked(buildCombinedStatusBlocks).mock.calls.length).toBeGreaterThan(callCountBefore);
     const toolCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
@@ -106,7 +107,7 @@ describe('status-update-flow', () => {
     });
 
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
 
     const completedCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
       .map((call) => call[0] as any)
@@ -145,7 +146,7 @@ describe('status-update-flow', () => {
     });
 
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
 
     const compactCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
       .map((call) => call[0] as any)
@@ -189,7 +190,7 @@ describe('status-update-flow', () => {
     });
 
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
 
     const usageCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
       .map((call) => call[0] as any)
@@ -198,5 +199,43 @@ describe('status-update-flow', () => {
     expect(usageCall?.compactPercent).toBe(40);
     expect(usageCall?.tokensToCompact).toBe(400);
     expect(usageCall?.spinner).toBeDefined();
+  });
+
+  it('respects updateRateSeconds for status update interval', async () => {
+    vi.useFakeTimers();
+
+    // Configure session with a 5-second update rate
+    vi.mocked(getSession).mockReturnValue({
+      sessionId: 'sess_mock',
+      workingDir: '/tmp',
+      mode: 'default',
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      pathConfigured: true,
+      configuredPath: '/tmp',
+      previousSessionIds: [],
+      updateRateSeconds: 5,
+    } as any);
+
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> slow update', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    const callsBefore = vi.mocked(buildCombinedStatusBlocks).mock.calls.length;
+
+    // Advance 1 second — should NOT trigger a status update at the old 1s rate
+    await vi.advanceTimersByTimeAsync(1000);
+    const callsAt1s = vi.mocked(buildCombinedStatusBlocks).mock.calls.length;
+    expect(callsAt1s).toBe(callsBefore);
+
+    // Advance to 5 seconds total — should trigger first update
+    await vi.advanceTimersByTimeAsync(4000);
+    const callsAt5s = vi.mocked(buildCombinedStatusBlocks).mock.calls.length;
+    expect(callsAt5s).toBeGreaterThan(callsBefore);
   });
 });

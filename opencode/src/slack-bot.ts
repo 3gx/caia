@@ -1417,7 +1417,7 @@ function startStatusUpdater(state: ProcessingState, session: Session | ThreadSes
         console.error('[Activity Thread] Failed to flush batch on timer:', err);
       });
     }
-  }, STATUS_UPDATE_INTERVAL_MS);
+  }, state.updateRateSeconds * 1000);
 }
 
 function extractPlanFilePath(input?: Record<string, unknown>): string | null {
