@@ -230,6 +230,46 @@ describe('CodexClient turn:completed deduplication', () => {
   });
 });
 
+describe('CodexClient shutdown response handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('suppresses unknown-response warning during intentional shutdown', () => {
+    const client = new CodexClient({ requestTimeout: 10 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    (client as any).isShuttingDown = true;
+    (client as any).pendingShutdownRequestIds.add(42);
+
+    (client as any).handleLine(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 42,
+        result: { ok: true },
+      })
+    );
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect((client as any).pendingShutdownRequestIds.has(42)).toBe(false);
+  });
+
+  it('keeps warning for unknown responses when not shutting down', () => {
+    const client = new CodexClient({ requestTimeout: 10 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    (client as any).handleLine(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 777,
+        result: { ok: true },
+      })
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith('Received response for unknown request:', 777);
+  });
+});
+
 describe('CodexClient item:started Event Tool Name Extraction', () => {
   // Test the tool name extraction logic that handles multiple possible field names
   type ItemStartedParams = Record<string, unknown>;

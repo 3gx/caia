@@ -277,6 +277,7 @@ export class CodexClient extends EventEmitter {
   private readonly config: Required<CodexClientConfig>;
   private isShuttingDown = false;
   private sandboxMode?: SandboxMode;
+  private pendingShutdownRequestIds = new Set<number>();
 
   constructor(config: CodexClientConfig = {}) {
     super();
@@ -364,8 +365,12 @@ export class CodexClient extends EventEmitter {
     // Phase 1: Graceful shutdown via RPC (2s)
     try {
       const request = createRequest('shutdown', {});
+      this.pendingShutdownRequestIds.add(request.id);
       proc.stdin?.write(serializeMessage(request));
-    } catch { /* ignore stdin errors */ }
+    } catch {
+      this.pendingShutdownRequestIds.clear();
+      /* ignore stdin errors */
+    }
 
     if (await this.waitForExit(proc, 2000)) {
       console.log('[codex-client] Process exited gracefully');
@@ -397,6 +402,7 @@ export class CodexClient extends EventEmitter {
     this.process = null;
     this.initialized = false;
     this.isShuttingDown = false;
+    this.pendingShutdownRequestIds.clear();
   }
 
   private waitForExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -988,6 +994,10 @@ export class CodexClient extends EventEmitter {
       // Correlate with pending request
       const handled = this.pendingRequests.resolve(message);
       if (!handled) {
+        if (this.isShuttingDown) {
+          this.pendingShutdownRequestIds.delete(message.id);
+          return;
+        }
         console.warn('Received response for unknown request:', message.id);
       }
     } else if (isNotification(message)) {
