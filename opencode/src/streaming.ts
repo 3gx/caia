@@ -556,7 +556,13 @@ export async function uploadMarkdownAndPngWithResponse(
   userId?: string,
   threadCharLimit?: number,
   mappingInfo?: MappingInfo
-): Promise<{ ts?: string; postedMessages?: { ts: string }[]; uploadSucceeded?: boolean } | null> {
+): Promise<{
+  ts?: string;
+  postedMessages?: { ts: string }[];
+  uploadSucceeded?: boolean;
+  attachmentFailed?: boolean;
+  text?: string;
+} | null> {
   const limit = threadCharLimit ?? MESSAGE_SIZE_DEFAULT;
 
   // Strip markdown code fence wrapper if present (e.g., ```markdown ... ```)
@@ -564,7 +570,7 @@ export async function uploadMarkdownAndPngWithResponse(
 
   try {
     // Step 1: Prepare text (truncated if needed)
-    const textToPost = slackFormattedResponse.length <= limit
+    let textToPost = slackFormattedResponse.length <= limit
       ? slackFormattedResponse
       : truncateWithClosedFormatting(slackFormattedResponse, limit);
 
@@ -576,8 +582,23 @@ export async function uploadMarkdownAndPngWithResponse(
 
     let textTs: string | undefined;
     const postedMessages: { ts: string }[] = [];
+    let attachmentFailed = false;
 
-    // Step 2: Post message - with files if truncated, just text otherwise
+    // Step 2: Always post text first, then attach files if truncated.
+    // This guarantees response visibility even when file upload fails.
+    const textResult = await withSlackRetry(() =>
+      client.chat.postMessage({
+        channel: channelId,
+        thread_ts: threadTs,
+        text: textToPost,
+      })
+    );
+    textTs = (textResult as any).ts;
+    if (textTs) {
+      postedMessages.push({ ts: textTs });
+    }
+
+    // Step 3: Attach files only when truncated
     if (wasTruncated) {
       // Generate PNG from markdown (may return null on failure)
       const pngBuffer = await markdownToPng(cleanMarkdown);
@@ -601,56 +622,12 @@ export async function uploadMarkdownAndPngWithResponse(
         });
       }
 
-      if (!threadTs) {
-        // MAIN CHANNEL / DM: Post text first, then attachments as thread reply
-        const textResult = await withSlackRetry(() =>
-          client.chat.postMessage({
-            channel: channelId,
-            text: textToPost,
-          })
-        );
-        textTs = (textResult as any).ts;
-
-        // Upload files as thread reply to the response message
-        if (textTs) {
-          postedMessages.push({ ts: textTs });
-
-          try {
-            await withSlackRetry(() =>
-              client.files.uploadV2({
-                channel_id: channelId,
-                thread_ts: textTs,  // Response becomes thread parent
-                file_uploads: files.map((f) => ({
-                  file: typeof f.content === 'string' ? Buffer.from(f.content, 'utf-8') : f.content,
-                  filename: f.filename,
-                  title: f.title,
-                })),
-              } as any)
-            );
-          } catch (fileError) {
-            // Text posted successfully but file upload failed
-            // Log error and notify user via ephemeral message
-            console.error('[uploadMarkdownAndPng] File upload failed after text post:', fileError);
-            if (userId) {
-              try {
-                await client.chat.postEphemeral({
-                  channel: channelId,
-                  user: userId,
-                  text: `Failed to attach files: ${fileError instanceof Error ? fileError.message : 'Unknown error'}`,
-                });
-              } catch {
-                // Ignore ephemeral failure
-              }
-            }
-          }
-        }
-      } else {
-        // THREAD: Keep current bundled behavior (files + initial_comment together)
-        const fileResult = await withSlackRetry(() =>
+      try {
+        const uploadThreadTs = threadTs ?? textTs;
+        await withSlackRetry(() =>
           client.files.uploadV2({
             channel_id: channelId,
-            thread_ts: threadTs,
-            initial_comment: textToPost,
+            thread_ts: uploadThreadTs,
             file_uploads: files.map((f) => ({
               file: typeof f.content === 'string' ? Buffer.from(f.content, 'utf-8') : f.content,
               filename: f.filename,
@@ -658,46 +635,40 @@ export async function uploadMarkdownAndPngWithResponse(
             })),
           } as any)
         );
+      } catch (fileError) {
+        attachmentFailed = true;
+        console.error('[uploadMarkdownAndPng] File upload failed after text post:', fileError);
 
-        // Get ts from the file message for mapping
-        // files.uploadV2 returns files array with shares info
-        // Check both public and private shares (private channels use shares.private)
-        const shares = (fileResult as any)?.files?.[0]?.shares;
-        textTs = shares?.public?.[channelId]?.[0]?.ts ?? shares?.private?.[channelId]?.[0]?.ts;
-
-        // files.uploadV2 is async - shares may be empty initially
-        // Poll files.info until shares is populated to ensure message is visible
-        if (!textTs) {
-          // Get the first file ID to poll for shares
-          const fileId = (fileResult as any)?.files?.[0]?.files?.[0]?.id;
-          if (fileId) {
-            console.log(`[uploadMarkdownAndPng] shares empty, polling for file ${fileId}`);
-            textTs = (await pollForFileShares(client, fileId, channelId)) ?? undefined;
+        // Keep message truthful when attachment failed.
+        const fallbackText = textToPost
+          .replace('Full content attached', 'Full content not attached')
+          .replace('Full response attached', 'Full response not attached');
+        if (textTs && fallbackText !== textToPost) {
+          try {
+            await withSlackRetry(() =>
+              client.chat.update({
+                channel: channelId,
+                ts: textTs!,
+                text: fallbackText,
+              })
+            );
+            textToPost = fallbackText;
+          } catch (updateError) {
+            console.error('[uploadMarkdownAndPng] Failed to update response text after attachment failure:', updateError);
           }
         }
 
-        if (textTs) {
-          postedMessages.push({ ts: textTs });
-        } else {
-          // Polling timed out - log for debugging
-          console.error('[uploadMarkdownAndPng] textTs extraction failed after polling');
-          console.error('[uploadMarkdownAndPng] channelId:', channelId);
-          console.error('[uploadMarkdownAndPng] fileResult:', JSON.stringify(fileResult, null, 2));
+        if (userId) {
+          try {
+            await client.chat.postEphemeral({
+              channel: channelId,
+              user: userId,
+              text: `Failed to attach files: ${fileError instanceof Error ? fileError.message : 'Unknown error'}`,
+            });
+          } catch {
+            // Ignore ephemeral failure
+          }
         }
-      }
-    } else {
-      // Short response - just post text (no files)
-      const textResult = await withSlackRetry(() =>
-        client.chat.postMessage({
-          channel: channelId,
-          thread_ts: threadTs,
-          text: textToPost,
-        })
-      );
-
-      textTs = (textResult as any).ts;
-      if (textTs) {
-        postedMessages.push({ ts: textTs });
       }
     }
 
@@ -716,7 +687,9 @@ export async function uploadMarkdownAndPngWithResponse(
     return {
       ts: textTs,
       postedMessages,
-      uploadSucceeded: wasTruncated && !textTs,  // True when upload worked but ts extraction failed
+      uploadSucceeded: wasTruncated && !attachmentFailed,
+      attachmentFailed,
+      text: textToPost,
     };
   } catch (error) {
     console.error('Failed to upload markdown/png files:', error);

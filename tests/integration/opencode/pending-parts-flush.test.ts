@@ -206,4 +206,78 @@ describe('pending-parts-flush', () => {
     const lastResponseCall = (postResponseToThread as any).mock.calls[(postResponseToThread as any).mock.calls.length - 1];
     expect(lastResponseCall[3]).toBe('Recovered response content');
   });
+
+  it('falls back to newer authoritative assistant message when tracked assistantMessageId has no text', async () => {
+    await triggerMention();
+
+    // Track an assistant message id that contains tool-only content.
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_tool_only',
+            role: 'assistant',
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0,
+            modelID: 'm',
+            providerID: 'p',
+          },
+          parts: [{ type: 'tool', id: 'tool1', tool: 'Read', state: { status: 'running', input: {} } }],
+        },
+      },
+    });
+
+    const mockMessages = mockWrapper.getClient().session.messages;
+    mockMessages.mockResolvedValueOnce({
+      data: [
+        {
+          info: { id: 'msg_tool_only', role: 'assistant', time: { completed: 1 } },
+          parts: [{ type: 'tool', id: 'tool1', tool: 'Read', state: { status: 'completed', input: {}, output: 'ok' } }],
+        },
+        {
+          info: { id: 'msg_newer_text', role: 'assistant', time: { completed: 2 } },
+          parts: [{ type: 'text', id: 't1', text: 'Final text from newer assistant message' }],
+        },
+      ],
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(postResponseToThread).toHaveBeenCalled();
+    const lastResponseCall = (postResponseToThread as any).mock.calls[(postResponseToThread as any).mock.calls.length - 1];
+    expect(lastResponseCall[3]).toBe('Final text from newer assistant message');
+  });
+
+  it('retries final response post when first attempt fails', async () => {
+    await triggerMention();
+
+    const postResponseMock = postResponseToThread as any;
+    postResponseMock.mockReset();
+    postResponseMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ ts: '2.1', permalink: 'https://example.slack.com/archives/C123/p21' });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: { type: 'text', id: 't-retry', text: 'Retryable final response' },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(postResponseMock).toHaveBeenCalledTimes(2);
+    expect(postResponseMock.mock.calls[0][3]).toBe('Retryable final response');
+    expect(postResponseMock.mock.calls[1][3]).toBe('Retryable final response');
+  });
 });

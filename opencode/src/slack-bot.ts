@@ -129,6 +129,7 @@ interface ProcessingState {
   generatingSegmentStartTime?: number;
   responseMessageTs?: string;
   responseMessageLink?: string;
+  responseAttachmentFailed: boolean;
   textParts: Map<string, string>;
   reasoningParts: Map<string, string>;
   toolStates: Map<string, string>;
@@ -214,6 +215,18 @@ function getSessionIdFromPayload(payload: any): string | null {
   if (props?.info?.sessionID) return props.info.sessionID;
   if (props?.part?.sessionID) return props.part.sessionID;
   return null;
+}
+
+function normalizeToolStatus(status: string | undefined): string | undefined {
+  if (!status) return status;
+  if (status === 'complete') return 'completed';
+  if (status === 'failed') return 'error';
+  return status;
+}
+
+function hasPendingFinalResponse(state: ProcessingState): boolean {
+  const pendingSegment = state.currentResponseSegment || state.fullResponse;
+  return Boolean(pendingSegment.trim()) && !state.responseMessageTs;
 }
 
 function resolveAgent(session: Session): 'plan' | 'build' {
@@ -496,39 +509,59 @@ async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
     entry.durationMs = Math.max(0, Date.now() - (state.generatingSegmentStartTime ?? entry.timestamp));
 
     if (state.threadParentTs && segment.trim() && !state.responseMessageTs) {
-      const responseResult = await postResponseToThread(
-        app!.client as WebClient,
-        state.channelId,
-        state.threadParentTs,
-        segment,
-        entry.durationMs,
-        state.charLimit,
-        state.userId
-      ).catch(err => {
-        console.error('[Activity Thread] Failed to post response segment:', err);
-        return null;
-      });
+      const maxAttempts = 3;
+      let responseResult: Awaited<ReturnType<typeof postResponseToThread>> = null;
 
-      if (responseResult) {
-        entry.threadMessageTs = responseResult.ts;
-        entry.threadMessageLink = responseResult.permalink;
-        state.responseMessageTs = responseResult.ts;
-        state.responseMessageLink = responseResult.permalink;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        responseResult = await postResponseToThread(
+          app!.client as WebClient,
+          state.channelId,
+          state.threadParentTs,
+          segment,
+          entry.durationMs,
+          state.charLimit,
+          state.userId
+        ).catch((err) => {
+          console.error('[Activity Thread] Failed to post response segment:', err);
+          return null;
+        });
 
-        if (state.assistantMessageId) {
-          await saveMessageMapping(state.channelId, responseResult.ts, {
-            sdkMessageId: state.assistantMessageId,
-            sessionId: state.sessionId,
-            type: 'assistant',
-            parentSlackTs: state.originalTs,
-          });
+        if (responseResult?.ts) {
+          break;
         }
+        if (attempt < maxAttempts) {
+          await sleep(250 * attempt);
+        }
+      }
+
+      if (!responseResult?.ts) {
+        // Keep pending response state intact so it can be retried/recovered.
+        console.error('[Activity Thread] Response segment was not delivered after retries');
+        return;
+      }
+
+      entry.threadMessageTs = responseResult.ts;
+      entry.threadMessageLink = responseResult.permalink;
+      state.responseMessageTs = responseResult.ts;
+      state.responseMessageLink = responseResult.permalink;
+      state.responseAttachmentFailed = Boolean(responseResult.attachmentFailed);
+
+      if (state.assistantMessageId) {
+        await saveMessageMapping(state.channelId, responseResult.ts, {
+          sdkMessageId: state.assistantMessageId,
+          sessionId: state.sessionId,
+          type: 'assistant',
+          parentSlackTs: state.originalTs,
+        });
       }
     }
 
-    state.currentResponseSegment = '';
-    state.generatingEntry = undefined;
-    state.generatingSegmentStartTime = undefined;
+    // Clear response segment state only after successful thread post (or no thread parent).
+    if (!state.threadParentTs || state.responseMessageTs) {
+      state.currentResponseSegment = '';
+      state.generatingEntry = undefined;
+      state.generatingSegmentStartTime = undefined;
+    }
   })();
 
   state.finalizingResponseSegment = finalizePromise;
@@ -956,7 +989,7 @@ async function appendReasoningDelta(
 
 async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<void> {
   const toolName = part.tool || 'tool';
-  const status = part.state?.status;
+  const status = normalizeToolStatus(part.state?.status);
   const toolKey = part.callID || part.id || toolName;
   const lastStatus = state.toolStates.get(toolKey);
 
@@ -1006,8 +1039,9 @@ async function handleToolPart(part: ToolPart, state: ProcessingState): Promise<v
         : undefined,
     };
 
-    if (part.state?.time?.start && part.state?.time?.end) {
-      entry.durationMs = Math.max(0, part.state.time.end - part.state.time.start);
+    const toolTime = (part.state as any)?.time;
+    if (toolTime?.start && toolTime?.end) {
+      entry.durationMs = Math.max(0, toolTime.end - toolTime.start);
     }
 
     state.activityLog.push(entry);
@@ -1134,14 +1168,52 @@ async function handlePermissionUpdated(permission: any, state: ProcessingState):
   }
 }
 
+function getAssistantCompletionTime(message: any): number {
+  const completed = message?.info?.time?.completed;
+  if (typeof completed === 'number') return completed;
+  return 0;
+}
+
+function hasAuthoritativeAssistantContent(message: any): boolean {
+  const parts = message?.parts ?? [];
+  const hasText = parts.some((p: any) => p.type === 'text' && typeof p.text === 'string' && p.text.trim().length > 0);
+  if (hasText) return true;
+
+  const hasReasoning = parts.some((p: any) => p.type === 'reasoning' && typeof p.text === 'string' && p.text.trim().length > 0);
+  if (hasReasoning) return true;
+
+  return parts.some((p: any) => p.type === 'tool'
+    && (normalizeToolStatus(p?.state?.status) === 'completed' || normalizeToolStatus(p?.state?.status) === 'error'));
+}
+
+function selectCurrentAssistantMessage(authMessages: any[], assistantMessageId?: string): any | undefined {
+  const assistants = authMessages.filter((m) => m?.info?.role === 'assistant');
+  if (assistants.length === 0) return undefined;
+
+  const preferred = assistantMessageId
+    ? assistants.find((m) => m.info?.id === assistantMessageId)
+    : undefined;
+  if (preferred && hasAuthoritativeAssistantContent(preferred)) {
+    return preferred;
+  }
+
+  const sorted = [...assistants].sort((a, b) => getAssistantCompletionTime(b) - getAssistantCompletionTime(a));
+  const bestWithContent = sorted.find((m) => hasAuthoritativeAssistantContent(m));
+  if (bestWithContent) return bestWithContent;
+
+  return preferred ?? sorted[0];
+}
+
 async function handleSessionIdle(state: ProcessingState): Promise<void> {
-  if (state.status === 'complete' || state.status === 'error') return;
+  if ((state.status === 'complete' || state.status === 'error') && !hasPendingFinalResponse(state)) return;
 
   const session = state.sessionThreadTs
     ? getThreadSession(state.channelId, state.sessionThreadTs)
     : getSession(state.channelId);
 
-  state.status = state.status === 'aborted' ? 'aborted' : 'complete';
+  if (state.status !== 'error') {
+    state.status = state.status === 'aborted' ? 'aborted' : 'complete';
+  }
   if (!session) return;
 
   if (state.statusUpdateTimer) {
@@ -1218,19 +1290,10 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
       });
       const authMessages = response.data ?? [];
 
-      // Find the current assistant message (by ID if known, else last assistant msg)
-      let currentAssistantMsg: (typeof authMessages)[number] | undefined;
-      if (state.assistantMessageId) {
-        currentAssistantMsg = authMessages.find(m => m.info?.id === state.assistantMessageId);
-      }
-      if (!currentAssistantMsg) {
-        for (let i = authMessages.length - 1; i >= 0; i--) {
-          if (authMessages[i].info?.role === 'assistant') {
-            currentAssistantMsg = authMessages[i];
-            break;
-          }
-        }
-      }
+      // Select the best authoritative assistant message for THIS turn.
+      // Prefer known assistantMessageId when it has content, otherwise fallback
+      // to latest assistant message that contains text/reasoning/terminal tool parts.
+      const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
 
       if (currentAssistantMsg) {
         // Always reconcile the final response with authoritative session data.
@@ -1320,7 +1383,7 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
           if ((part as any).type !== 'tool') continue;
           const toolPart = part as ToolPart;
           const toolKey = toolPart.callID || toolPart.id || toolPart.tool || 'tool';
-          const status = toolPart.state?.status;
+          const status = normalizeToolStatus(toolPart.state?.status);
           const lastSeen = state.toolStates.get(toolKey);
           // Only recover if API has a terminal state AND we haven't already
           // processed a terminal state for this tool (running → completed upgrade)
@@ -1353,6 +1416,10 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
 
   if (state.status === 'complete') {
     await finalizeResponseSegment(state);
+    if (hasPendingFinalResponse(state)) {
+      state.status = 'error';
+      state.customStatus = 'Final response delivery failed';
+    }
   }
 
   await updateStatusMessage(state, session, app!.client as WebClient);
@@ -1442,23 +1509,29 @@ async function updateStatusMessage(state: ProcessingState, session: Session | Th
 }
 
 function startStatusUpdater(state: ProcessingState, session: Session | ThreadSession, client: WebClient): void {
+  const eventMutex = getEventMutex(state.sessionId);
   state.statusUpdateTimer = setInterval(() => {
-    void updateStatusMessage(state, session, client).catch((error) => {
+    void eventMutex.runExclusive(async () => {
+      if (state.status === 'complete' || state.status === 'error' || state.status === 'aborted') {
+        return;
+      }
+
+      await updateStatusMessage(state, session, client);
+
+      // Flush activity batch on timer
+      if (state.activityBatch.length > 0 && state.threadParentTs) {
+        await flushActivityBatch(
+          state,
+          client,
+          state.channelId,
+          state.charLimit,
+          'timer',
+          state.userId
+        );
+      }
+    }).catch((error) => {
       console.error('[opencode] Status update error:', error);
     });
-    // Flush activity batch on timer
-    if (state.activityBatch.length > 0 && state.threadParentTs) {
-      void flushActivityBatch(
-        state,
-        client,
-        state.channelId,
-        state.charLimit,
-        'timer',
-        state.userId
-      ).catch(err => {
-        console.error('[Activity Thread] Failed to flush batch on timer:', err);
-      });
-    }
   }, state.updateRateSeconds * 1000);
 }
 
@@ -2071,6 +2144,7 @@ async function handleUserMessage(params: {
     generatingSegmentStartTime: undefined,
     responseMessageTs: undefined,
     responseMessageLink: undefined,
+    responseAttachmentFailed: false,
     textParts: new Map(),
     reasoningParts: new Map(),
     toolStates: new Map(),

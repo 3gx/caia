@@ -73,7 +73,7 @@ export async function postActivityToThread(
     threadTs?: string;      // If posting to existing Slack thread (nested)
     userId?: string;        // User ID for file uploads
   }
-): Promise<{ ts: string } | null> {
+): Promise<{ ts: string; attachmentFailed?: boolean } | null> {
   const charLimit = options?.charLimit ?? DEFAULT_THREAD_CHAR_LIMIT;
   const threadTs = options?.threadTs ?? parentTs;
 
@@ -89,18 +89,20 @@ export async function postActivityToThread(
         options?.userId,
         charLimit
       );
-      return result?.ts ? { ts: result.ts } : null;
+      return result?.ts ? { ts: result.ts, attachmentFailed: result.attachmentFailed } : null;
     }
 
     // Simple text message to thread
-    const result = await client.chat.postMessage({
-      channel: channelId,
-      thread_ts: threadTs,
-      text: content,
-      mrkdwn: true,
-    });
+    const result = await withSlackRetry(() =>
+      client.chat.postMessage({
+        channel: channelId,
+        thread_ts: threadTs,
+        text: content,
+        mrkdwn: true,
+      })
+    );
 
-    return result.ts ? { ts: result.ts as string } : null;
+    return result.ts ? { ts: result.ts as string, attachmentFailed: false } : null;
   } catch (error) {
     console.error('[activity-thread] Failed to post to thread:', error);
     return null;
@@ -348,7 +350,7 @@ export async function postResponseToThread(
   durationMs: number | undefined,
   charLimit: number,
   userId?: string
-): Promise<{ ts: string; permalink: string } | null> {
+): Promise<{ ts: string; permalink: string; attachmentFailed?: boolean } | null> {
   const truncated = content.length > charLimit;
   const formattedText = formatThreadResponseMessage(
     content.length,
@@ -382,7 +384,7 @@ export async function postResponseToThread(
     permalink = `https://slack.com/archives/${channelId}/p${ts.replace('.', '')}`;
   }
 
-  return { ts, permalink };
+  return { ts, permalink, attachmentFailed: result?.attachmentFailed };
 }
 
 /**
