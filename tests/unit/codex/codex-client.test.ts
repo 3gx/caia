@@ -13,136 +13,125 @@ import type { JsonRpcNotification } from '../../../codex/src/json-rpc.js';
 // We'll test the notification handling logic in isolation
 // by simulating the handleNotification behavior
 
-describe('CodexClient Delta Deduplication', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+describe('CodexClient Delta Deduplication (method-aware)', () => {
+  // Verified by SDK live test (delta-dedup-diagnostic.test.ts):
+  // - Codex sends every delta via 3 methods simultaneously (perfect triples)
+  // - codex/event/agent_message_content_delta and item/agentMessage/delta share the same itemId
+  // - codex/event/agent_message_delta has empty itemId
+  // - Duplicates arrive within 0-1ms
+  // - Content-only dedup drops genuine repeated tokens (e.g. ` =` for both `a = 42` and `b = 84`)
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  // Simulate the deduplication logic (content-only, 100ms TTL)
-  class DeltaDeduplicator {
-    private recentDeltaHashes = new Map<string, number>();
-    private readonly DELTA_HASH_TTL_MS = 100; // 100ms TTL
-
-    isDuplicate(delta: string): boolean {
-      const hash = delta.slice(0, 100); // Content-only hash
-      const now = Date.now();
-
-      // Clean expired hashes
-      for (const [h, ts] of this.recentDeltaHashes) {
-        if (now - ts > this.DELTA_HASH_TTL_MS) {
-          this.recentDeltaHashes.delete(h);
-        }
-      }
-
-      // Check if duplicate
-      if (this.recentDeltaHashes.has(hash)) {
-        return true;
-      }
-      this.recentDeltaHashes.set(hash, now);
-      return false;
-    }
-
-    get hashCount(): number {
-      return this.recentDeltaHashes.size;
-    }
-  }
-
-  it('deduplicates identical deltas regardless of itemId', () => {
-    const dedup = new DeltaDeduplicator();
-
-    // Same content from different event types (different itemIds) should deduplicate
-    expect(dedup.isDuplicate('Hello world')).toBe(false);
-    expect(dedup.isDuplicate('Hello world')).toBe(true); // Duplicate within 100ms
-    expect(dedup.isDuplicate('Hello world')).toBe(true);
-  });
-
-  it('allows different content through', () => {
-    const dedup = new DeltaDeduplicator();
-
-    expect(dedup.isDuplicate('Hello')).toBe(false);
-    expect(dedup.isDuplicate('World')).toBe(false); // Different content, not duplicate
-    expect(dedup.isDuplicate('Hello')).toBe(true); // Same content, duplicate
-  });
-
-  it('allows re-emit after TTL expires (100ms)', () => {
-    const dedup = new DeltaDeduplicator();
-
-    expect(dedup.isDuplicate('Hello')).toBe(false);
-    expect(dedup.isDuplicate('Hello')).toBe(true);
-
-    // Advance time past TTL (100ms)
-    vi.advanceTimersByTime(150);
-
-    // Should allow the same delta again after TTL
-    expect(dedup.isDuplicate('Hello')).toBe(false);
-  });
-
-  it('cleans up expired hashes to prevent memory leak', () => {
-    const dedup = new DeltaDeduplicator();
-
-    // Add several hashes
-    dedup.isDuplicate('delta1');
-    dedup.isDuplicate('delta2');
-    dedup.isDuplicate('delta3');
-
-    expect(dedup.hashCount).toBe(3);
-
-    // Advance time past TTL
-    vi.advanceTimersByTime(150);
-
-    // Trigger cleanup by checking a new delta
-    dedup.isDuplicate('delta4');
-
-    // Old hashes should be cleaned up
-    expect(dedup.hashCount).toBe(1); // Only the new one remains
-  });
-
-  it('uses first 100 chars of delta for hash', () => {
-    const dedup = new DeltaDeduplicator();
-
-    const longDelta1 = 'A'.repeat(200);
-    const longDelta2 = 'A'.repeat(100) + 'B'.repeat(100);
-
-    // These should be considered duplicates because first 100 chars are the same
-    expect(dedup.isDuplicate(longDelta1)).toBe(false);
-    expect(dedup.isDuplicate(longDelta2)).toBe(true);
-  });
-
-  it('deduplicates same content from multiple event types', () => {
-    // This simulates the real scenario: same content arrives via different Codex event types
-    const dedup = new DeltaDeduplicator();
-
-    // Simulate item/agentMessage/delta
-    expect(dedup.isDuplicate('Why')).toBe(false);
-
-    // Simulate codex/event/agent_message_content_delta with same content
-    expect(dedup.isDuplicate('Why')).toBe(true); // Should be deduplicated!
-
-    // Next word arrives
-    expect(dedup.isDuplicate(' was')).toBe(false);
-    expect(dedup.isDuplicate(' was')).toBe(true); // Deduplicated
-  });
-
-  it('drops repeated identical deltas even when they come from the same method (current behavior)', () => {
+  it('drops cross-method duplicates (same content, different method)', () => {
     const client = new CodexClient({ requestTimeout: 10 });
     const handler = vi.fn();
     client.on('item:delta', handler);
 
-    const notification: JsonRpcNotification = {
-      method: 'item/agentMessage/delta',
-      params: { itemId: 'item-1', delta: '/' },
-    };
+    // Simulate the triple that Codex sends for one token
+    const methods = [
+      'codex/event/agent_message_content_delta',
+      'item/agentMessage/delta',
+      'codex/event/agent_message_delta',
+    ];
+    for (const method of methods) {
+      (client as any).handleNotification({
+        method,
+        params: { delta: 'Hello', itemId: 'item-1' },
+      });
+    }
 
-    (client as any).handleNotification(notification);
-    (client as any).handleNotification(notification);
-
-    // Content-only dedupe suppresses the second identical delta, even though it's the same method
+    // Only the first should be accepted — other two are cross-method duplicates
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith({ itemId: 'item-1', delta: '/' });
+    expect(handler).toHaveBeenCalledWith({ itemId: 'item-1', delta: 'Hello' });
+  });
+
+  it('accepts genuine repeated tokens from the same method', () => {
+    const client = new CodexClient({ requestTimeout: 10 });
+    const handler = vi.fn();
+    client.on('item:delta', handler);
+
+    const method = 'codex/event/agent_message_content_delta';
+
+    // First ` =` for `a = 42`
+    (client as any).handleNotification({
+      method,
+      params: { msg: { delta: ' =', item_id: 'item-1' } },
+    });
+
+    // Second ` =` for `b = 84` — same method, same content → genuine repeat
+    (client as any).handleNotification({
+      method,
+      params: { msg: { delta: ' =', item_id: 'item-1' } },
+    });
+
+    // Both must be accepted — this is the bug we're fixing
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenNthCalledWith(1, { itemId: 'item-1', delta: ' =' });
+    expect(handler).toHaveBeenNthCalledWith(2, { itemId: 'item-1', delta: ' =' });
+  });
+
+  it('handles interleaved triples without data loss', () => {
+    const client = new CodexClient({ requestTimeout: 10 });
+    const handler = vi.fn();
+    client.on('item:delta', handler);
+
+    // Simulate real Codex output: ```\na = 42\nb = 84\n```
+    // Each token arrives as a triple. The ` =` token appears twice.
+    const tokens = ['```', '\n', 'a', ' =', ' ', '42', '\n', 'b', ' =', ' ', '84', '\n', '```'];
+    const methods = [
+      'codex/event/agent_message_content_delta',
+      'item/agentMessage/delta',
+      'codex/event/agent_message_delta',
+    ];
+
+    for (const token of tokens) {
+      for (const method of methods) {
+        (client as any).handleNotification({
+          method,
+          params: { delta: token, itemId: 'item-1' },
+        });
+      }
+    }
+
+    // Should accept exactly 13 tokens (one per genuine token), not fewer
+    expect(handler).toHaveBeenCalledTimes(tokens.length);
+
+    // Reconstruct and verify no data loss
+    const reconstructed = handler.mock.calls.map((c: unknown[]) => (c[0] as { delta: string }).delta).join('');
+    expect(reconstructed).toBe('```\na = 42\nb = 84\n```');
+  });
+
+  it('allows different content through regardless of method', () => {
+    const client = new CodexClient({ requestTimeout: 10 });
+    const handler = vi.fn();
+    client.on('item:delta', handler);
+
+    const method = 'codex/event/agent_message_content_delta';
+
+    (client as any).handleNotification({
+      method,
+      params: { msg: { delta: 'Hello', item_id: 'item-1' } },
+    });
+    (client as any).handleNotification({
+      method,
+      params: { msg: { delta: ' world', item_id: 'item-1' } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts from any method when only one fires', () => {
+    const client = new CodexClient({ requestTimeout: 10 });
+    const handler = vi.fn();
+    client.on('item:delta', handler);
+
+    // Only the secondary method fires (fallback scenario)
+    (client as any).handleNotification({
+      method: 'item/agentMessage/delta',
+      params: { delta: 'solo', itemId: 'item-1' },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({ itemId: 'item-1', delta: 'solo' });
   });
 });
 

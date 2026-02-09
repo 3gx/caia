@@ -247,10 +247,21 @@ export class CodexClient extends EventEmitter {
   private restartAttempts = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Delta deduplication to prevent text duplication from multiple event types
-  // Uses content-only hash (no itemId) since different event types have different itemIds
-  private recentDeltaHashes = new Map<string, number>(); // hash -> timestamp
-  private readonly DELTA_HASH_TTL_MS = 100; // 100ms TTL - same content within 100ms is duplicate
+  // Delta deduplication to prevent text duplication from multiple event types.
+  // Codex sends every delta via 3 methods simultaneously (verified by SDK live test
+  // delta-dedup-diagnostic.test.ts). We accept from ONE preferred method and drop
+  // the other two. A method-aware fallback ensures no data loss if the preferred
+  // method ever stops arriving.
+  //
+  // Primary:   codex/event/agent_message_content_delta  (richest params: item_id, thread_id, turn_id)
+  // Secondary: item/agentMessage/delta                  (has itemId)
+  // Tertiary:  codex/event/agent_message_delta          (no itemId — least useful)
+  private readonly DELTA_PRIMARY_METHOD = 'codex/event/agent_message_content_delta';
+  private readonly DELTA_SECONDARY_METHOD = 'item/agentMessage/delta';
+  // Track which method we accepted per content hash, so same content from the
+  // same method (genuine repeated token) is never dropped.
+  private recentDeltaHashes = new Map<string, { ts: number; method: string }>(); // hash -> {ts, method}
+  private readonly DELTA_HASH_TTL_MS = 10; // 10ms TTL — verified duplicate gap is 0-1ms
 
   // Item deduplication: Codex sends same item via two event types (item/started + codex/event/item_started)
   private recentItemIds = new Map<string, number>(); // itemId -> timestamp
@@ -1209,12 +1220,14 @@ export class CodexClient extends EventEmitter {
       }
 
       // Message content streaming
+      // Codex sends every delta via 3 methods simultaneously (verified by SDK live
+      // test delta-dedup-diagnostic.test.ts — every token arrives as a perfect triple
+      // within 0-1ms). We use method-priority dedup: accept from the preferred method,
+      // drop duplicates from others, but NEVER drop a genuine repeated token from the
+      // same method.
       case 'item/agentMessage/delta':
       case 'codex/event/agent_message_content_delta':
       case 'codex/event/agent_message_delta': {
-        // Extract delta text from various possible structures:
-        // - Old style: params.delta / params.content / params.text
-        // - New style: params.msg.delta / params.msg.content / params.msg.text
         const p = params as Record<string, unknown>;
         const msg = p.msg as Record<string, unknown> | undefined;
 
@@ -1223,25 +1236,32 @@ export class CodexClient extends EventEmitter {
 
         const itemId = p.itemId || p.item_id || msg?.item_id || '';
 
-        // Deduplication: prevent duplicate deltas from different event types
-        // Use content-only hash since itemId differs between event types
         const deltaStr = delta as string;
         if (deltaStr) {
-          const hash = deltaStr.slice(0, 100); // Use first 100 chars as hash
+          const hash = deltaStr.slice(0, 100);
           const now = Date.now();
+          const method = notification.method;
 
-          // Clean expired hashes
-          for (const [h, ts] of this.recentDeltaHashes) {
-            if (now - ts > this.DELTA_HASH_TTL_MS) {
+          // Clean expired entries
+          for (const [h, entry] of this.recentDeltaHashes) {
+            if (now - entry.ts > this.DELTA_HASH_TTL_MS) {
               this.recentDeltaHashes.delete(h);
             }
           }
 
-          // Skip if duplicate (same content within 100ms is from different event types)
-          if (this.recentDeltaHashes.has(hash)) {
+          const existing = this.recentDeltaHashes.get(hash);
+
+          if (!existing) {
+            // First time seeing this content — accept, record which method won
+            this.recentDeltaHashes.set(hash, { ts: now, method });
+          } else if (method === existing.method) {
+            // Same method, same content — genuine repeated token (e.g. second ` =`
+            // for `b = 84` after `a = 42`). Always accept; update timestamp.
+            this.recentDeltaHashes.set(hash, { ts: now, method });
+          } else {
+            // Different method, same content within TTL — true duplicate. Drop it.
             return;
           }
-          this.recentDeltaHashes.set(hash, now);
 
           this.emit('item:delta', { itemId: itemId as string, delta: deltaStr });
         }
