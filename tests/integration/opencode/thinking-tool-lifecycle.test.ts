@@ -247,4 +247,60 @@ describe('thinking-tool-lifecycle', () => {
 
     // Assert: no errors (test completes without throwing)
   });
+
+  it('does not recover tools from previous turns in the session', async () => {
+    await triggerMention();
+
+    // Session API returns two assistant messages:
+    // - msg_old: a PREVIOUS turn with tool calls (should be ignored)
+    // - msg_current: the CURRENT turn with only text
+    const mockMessages = mockWrapper.getClient().session.messages;
+    mockMessages.mockResolvedValueOnce({
+      data: [
+        {
+          info: { id: 'msg_old', role: 'assistant', time: { completed: 1 } },
+          parts: [
+            {
+              type: 'tool',
+              id: 'old_tool',
+              callID: 'old_tool',
+              tool: 'Bash',
+              state: { status: 'completed', input: { command: 'git log' }, output: 'commits...' },
+            },
+            {
+              type: 'tool',
+              id: 'old_tool2',
+              callID: 'old_tool2',
+              tool: 'Read',
+              state: { status: 'completed', input: { path: '/tmp/x' }, output: 'data' },
+            },
+          ],
+        },
+        {
+          info: { id: 'msg_current', role: 'assistant', time: { completed: 2 } },
+          parts: [
+            { type: 'text', id: 't1', text: '4' },
+          ],
+        },
+      ],
+    });
+
+    // No text received via SSE → triggers recovery (empty fullResponse)
+    emitEvent(makeSessionIdle());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Assert: session API was called
+    expect(mockMessages).toHaveBeenCalled();
+
+    // Assert: flushActivityBatch was NOT called with tool entries from old turn.
+    // The only flush calls should be for the starting entry batch, not tool batches.
+    const flushCalls = (flushActivityBatch as any).mock.calls;
+    for (const call of flushCalls) {
+      const batchState = call[0];
+      const toolEntries = (batchState.activityBatch || []).filter(
+        (e: any) => e.type === 'tool_start' || e.type === 'tool_complete'
+      );
+      expect(toolEntries).toHaveLength(0);
+    }
+  });
 });
