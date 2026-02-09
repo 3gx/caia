@@ -65,7 +65,7 @@ describe('message-role-filter', () => {
     expect((postResponseToThread as any).mock.calls.length).toBe(0);
   });
 
-  it('marks turn complete when assistant message reports completion', async () => {
+  it('does not mark turn complete from assistant message.updated completion alone', async () => {
     const handler = registeredHandlers['event_app_mention'];
     const client = createMockWebClient();
 
@@ -103,6 +103,6 @@ describe('message-role-filter', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(removeProcessingEmoji).toHaveBeenCalled();
+    expect(removeProcessingEmoji).not.toHaveBeenCalled();
   });
 });

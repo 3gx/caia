@@ -55,6 +55,16 @@ describe('slack-bot-dm-notifications', () => {
     });
 
     eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: { type: 'text', id: 't_complete', text: 'Final response text', messageID: 'assistant_msg_complete' },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
       payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
     });
 

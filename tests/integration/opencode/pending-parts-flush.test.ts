@@ -252,6 +252,51 @@ describe('pending-parts-flush', () => {
     expect(lastResponseCall[3]).toBe('Final text from newer assistant message');
   });
 
+  it('uses latest text-bearing assistant message for final response even when tracked id is newer tool-only', async () => {
+    await triggerMention();
+
+    // Track a newer assistant message that has no text parts.
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_tool_newest',
+            role: 'assistant',
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0,
+            modelID: 'm',
+            providerID: 'p',
+          },
+          parts: [{ type: 'tool', id: 'tool1', tool: 'Read', state: { status: 'completed', input: {}, output: 'ok' } }],
+        },
+      },
+    });
+
+    const mockMessages = mockWrapper.getClient().session.messages;
+    mockMessages.mockResolvedValueOnce({
+      data: [
+        {
+          info: { id: 'msg_text_final', role: 'assistant', time: { completed: 10 } },
+          parts: [{ type: 'text', id: 't1', text: 'Final text from text-bearing assistant message' }],
+        },
+        {
+          info: { id: 'msg_tool_newest', role: 'assistant', time: { completed: 20 } },
+          parts: [{ type: 'tool', id: 'tool1', tool: 'Read', state: { status: 'completed', input: {}, output: 'ok' } }],
+        },
+      ],
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(postResponseToThread).toHaveBeenCalled();
+    const lastResponseCall = (postResponseToThread as any).mock.calls[(postResponseToThread as any).mock.calls.length - 1];
+    expect(lastResponseCall[3]).toBe('Final text from text-bearing assistant message');
+  });
+
   it('retries final response post when first attempt fails', async () => {
     await triggerMention();
 

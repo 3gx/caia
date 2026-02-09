@@ -321,12 +321,6 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
 
   if (!info) return;
 
-  const assistantCompleted = Boolean(
-    info?.id &&
-    info.role === 'assistant' &&
-    (info.time?.completed || info.finish)
-  );
-
   if (info?.id && info.role) {
     if (info.role === 'assistant' || info.role === 'user') {
       state.messageRoles.set(info.id, info.role);
@@ -382,9 +376,6 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
     }
   }
 
-  if (assistantCompleted) {
-    await handleSessionIdle(state);
-  }
 }
 
 async function processAssistantPart(part: Part, delta: string | undefined, state: ProcessingState): Promise<void> {
@@ -1171,6 +1162,8 @@ async function handlePermissionUpdated(permission: any, state: ProcessingState):
 function getAssistantCompletionTime(message: any): number {
   const completed = message?.info?.time?.completed;
   if (typeof completed === 'number') return completed;
+  const created = message?.info?.time?.created;
+  if (typeof created === 'number') return created;
   return 0;
 }
 
@@ -1184,6 +1177,11 @@ function hasAuthoritativeAssistantContent(message: any): boolean {
 
   return parts.some((p: any) => p.type === 'tool'
     && (normalizeToolStatus(p?.state?.status) === 'completed' || normalizeToolStatus(p?.state?.status) === 'error'));
+}
+
+function hasAssistantTextContent(message: any): boolean {
+  const parts = message?.parts ?? [];
+  return parts.some((p: any) => p.type === 'text' && typeof p.text === 'string' && p.text.trim().length > 0);
 }
 
 function selectCurrentAssistantMessage(authMessages: any[], assistantMessageId?: string): any | undefined {
@@ -1202,6 +1200,27 @@ function selectCurrentAssistantMessage(authMessages: any[], assistantMessageId?:
   if (bestWithContent) return bestWithContent;
 
   return preferred ?? sorted[0];
+}
+
+function selectAssistantMessageForFinalResponse(authMessages: any[], assistantMessageId?: string): any | undefined {
+  const assistants = authMessages.filter((m) => m?.info?.role === 'assistant');
+  if (assistants.length === 0) return undefined;
+
+  const textAssistants = assistants.filter((m) => hasAssistantTextContent(m));
+  if (textAssistants.length === 0) return undefined;
+
+  const sortedByTime = [...textAssistants].sort((a, b) => getAssistantCompletionTime(b) - getAssistantCompletionTime(a));
+  const latestText = sortedByTime[0];
+
+  if (!assistantMessageId) return latestText;
+  const preferredWithText = textAssistants.find((m) => m.info?.id === assistantMessageId);
+  if (!preferredWithText) return latestText;
+
+  // Prefer the latest text-bearing assistant message; if timestamps are equal, keep tracked id.
+  if (getAssistantCompletionTime(preferredWithText) === getAssistantCompletionTime(latestText)) {
+    return preferredWithText;
+  }
+  return latestText;
 }
 
 async function handleSessionIdle(state: ProcessingState): Promise<void> {
@@ -1294,10 +1313,16 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
       // Prefer known assistantMessageId when it has content, otherwise fallback
       // to latest assistant message that contains text/reasoning/terminal tool parts.
       const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
+      const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
 
-      if (currentAssistantMsg) {
+      if (finalResponseMsg?.info?.id && state.assistantMessageId !== finalResponseMsg.info.id) {
+        console.log(`[opencode] Final response source switched to text-bearing message ${finalResponseMsg.info.id}`);
+        state.assistantMessageId = finalResponseMsg.info.id;
+      }
+
+      if (finalResponseMsg) {
         // Always reconcile the final response with authoritative session data.
-        const textParts = (currentAssistantMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
+        const textParts = (finalResponseMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
         if (textParts.length > 0) {
           const text = textParts.map((p: any) => p.text).join('');
           if (text.trim()) {
@@ -1325,7 +1350,9 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
             }
           }
         }
+      }
 
+      if (currentAssistantMsg) {
         // Recover reasoning blocks when SSE reasoning events were missed entirely.
         // Only synthesize from authoritative data when no thinking entries exist yet.
         const hasThinkingEntries = state.activityLog.some((entry) => entry.type === 'thinking');
@@ -1419,6 +1446,9 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     if (hasPendingFinalResponse(state)) {
       state.status = 'error';
       state.customStatus = 'Final response delivery failed';
+    } else if (state.threadParentTs && !state.responseMessageTs) {
+      state.status = 'error';
+      state.customStatus = 'Final response text missing';
     }
   }
 

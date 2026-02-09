@@ -80,6 +80,21 @@ describe('status-block-content', () => {
     });
 
     eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'text',
+            id: 't_complete_1',
+            messageID: 'assistant-msg-1',
+            text: 'Final response text',
+          },
+          sessionID: 'sess_mock',
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
       payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
     });
 
@@ -129,6 +144,21 @@ describe('status-block-content', () => {
             cost: 0.01,
           },
           parts: [],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'text',
+            id: 't_complete_2',
+            messageID: 'assistant-msg-2',
+            text: 'Final response text',
+          },
+          sessionID: 'sess_mock',
         },
       },
     });
@@ -200,6 +230,11 @@ describe('status-block-content', () => {
             messageID: 'assistant-msg-3',
             text: 'The user wants me to assume xyz has value 1234.',
             time: { start: 0, end: 1 },
+          }, {
+            type: 'text',
+            id: 't_complete_3',
+            messageID: 'assistant-msg-3',
+            text: 'Final response text',
           }],
         },
       },
