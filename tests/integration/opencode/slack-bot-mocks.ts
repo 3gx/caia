@@ -120,8 +120,6 @@ vi.mock('../../../opencode/src/session-manager.js', () => ({
     isNewFork: false,
   }),
   saveMessageMapping: vi.fn(),
-  getFinalResponseDelivery: vi.fn().mockReturnValue(null),
-  saveFinalResponseDelivery: vi.fn().mockResolvedValue(undefined),
   findForkPointMessageId: vi.fn().mockReturnValue(null),
   addSlackOriginatedUserUuid: vi.fn(),
   clearSyncedMessageUuids: vi.fn(),

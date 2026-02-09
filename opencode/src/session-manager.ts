@@ -73,8 +73,6 @@ export interface Session {
   forkedFromSessionId?: string;
   /** Conversation key of source (needed to restore Fork here button) */
   forkedFromConversationKey?: string;
-  /** Idempotency records for final assistant response delivery (keyed by sessionId:assistantMessageId). */
-  finalResponseDeliveries?: Record<string, FinalResponseDelivery>;
 }
 
 /**
@@ -114,8 +112,6 @@ export interface ThreadSession {
   slackOriginatedUserUuids?: string[];
   // Previous session IDs (for /resume back after /clear or session change)
   previousSessionIds?: string[];
-  /** Idempotency records for final assistant response delivery (keyed by sessionId:assistantMessageId). */
-  finalResponseDeliveries?: Record<string, FinalResponseDelivery>;
 }
 
 /**
@@ -178,16 +174,6 @@ export interface SlackMessageMapping {
   parentSlackTs?: string;
   /** True if this is a continuation of a split message (not the first part) */
   isContinuation?: boolean;
-}
-
-/**
- * Persisted delivery record for the final assistant response.
- * Used to prevent duplicate posts on retries/restarts and to recover the posted ts.
- */
-export interface FinalResponseDelivery {
-  assistantMessageId: string;
-  responseMessageTs: string;
-  deliveredAt: number;
 }
 
 /**
@@ -292,7 +278,6 @@ export async function saveSession(channelId: string, session: Partial<Session>):
       planPresentationCount: existing?.planPresentationCount,
       threads: existing?.threads,  // Preserve existing threads
       messageMap: existing?.messageMap,  // Preserve message mappings for point-in-time forking
-      finalResponseDeliveries: existing?.finalResponseDeliveries,
       ...session,
     };
     saveSessions(store);
@@ -373,7 +358,6 @@ export async function saveThreadSession(
       // NOT inherited - each thread has its own plan file path
       planFilePath: existingThread?.planFilePath,
       planPresentationCount: existingThread?.planPresentationCount,
-      finalResponseDeliveries: existingThread?.finalResponseDeliveries,
       ...session,
     };
 
@@ -500,69 +484,6 @@ export function getMessageMapping(
   }
 
   return channelSession.messageMap[slackTs] ?? null;
-}
-
-function getDeliveryContainer(
-  channelSession: ChannelSession,
-  threadTs?: string
-): Record<string, FinalResponseDelivery> | undefined {
-  if (threadTs) {
-    return channelSession.threads?.[threadTs]?.finalResponseDeliveries;
-  }
-  return channelSession.finalResponseDeliveries;
-}
-
-/**
- * Get persisted final response delivery record by idempotency key.
- */
-export function getFinalResponseDelivery(
-  channelId: string,
-  key: string,
-  threadTs?: string
-): FinalResponseDelivery | null {
-  const store = loadSessions();
-  const channelSession = store.channels[channelId];
-  if (!channelSession) return null;
-
-  const deliveries = getDeliveryContainer(channelSession, threadTs);
-  return deliveries?.[key] ?? null;
-}
-
-/**
- * Save persisted final response delivery record.
- */
-export async function saveFinalResponseDelivery(
-  channelId: string,
-  key: string,
-  delivery: FinalResponseDelivery,
-  threadTs?: string
-): Promise<void> {
-  await storeManager.runExclusive(() => {
-    const store = loadSessions();
-    const channelSession = store.channels[channelId];
-    if (!channelSession) {
-      return;
-    }
-
-    if (threadTs) {
-      if (!channelSession.threads?.[threadTs]) {
-        return;
-      }
-      const existing = channelSession.threads[threadTs].finalResponseDeliveries ?? {};
-      channelSession.threads[threadTs].finalResponseDeliveries = {
-        ...existing,
-        [key]: delivery,
-      };
-    } else {
-      const existing = channelSession.finalResponseDeliveries ?? {};
-      channelSession.finalResponseDeliveries = {
-        ...existing,
-        [key]: delivery,
-      };
-    }
-
-    saveSessions(store);
-  });
 }
 
 /**
