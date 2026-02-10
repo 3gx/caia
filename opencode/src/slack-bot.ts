@@ -538,12 +538,16 @@ async function finalizeResponseSegment(state: ProcessingState): Promise<void> {
       state.responseAttachmentFailed = Boolean(responseResult.attachmentFailed);
 
       if (state.assistantMessageId) {
-        await saveMessageMapping(state.channelId, responseResult.ts, {
-          sdkMessageId: state.assistantMessageId,
-          sessionId: state.sessionId,
-          type: 'assistant',
-          parentSlackTs: state.originalTs,
-        });
+        try {
+          await saveMessageMapping(state.channelId, responseResult.ts, {
+            sdkMessageId: state.assistantMessageId,
+            sessionId: state.sessionId,
+            type: 'assistant',
+            parentSlackTs: state.originalTs,
+          });
+        } catch (err) {
+          console.error('[opencode] Failed to save message mapping after response post:', err);
+        }
       }
     }
 
@@ -1233,7 +1237,12 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
   if (state.status !== 'error') {
     state.status = state.status === 'aborted' ? 'aborted' : 'complete';
   }
-  if (!session) return;
+  if (!session) {
+    conversationTracker.stopProcessing(state.sessionId);
+    processingBySession.delete(state.sessionId);
+    processingByConversation.delete(state.conversationKey);
+    return;
+  }
 
   if (state.statusUpdateTimer) {
     clearInterval(state.statusUpdateTimer);
@@ -1252,236 +1261,262 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     console.error('[opencode] Streaming finish error:', error);
   }
 
-  if (state.assistantMessageId && (state.responseMessageTs || state.streamingMessageTs)) {
-    await saveMessageMapping(state.channelId, state.responseMessageTs ?? state.streamingMessageTs!, {
-      sdkMessageId: state.assistantMessageId,
-      sessionId: state.sessionId,
-      type: 'assistant',
-      parentSlackTs: state.originalTs,
-    });
-  }
-
-  {
-    const update: Partial<Session> = {
-      lastUsage: state.lastUsage,
-      lastActiveAt: Date.now(),
-    };
-    if (state.sessionThreadTs) {
-      await saveThreadSession(state.channelId, state.sessionThreadTs, update as Partial<ThreadSession>);
-    } else {
-      await saveSession(state.channelId, update);
+  try {
+    if (state.assistantMessageId && (state.responseMessageTs || state.streamingMessageTs)) {
+      try {
+        await saveMessageMapping(state.channelId, state.responseMessageTs ?? state.streamingMessageTs!, {
+          sdkMessageId: state.assistantMessageId,
+          sessionId: state.sessionId,
+          type: 'assistant',
+          parentSlackTs: state.originalTs,
+        });
+      } catch (err) {
+        console.error('[opencode] Failed to save message mapping on idle:', err);
+      }
     }
-  }
 
-  // Flush any remaining activity batch on completion
-  if (state.activityBatch.length > 0 && state.threadParentTs) {
-    await flushActivityBatch(
-      state,
-      app!.client as WebClient,
-      state.channelId,
-      state.charLimit,
-      'complete',
-      state.userId
-    ).catch(err => {
-      console.error('[Activity Thread] Failed to flush batch on completion:', err);
-    });
-  }
-
-  // Flush any pending message parts that haven't been assigned a role yet.
-  // When the session is idle, buffered text parts must be from the assistant.
-  // Save and restore status because appendTextDelta sets it to 'generating'.
-  const preFlushStatus = state.status;
-  for (const [messageId] of state.pendingMessageParts) {
-    state.messageRoles.set(messageId, 'assistant');
-    await flushPendingParts(state, messageId);
-  }
-  state.status = preFlushStatus;
-
-  // Safety net: fetch authoritative messages from session API at idle.
-  // This protects against dropped/late SSE events for response/tool/thinking parts.
-  if (state.workingDir) {
     try {
-      const instance = await serverPool.getOrCreate(state.channelId);
-      const client = instance.client.getClient();
-      const response = await client.session.messages({
-        path: { id: state.sessionId },
-        query: { directory: state.workingDir },
-      });
-      const authMessages = response.data ?? [];
-
-      // Select the best authoritative assistant message for THIS turn.
-      // Prefer known assistantMessageId when it has content, otherwise fallback
-      // to latest assistant message that contains text/reasoning/terminal tool parts.
-      const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
-      const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
-
-      if (finalResponseMsg?.info?.id && state.assistantMessageId !== finalResponseMsg.info.id) {
-        console.log(`[opencode] Final response source switched to text-bearing message ${finalResponseMsg.info.id}`);
-        state.assistantMessageId = finalResponseMsg.info.id;
-      }
-
-      if (finalResponseMsg) {
-        // Always reconcile the final response with authoritative session data.
-        const textParts = (finalResponseMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
-        if (textParts.length > 0) {
-          const text = textParts.map((p: any) => p.text).join('');
-          if (text.trim()) {
-            if (state.fullResponse !== text) {
-              console.log('[opencode] Using authoritative response from session API');
-            }
-            state.fullResponse = text;
-            state.currentResponseSegment = text;
-            if (!state.generatingEntry) {
-              const now = Date.now();
-              state.generatingEntry = {
-                timestamp: now,
-                type: 'generating',
-                generatingInProgress: false,
-                generatingContent: text,
-                generatingTruncated: text.slice(0, 500),
-                generatingChars: text.length,
-              };
-              state.generatingSegmentStartTime = now;
-              state.activityLog.push(state.generatingEntry);
-            } else {
-              state.generatingEntry.generatingContent = text;
-              state.generatingEntry.generatingChars = text.length;
-              state.generatingEntry.generatingTruncated = text.slice(0, 500);
-            }
-          }
-        }
-      }
-
-      if (currentAssistantMsg) {
-        // Recover reasoning blocks when SSE reasoning events were missed entirely.
-        // Only synthesize from authoritative data when no thinking entries exist yet.
-        const hasThinkingEntries = state.activityLog.some((entry) => entry.type === 'thinking');
-        if (!hasThinkingEntries) {
-          const reasoningParts = (currentAssistantMsg.parts ?? [])
-            .filter((p: any) => p.type === 'reasoning' && typeof p.text === 'string' && p.text.length > 0);
-          for (let i = 0; i < reasoningParts.length; i += 1) {
-            const part = reasoningParts[i] as any;
-            const reasoningText = part.text as string;
-            const now = Date.now();
-            const thinkingEntry: ActivityEntry = {
-              timestamp: now,
-              type: 'thinking',
-              thinkingContent: reasoningText,
-              thinkingTruncated: reasoningText.length > 500 ? `...${reasoningText.slice(-500)}` : reasoningText,
-              thinkingInProgress: false,
-              thinkingPartId: part.id || `reasoning-${i}`,
-              durationMs: part?.time?.start && part?.time?.end
-                ? Math.max(0, part.time.end - part.time.start)
-                : undefined,
-            };
-            state.reasoningParts.set(thinkingEntry.thinkingPartId || `reasoning-${i}`, reasoningText);
-
-            const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
-            if (generatingIndex >= 0) {
-              state.activityLog.splice(generatingIndex, 0, thinkingEntry);
-            } else {
-              state.activityLog.push(thinkingEntry);
-            }
-
-            if (state.threadParentTs) {
-              await postThinkingToThread(
-                app!.client as WebClient,
-                state.channelId,
-                state.threadParentTs,
-                thinkingEntry,
-                THINKING_MESSAGE_SIZE,
-                state.userId
-              ).catch((err) => {
-                console.error('[Activity Thread] Failed to post recovered thinking:', err);
-              });
-            }
-          }
-        }
-
-        // Recover missed tool entries from the CURRENT assistant message only.
-        // toolStates stores ANY seen status (pending/running/completed/error).
-        // Check if the LAST seen status is already a terminal state rather than
-        // using has(), since a tool seen as 'running' still needs recovery for 'completed'.
-        // handleToolPart sets state.status = 'thinking' on completed/error.
-        // Since we already set status to 'complete', save/restore to avoid breaking
-        // the finalizeResponseSegment guard.
-        const preRecoveryStatus = state.status;
-        for (const part of (currentAssistantMsg.parts ?? [])) {
-          if ((part as any).type !== 'tool') continue;
-          const toolPart = part as ToolPart;
-          const toolKey = toolPart.callID || toolPart.id || toolPart.tool || 'tool';
-          const status = normalizeToolStatus(toolPart.state?.status);
-          const lastSeen = state.toolStates.get(toolKey);
-          // Only recover if API has a terminal state AND we haven't already
-          // processed a terminal state for this tool (running → completed upgrade)
-          if ((status === 'completed' || status === 'error')
-              && lastSeen !== 'completed' && lastSeen !== 'error') {
-            console.log(`[opencode] Recovering missed tool: ${toolPart.tool} (${toolKey})`);
-            await handleToolPart(toolPart, state);
-          }
-        }
-        state.status = preRecoveryStatus;
+      const update: Partial<Session> = {
+        lastUsage: state.lastUsage,
+        lastActiveAt: Date.now(),
+      };
+      if (state.sessionThreadTs) {
+        await saveThreadSession(state.channelId, state.sessionThreadTs, update as Partial<ThreadSession>);
+      } else {
+        await saveSession(state.channelId, update);
       }
     } catch (err) {
-      console.error('[opencode] Failed to fetch authoritative messages:', err);
+      console.error('[opencode] Failed to save session on idle:', err);
     }
-  }
 
-  // Re-flush activity batch if tool recovery added new entries
-  if (state.activityBatch.length > 0 && state.threadParentTs) {
-    await flushActivityBatch(
-      state,
-      app!.client as WebClient,
-      state.channelId,
-      state.charLimit,
-      'complete',
-      state.userId
-    ).catch(err => {
-      console.error('[Activity Thread] Failed to flush recovered batch:', err);
-    });
-  }
+    // Flush any remaining activity batch on completion
+    if (state.activityBatch.length > 0 && state.threadParentTs) {
+      await flushActivityBatch(
+        state,
+        app!.client as WebClient,
+        state.channelId,
+        state.charLimit,
+        'complete',
+        state.userId
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to flush batch on completion:', err);
+      });
+    }
 
-  if (state.status === 'complete') {
-    await finalizeResponseSegment(state);
-    if (hasPendingFinalResponse(state)) {
+    // Flush any pending message parts that haven't been assigned a role yet.
+    // When the session is idle, buffered text parts must be from the assistant.
+    // Save and restore status because appendTextDelta sets it to 'generating'.
+    try {
+      const preFlushStatus = state.status;
+      for (const [messageId] of state.pendingMessageParts) {
+        state.messageRoles.set(messageId, 'assistant');
+        await flushPendingParts(state, messageId);
+      }
+      state.status = preFlushStatus;
+    } catch (err) {
+      console.error('[opencode] Failed to flush pending parts on idle:', err);
+    }
+
+    // Safety net: fetch authoritative messages from session API at idle.
+    // This protects against dropped/late SSE events for response/tool/thinking parts.
+    if (state.workingDir) {
+      try {
+        const instance = await serverPool.getOrCreate(state.channelId);
+        const client = instance.client.getClient();
+        const response = await client.session.messages({
+          path: { id: state.sessionId },
+          query: { directory: state.workingDir },
+        });
+        const authMessages = response.data ?? [];
+
+        // Select the best authoritative assistant message for THIS turn.
+        // Prefer known assistantMessageId when it has content, otherwise fallback
+        // to latest assistant message that contains text/reasoning/terminal tool parts.
+        const currentAssistantMsg = selectCurrentAssistantMessage(authMessages, state.assistantMessageId);
+        const finalResponseMsg = selectAssistantMessageForFinalResponse(authMessages, state.assistantMessageId);
+
+        if (finalResponseMsg?.info?.id && state.assistantMessageId !== finalResponseMsg.info.id) {
+          console.log(`[opencode] Final response source switched to text-bearing message ${finalResponseMsg.info.id}`);
+          state.assistantMessageId = finalResponseMsg.info.id;
+        }
+
+        if (finalResponseMsg) {
+          // Always reconcile the final response with authoritative session data.
+          const textParts = (finalResponseMsg.parts ?? []).filter((p: any) => p.type === 'text' && p.text);
+          if (textParts.length > 0) {
+            const text = textParts.map((p: any) => p.text).join('');
+            if (text.trim()) {
+              if (state.fullResponse !== text) {
+                console.log('[opencode] Using authoritative response from session API');
+              }
+              state.fullResponse = text;
+              state.currentResponseSegment = text;
+              if (!state.generatingEntry) {
+                const now = Date.now();
+                state.generatingEntry = {
+                  timestamp: now,
+                  type: 'generating',
+                  generatingInProgress: false,
+                  generatingContent: text,
+                  generatingTruncated: text.slice(0, 500),
+                  generatingChars: text.length,
+                };
+                state.generatingSegmentStartTime = now;
+                state.activityLog.push(state.generatingEntry);
+              } else {
+                state.generatingEntry.generatingContent = text;
+                state.generatingEntry.generatingChars = text.length;
+                state.generatingEntry.generatingTruncated = text.slice(0, 500);
+              }
+            }
+          }
+        }
+
+        if (currentAssistantMsg) {
+          // Recover reasoning blocks when SSE reasoning events were missed entirely.
+          // Only synthesize from authoritative data when no thinking entries exist yet.
+          const hasThinkingEntries = state.activityLog.some((entry) => entry.type === 'thinking');
+          if (!hasThinkingEntries) {
+            const reasoningParts = (currentAssistantMsg.parts ?? [])
+              .filter((p: any) => p.type === 'reasoning' && typeof p.text === 'string' && p.text.length > 0);
+            for (let i = 0; i < reasoningParts.length; i += 1) {
+              const part = reasoningParts[i] as any;
+              const reasoningText = part.text as string;
+              const now = Date.now();
+              const thinkingEntry: ActivityEntry = {
+                timestamp: now,
+                type: 'thinking',
+                thinkingContent: reasoningText,
+                thinkingTruncated: reasoningText.length > 500 ? `...${reasoningText.slice(-500)}` : reasoningText,
+                thinkingInProgress: false,
+                thinkingPartId: part.id || `reasoning-${i}`,
+                durationMs: part?.time?.start && part?.time?.end
+                  ? Math.max(0, part.time.end - part.time.start)
+                  : undefined,
+              };
+              state.reasoningParts.set(thinkingEntry.thinkingPartId || `reasoning-${i}`, reasoningText);
+
+              const generatingIndex = state.generatingEntry ? state.activityLog.indexOf(state.generatingEntry) : -1;
+              if (generatingIndex >= 0) {
+                state.activityLog.splice(generatingIndex, 0, thinkingEntry);
+              } else {
+                state.activityLog.push(thinkingEntry);
+              }
+
+              if (state.threadParentTs) {
+                await postThinkingToThread(
+                  app!.client as WebClient,
+                  state.channelId,
+                  state.threadParentTs,
+                  thinkingEntry,
+                  THINKING_MESSAGE_SIZE,
+                  state.userId
+                ).catch((err) => {
+                  console.error('[Activity Thread] Failed to post recovered thinking:', err);
+                });
+              }
+            }
+          }
+
+          // Recover missed tool entries from the CURRENT assistant message only.
+          // toolStates stores ANY seen status (pending/running/completed/error).
+          // Check if the LAST seen status is already a terminal state rather than
+          // using has(), since a tool seen as 'running' still needs recovery for 'completed'.
+          // handleToolPart sets state.status = 'thinking' on completed/error.
+          // Since we already set status to 'complete', save/restore to avoid breaking
+          // the finalizeResponseSegment guard.
+          const preRecoveryStatus = state.status;
+          for (const part of (currentAssistantMsg.parts ?? [])) {
+            if ((part as any).type !== 'tool') continue;
+            const toolPart = part as ToolPart;
+            const toolKey = toolPart.callID || toolPart.id || toolPart.tool || 'tool';
+            const status = normalizeToolStatus(toolPart.state?.status);
+            const lastSeen = state.toolStates.get(toolKey);
+            // Only recover if API has a terminal state AND we haven't already
+            // processed a terminal state for this tool (running → completed upgrade)
+            if ((status === 'completed' || status === 'error')
+                && lastSeen !== 'completed' && lastSeen !== 'error') {
+              console.log(`[opencode] Recovering missed tool: ${toolPart.tool} (${toolKey})`);
+              await handleToolPart(toolPart, state);
+            }
+          }
+          state.status = preRecoveryStatus;
+        }
+      } catch (err) {
+        console.error('[opencode] Failed to fetch authoritative messages:', err);
+      }
+    }
+
+    // Re-flush activity batch if tool recovery added new entries
+    if (state.activityBatch.length > 0 && state.threadParentTs) {
+      await flushActivityBatch(
+        state,
+        app!.client as WebClient,
+        state.channelId,
+        state.charLimit,
+        'complete',
+        state.userId
+      ).catch(err => {
+        console.error('[Activity Thread] Failed to flush recovered batch:', err);
+      });
+    }
+
+    try {
+      if (state.status === 'complete') {
+        await finalizeResponseSegment(state);
+        if (hasPendingFinalResponse(state)) {
+          state.status = 'error';
+          state.customStatus = 'Final response delivery failed';
+        } else if (state.threadParentTs && !state.responseMessageTs) {
+          state.status = 'error';
+          state.customStatus = 'Final response text missing';
+        }
+      }
+    } catch (err) {
+      console.error('[opencode] Failed to finalize response on idle:', err);
       state.status = 'error';
-      state.customStatus = 'Final response delivery failed';
-    } else if (state.threadParentTs && !state.responseMessageTs) {
-      state.status = 'error';
-      state.customStatus = 'Final response text missing';
+      state.customStatus = 'Response finalization failed';
     }
-  }
 
-  await updateStatusMessage(state, session, app!.client as WebClient);
-
-  if (state.originalTs) {
-    if (state.status === 'aborted') {
-      await markAborted(app!.client as WebClient, state.channelId, state.originalTs);
-    } else {
-      await removeProcessingEmoji(app!.client as WebClient, state.channelId, state.originalTs);
+    try {
+      await updateStatusMessage(state, session, app!.client as WebClient);
+    } catch (err) {
+      console.error('[opencode] Failed to update status message on idle:', err);
     }
-  }
 
-  if (state.status === 'complete' && state.userId && state.statusMsgTs) {
-    await sendDmNotification({
-      client: app!.client as WebClient,
-      userId: state.userId,
-      channelId: state.channelId,
-      messageTs: state.statusMsgTs,
-      conversationKey: state.conversationKey,
-      emoji: ':white_check_mark:',
-      title: 'Query completed',
-      queryPreview: state.queryText,
-    }).catch((err) => console.error('[opencode] Failed to send completion DM:', err));
-  }
+    if (state.originalTs) {
+      try {
+        if (state.status === 'aborted') {
+          await markAborted(app!.client as WebClient, state.channelId, state.originalTs);
+        } else {
+          await removeProcessingEmoji(app!.client as WebClient, state.channelId, state.originalTs);
+        }
+      } catch (err) {
+        console.error('[opencode] Failed to update emoji on idle:', err);
+      }
+    }
 
-  if (state.userId) {
-    clearDmDebounce(state.userId, state.conversationKey);
-  }
+    if (state.status === 'complete' && state.userId && state.statusMsgTs) {
+      await sendDmNotification({
+        client: app!.client as WebClient,
+        userId: state.userId,
+        channelId: state.channelId,
+        messageTs: state.statusMsgTs,
+        conversationKey: state.conversationKey,
+        emoji: ':white_check_mark:',
+        title: 'Query completed',
+        queryPreview: state.queryText,
+      }).catch((err) => console.error('[opencode] Failed to send completion DM:', err));
+    }
 
-  conversationTracker.stopProcessing(state.sessionId);
-  processingBySession.delete(state.sessionId);
-  processingByConversation.delete(state.conversationKey);
+    if (state.userId) {
+      clearDmDebounce(state.userId, state.conversationKey);
+    }
+  } finally {
+    conversationTracker.stopProcessing(state.sessionId);
+    processingBySession.delete(state.sessionId);
+    processingByConversation.delete(state.conversationKey);
+  }
 }
 
 async function updateStatusMessage(state: ProcessingState, session: Session | ThreadSession, client: WebClient): Promise<void> {
