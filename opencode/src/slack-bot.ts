@@ -60,7 +60,7 @@ import { buildMessageContent } from './content-builder.js';
 import { withSlackRetry, sleep } from '../../slack/dist/retry.js';
 import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
 import { syncMessagesFromSession } from './message-sync.js';
-import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId, isModelAvailable } from './model-cache.js';
+import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId, isModelAvailable, getCachedContextWindow } from './model-cache.js';
 import {
   flushActivityBatch,
   postThinkingToThread,
@@ -158,6 +158,7 @@ interface ProcessingState {
   postedBatchTs: string | null;
   postedBatchToolUseIds: Set<string>;
   pendingThinkingUpdate: Promise<void> | null;
+  sessionTitle?: string;
 }
 
 const serverPool = new ServerPool();
@@ -213,6 +214,7 @@ function getSessionIdFromPayload(payload: any): string | null {
   const props = payload.properties;
   if (props?.sessionID) return props.sessionID;
   if (props?.info?.sessionID) return props.info.sessionID;
+  if (props?.info?.id) return props.info.id;  // for session.updated events
   if (props?.part?.sessionID) return props.part.sessionID;
   return null;
 }
@@ -296,6 +298,18 @@ async function handleGlobalEvent(event: GlobalEvent): Promise<void> {
       case 'session.compacted':
         state.customStatus = 'Compacted';
         break;
+      case 'session.updated': {
+        const sessionInfo = payload?.properties?.info;
+        if (sessionInfo?.title && !sessionInfo.title.startsWith('Slack ')) {
+          state.sessionTitle = sessionInfo.title;
+          if (state.sessionThreadTs) {
+            await saveThreadSession(state.channelId, state.sessionThreadTs, { sessionTitle: sessionInfo.title });
+          } else {
+            await saveSession(state.channelId, { sessionTitle: sessionInfo.title });
+          }
+        }
+        break;
+      }
       case 'todo.updated':
         await handleTodoUpdated(payload?.properties?.todos as Todo[] | undefined, state);
         break;
@@ -346,6 +360,8 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
   if (info.role === 'assistant' && info.id) {
     state.model = info.providerID && info.modelID ? encodeModelId(info.providerID, info.modelID) : state.model;
     state.assistantMessageId = info.id;
+    // Look up real context window from cached model data (synchronous, no network call)
+    const contextWindow = (state.model ? getCachedContextWindow(state.model) : null) ?? DEFAULT_CONTEXT_WINDOW;
     state.lastUsage = {
       inputTokens: info.tokens?.input ?? 0,
       outputTokens: info.tokens?.output ?? 0,
@@ -353,7 +369,7 @@ async function handleMessageUpdated(properties: any, state: ProcessingState): Pr
       cacheReadInputTokens: info.tokens?.cache?.read ?? 0,
       cacheCreationInputTokens: info.tokens?.cache?.write ?? 0,
       cost: info.cost ?? 0,
-      contextWindow: DEFAULT_CONTEXT_WINDOW,
+      contextWindow,
       model: state.model || 'OpenCode',
     };
     state.lastUsage.model = state.model || 'OpenCode';
@@ -1541,6 +1557,10 @@ async function updateStatusMessage(state: ProcessingState, session: Session | Th
     const usage = state.lastUsage ?? session.lastUsage;
     const { contextPercent, compactPercent, tokensToCompact } = computeContextStats(usage);
 
+    const totalTokensUsed = usage
+      ? usage.inputTokens + (usage.cacheCreationInputTokens ?? 0) + usage.cacheReadInputTokens
+      : undefined;
+
     const blocks = buildCombinedStatusBlocks({
       activityLog: state.activityLog,
       inProgress: !['complete', 'error', 'aborted'].includes(state.status),
@@ -1572,6 +1592,10 @@ async function updateStatusMessage(state: ProcessingState, session: Session | Th
       },
       userId: state.userId,
       mentionChannelId: state.channelId,
+      sessionTitle: state.sessionTitle ?? session.sessionTitle,
+      totalTokensUsed,
+      contextWindow: usage?.contextWindow,
+      reasoningTokens: usage?.reasoningTokens,
     });
 
     await withSlackRetry(() =>
@@ -2082,6 +2106,23 @@ async function handleUserMessage(params: {
     }
   }
 
+  // Fetch session title from OpenCode API
+  let sessionTitle = session.sessionTitle;
+  if (!sessionTitle || sessionTitle.startsWith('Slack ')) {
+    try {
+      const fetchedTitle = await instance.client.getSessionTitle(session.sessionId!);
+      if (fetchedTitle && !fetchedTitle.startsWith('Slack ')) {
+        sessionTitle = fetchedTitle;
+        // Persist for subsequent queries
+        if (sessionThreadTs) {
+          await saveThreadSession(channelId, sessionThreadTs, { sessionTitle: fetchedTitle });
+        } else {
+          await saveSession(channelId, { sessionTitle: fetchedTitle });
+        }
+      }
+    } catch { /* ignore — title is optional */ }
+  }
+
   if (conversationTracker.isBusy(session.sessionId!)) {
     await withSlackRetry(() =>
       client.chat.postMessage({
@@ -2215,6 +2256,7 @@ async function handleUserMessage(params: {
     originalTs,
     isNewSession,
     model: session.model,
+    sessionTitle,
     queryText: userText,
     fullResponse: '',
     currentResponseSegment: '',

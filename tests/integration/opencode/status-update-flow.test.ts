@@ -201,6 +201,108 @@ describe('status-update-flow', () => {
     expect(usageCall?.spinner).toBeDefined();
   });
 
+  it('computes context stats with model-specific context window', async () => {
+    vi.useFakeTimers();
+
+    // Seed model cache: p:m has 60000 context window
+    const { getCachedContextWindow } = await import('../../../opencode/src/model-cache.js');
+    vi.mocked(getCachedContextWindow).mockReturnValue(60000);
+
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> ctx test', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-ctx',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: {
+              input: 400,
+              output: 50,
+              reasoning: 0,
+              cache: { read: 100, write: 100 },
+            },
+            cost: 0.02,
+          },
+          parts: [],
+        },
+      },
+    });
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // 600 tokens used / 60000 context = 1.0%
+    const usageCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.contextPercent === 1.0);
+    expect(usageCall).toBeDefined();
+
+    // Restore
+    vi.mocked(getCachedContextWindow).mockReturnValue(null);
+  });
+
+  it('passes sessionTitle and contextWindow to status blocks', async () => {
+    vi.useFakeTimers();
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> title test', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    // Emit session.updated with title
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'session.updated',
+        properties: {
+          info: { id: 'sess_mock', title: 'Test Session' },
+        },
+      },
+    });
+
+    // Emit message.updated to populate usage
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-title',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 100, output: 20, reasoning: 0, cache: { read: 10, write: 5 } },
+            cost: 0.01,
+          },
+          parts: [],
+        },
+      },
+    });
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    const titleCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.sessionTitle === 'Test Session');
+    expect(titleCall).toBeDefined();
+    expect(titleCall?.contextWindow).toBe(200000);  // DEFAULT_CONTEXT_WINDOW fallback
+  });
+
   it('respects updateRateSeconds for status update interval', async () => {
     vi.useFakeTimers();
 

@@ -229,4 +229,63 @@ describe('session-manager (opencode)', () => {
     const threadSession = getThreadSession('C123', '111.222');
     expect(threadSession?.model).toBe('google:gemini-2');
   });
+
+  it('preserves sessionTitle across saveSession calls', async () => {
+    let fileContents = JSON.stringify({ channels: {} });
+    mockedFs.existsSync.mockImplementation((p: any) => String(p).endsWith('opencode-sessions.json'));
+    mockedFs.readFileSync.mockImplementation(() => fileContents);
+    mockedFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContents = data.toString();
+    });
+
+    // First save: set sessionTitle
+    await saveSession('C123', {
+      sessionId: 'sess-1',
+      sessionTitle: 'Test Title',
+    });
+
+    // Verify sessionTitle was saved
+    let session = getSession('C123');
+    expect(session?.sessionTitle).toBe('Test Title');
+
+    // Second save: update only lastActiveAt (simulates subsequent save)
+    await saveSession('C123', {
+      lastActiveAt: Date.now(),
+    } as any);
+
+    // Verify sessionTitle is still preserved
+    session = getSession('C123');
+    expect(session?.sessionTitle).toBe('Test Title');
+  });
+
+  it('preserves sessionTitle in thread sessions', async () => {
+    let fileContents = JSON.stringify({ channels: {} });
+    mockedFs.existsSync.mockImplementation((p: any) => String(p).endsWith('opencode-sessions.json'));
+    mockedFs.readFileSync.mockImplementation(() => fileContents);
+    mockedFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContents = data.toString();
+    });
+
+    // Create channel session first
+    await saveSession('C123', { sessionId: 'sess-1' });
+
+    // Create thread with sessionTitle
+    await saveThreadSession('C123', '111.222', {
+      sessionId: 'thread-1',
+      sessionTitle: 'Thread Title',
+    });
+
+    // Verify thread sessionTitle
+    let thread = getThreadSession('C123', '111.222');
+    expect(thread?.sessionTitle).toBe('Thread Title');
+
+    // Update thread with other fields
+    await saveThreadSession('C123', '111.222', {
+      lastActiveAt: Date.now(),
+    } as any);
+
+    // Verify sessionTitle is still preserved
+    thread = getThreadSession('C123', '111.222');
+    expect(thread?.sessionTitle).toBe('Thread Title');
+  });
 });

@@ -32,6 +32,7 @@ export interface LastUsage {
 
 export interface Session {
   sessionId: string | null;
+  sessionTitle?: string;  // Title from OpenCode API (auto-generated)
   previousSessionIds?: string[];  // Track all sessions before /clear
   workingDir: string;
   mode: PermissionMode;
@@ -80,6 +81,7 @@ export interface Session {
  */
 export interface ThreadSession {
   sessionId: string | null;
+  sessionTitle?: string;  // Title from OpenCode API (auto-generated)
   forkedFrom: string | null;  // Parent session ID
   forkedFromThreadTs?: string;  // Source thread's timestamp (for thread-to-thread forks)
   workingDir: string;
@@ -259,6 +261,7 @@ export async function saveSession(channelId: string, session: Partial<Session>):
 
     store.channels[channelId] = {
       sessionId: existing?.sessionId ?? null,
+      sessionTitle: existing?.sessionTitle,  // Preserve session title from OpenCode API
       previousSessionIds: existing?.previousSessionIds ?? [],  // Preserve previous session history
       workingDir: existing?.workingDir ?? process.cwd(),
       mode: existing?.mode ?? 'bypassPermissions',
@@ -339,6 +342,7 @@ export async function saveThreadSession(
 
     store.channels[channelId].threads![threadTs] = {
       sessionId: existingThread?.sessionId ?? null,
+      sessionTitle: existingThread?.sessionTitle,  // Preserve session title from OpenCode API
       forkedFrom: existingThread?.forkedFrom ?? null,
       workingDir: existingThread?.workingDir ?? store.channels[channelId].workingDir,
       mode: existingThread?.mode ?? store.channels[channelId].mode,

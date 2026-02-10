@@ -37,7 +37,7 @@ export async function refreshModelCache(client: OpencodeClient): Promise<ModelIn
         const value = encodeModelId(provider.id, modelId);
         const displayName = `${providerName} / ${model.name || modelId}`;
         const description = model.name || modelId;
-        models.push({ value, displayName, description });
+        models.push({ value, displayName, description, contextWindow: model.limit?.context });
       }
     }
 
@@ -63,6 +63,11 @@ export async function refreshModelCache(client: OpencodeClient): Promise<ModelIn
     }
     return cachedModels;
   }
+}
+
+export function getCachedContextWindow(modelId: string): number | null {
+  const info = cachedModels.find(m => m.value === modelId);
+  return info?.contextWindow ?? null;
 }
 
 export async function getAvailableModels(client: OpencodeClient): Promise<ModelInfo[]> {

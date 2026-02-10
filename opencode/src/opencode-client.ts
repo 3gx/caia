@@ -157,6 +157,16 @@ export class OpencodeClientWrapper {
     return result.data.id;
   }
 
+  async getSessionTitle(sessionId: string): Promise<string | null> {
+    const client = this.getClient();
+    try {
+      const result = await client.session.get({ path: { id: sessionId } });
+      return result.data?.title ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async deleteSession(sessionId: string, workingDir?: string): Promise<void> {
     const client = this.getClient();
     await client.session.delete({

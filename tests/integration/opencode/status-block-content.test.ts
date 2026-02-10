@@ -256,4 +256,163 @@ describe('status-block-content', () => {
     const blocks = completionCall[0].blocks as Array<any>;
     expect(blocks[0]?.text?.text).toContain('The user wants me to assume xyz has value 1234.');
   });
+
+  it('status line includes reasoning indicator when reasoning tokens present', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '5.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-reasoning',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 10, output: 5, reasoning: 500, cache: { read: 0, write: 0 } },
+            cost: 0.01,
+          },
+          parts: [{
+            type: 'text',
+            id: 't_reasoning',
+            messageID: 'assistant-msg-reasoning',
+            text: 'Response text',
+          }],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
+    const completionCall = updateCalls.find((call: any) =>
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
+    );
+    expect(completionCall).toBeDefined();
+    const blocksJson = JSON.stringify(completionCall[0].blocks);
+    expect(blocksJson).toContain('[reasoning]');
+  });
+
+  it('status line includes session title', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '6.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    // Emit session.updated with title
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'session.updated',
+        properties: {
+          info: { id: 'sess_mock', title: 'My Project' },
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-title',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0.01,
+          },
+          parts: [{
+            type: 'text',
+            id: 't_title',
+            messageID: 'assistant-msg-title',
+            text: 'Response',
+          }],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
+    const completionCall = updateCalls.find((call: any) =>
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
+    );
+    expect(completionCall).toBeDefined();
+    const blocksJson = JSON.stringify(completionCall[0].blocks);
+    expect(blocksJson).toContain('My Project');
+  });
+
+  it('status line shows used/total context format', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '7.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-ctx',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 1000, output: 200, reasoning: 0, cache: { read: 500, write: 100 } },
+            cost: 0.02,
+          },
+          parts: [{
+            type: 'text',
+            id: 't_ctx',
+            messageID: 'assistant-msg-ctx',
+            text: 'Response',
+          }],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
+    const completionCall = updateCalls.find((call: any) =>
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
+    );
+    expect(completionCall).toBeDefined();
+    const blocksJson = JSON.stringify(completionCall[0].blocks);
+    // Should contain "% used" and a "/" separator (used/total format)
+    expect(blocksJson).toContain('% used');
+    expect(blocksJson).toContain('/');
+  });
 });

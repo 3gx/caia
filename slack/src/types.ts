@@ -38,4 +38,5 @@ export interface ModelInfo {
   value: string;
   displayName: string;
   description: string;
+  contextWindow?: number;     // From SDK config.providers() → model.limit.context
 }

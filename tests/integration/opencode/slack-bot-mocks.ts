@@ -59,6 +59,7 @@ class MockWrapper {
   promptAsync = vi.fn().mockResolvedValue(undefined);
   respondToPermission = vi.fn().mockResolvedValue(undefined);
   abort = vi.fn().mockResolvedValue(undefined);
+  getSessionTitle = vi.fn().mockResolvedValue(null);
   subscribeToEvents = vi.fn((cb: (event: any) => void) => {
     eventSubscribers.push(cb);
     const unsubscribe = vi.fn();
@@ -328,6 +329,7 @@ vi.mock('../../../opencode/src/model-cache.js', () => ({
   encodeModelId: vi.fn().mockReturnValue('p:m'),
   decodeModelId: vi.fn().mockReturnValue({ providerID: 'p', modelID: 'm' }),
   isModelAvailable: vi.fn().mockResolvedValue(true),
+  getCachedContextWindow: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../../../opencode/src/activity-thread.js', () => ({

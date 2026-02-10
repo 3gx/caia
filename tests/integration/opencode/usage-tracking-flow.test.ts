@@ -75,7 +75,61 @@ describe('usage-tracking-flow', () => {
         cacheCreationInputTokens: 3,
         cost: 0.01,
         model: 'p:m',
+        contextWindow: 200000,
       }),
     }));
+  });
+
+  it('uses model-specific context window when model is cached', async () => {
+    // Seed model cache with a specific context window for p:m
+    const { getCachedContextWindow } = await import('../../../opencode/src/model-cache.js');
+    vi.mocked(getCachedContextWindow).mockReturnValue(128000);
+
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> cached model', channel: 'C1', ts: '2.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-2',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: {
+              input: 50,
+              output: 10,
+              reasoning: 0,
+              cache: { read: 5, write: 2 },
+            },
+            cost: 0.005,
+          },
+          parts: [],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await waitForAsync();
+
+    expect(saveSession).toHaveBeenCalledWith('C1', expect.objectContaining({
+      lastUsage: expect.objectContaining({
+        contextWindow: 128000,
+      }),
+    }));
+
+    // Restore mock
+    vi.mocked(getCachedContextWindow).mockReturnValue(null);
   });
 });

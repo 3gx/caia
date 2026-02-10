@@ -1194,6 +1194,10 @@ export interface StatusPanelParams {
   spinner?: string;  // Current spinner frame (cycles to show bot is alive)
   rateLimitHits?: number;  // Number of Slack rate limits encountered
   customStatus?: string;  // Custom status text (overrides default for thinking/complete)
+  sessionTitle?: string;  // Session title from OpenCode API
+  totalTokensUsed?: number;   // For "used / total" display
+  contextWindow?: number;      // For "used / total" display
+  reasoningTokens?: number;   // For [reasoning] indicator when > 0
 }
 
 // Re-export tool formatting functions for backwards compatibility
@@ -1626,13 +1630,22 @@ export function buildUnifiedStatusLine(
   outputTokens?: number,
   cost?: number,
   durationMs?: number,
-  rateLimitHits?: number
+  rateLimitHits?: number,
+  sessionTitle?: string,
+  totalTokensUsed?: number,
+  contextWindow?: number,
+  reasoningTokens?: number
 ): string {
   const modeLabel = MODE_LABELS[mode] || mode;
   const parts: string[] = [modeLabel];
 
   // Model - always show, n/a if not available
-  parts.push(model || 'n/a');
+  // Append [reasoning] when reasoning tokens were used
+  let modelStr = model || 'n/a';
+  if (reasoningTokens && reasoningTokens > 0) {
+    modelStr += ' [reasoning]';
+  }
+  parts.push(modelStr);
 
   // Session ID - always show, n/a if not available
   let sessionStr = sessionId || 'n/a';
@@ -1641,9 +1654,19 @@ export function buildUnifiedStatusLine(
   }
   parts.push(sessionStr);
 
+  // Session title (truncated to 25 chars)
+  if (sessionTitle) {
+    const truncatedTitle = sessionTitle.length > 25 ? sessionTitle.slice(0, 22) + '...' : sessionTitle;
+    parts.push(truncatedTitle);
+  }
+
   // Stats - only if available (completion state)
-  // Context % with compact info
-  if (contextPercent !== undefined) {
+  // Context: "29.0% used (76.9k / 258.4k)" format when totalTokensUsed and contextWindow available
+  if (totalTokensUsed !== undefined && contextWindow !== undefined && contextWindow > 0) {
+    const pct = Math.min(100, Math.max(0, Number(((totalTokensUsed / contextWindow) * 100).toFixed(1))));
+    parts.push(`${pct.toFixed(1)}% used (${formatTokensK(totalTokensUsed)} / ${formatTokensK(contextWindow)})`);
+  } else if (contextPercent !== undefined) {
+    // Fallback to compact info format for auto-compact indicator
     if (compactPercent !== undefined && tokensToCompact !== undefined) {
       parts.push(`${contextPercent.toFixed(1)}% ctx (${compactPercent.toFixed(1)}% ${formatTokensK(tokensToCompact)} tok to ⚡)`);
     } else if (compactPercent !== undefined) {
@@ -1675,9 +1698,10 @@ export function buildUnifiedStatusLine(
     parts.push(`:warning: ${rateLimitHits} limits`);
   }
 
-  // Split into two lines: line 1 = mode | model | session, line 2 = stats
-  const line1Parts = parts.slice(0, 3);  // mode, model, session
-  const line2Parts = parts.slice(3);     // stats (context, tokens, cost, duration, rate limits)
+  // Split into two lines: line 1 = mode | model | session [| title], line 2 = stats
+  const line1End = sessionTitle ? 4 : 3;  // Include title in line 1 when present
+  const line1Parts = parts.slice(0, line1End);
+  const line2Parts = parts.slice(line1End);
 
   if (line2Parts.length === 0) {
     return `_${line1Parts.join(' | ')}_`;
@@ -1721,6 +1745,9 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
     retryUploadInfo,
     userId,
     mentionChannelId,
+    sessionTitle,
+    totalTokensUsed,
+    reasoningTokens,
   } = params;
 
   // Build user mention for completion notifications (skip in DMs)
@@ -1783,7 +1810,11 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
           undefined,  // no outputTokens during in-progress
           undefined,  // no cost during in-progress
           undefined,  // no duration during in-progress
-          rateLimitHits
+          rateLimitHits,
+          sessionTitle,
+          totalTokensUsed,
+          params.contextWindow,
+          reasoningTokens
         ),
       }],
     });
@@ -1839,7 +1870,11 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
             outputTokens,
             costUsd,
             elapsedMs,
-            rateLimitHits
+            rateLimitHits,
+            sessionTitle,
+            totalTokensUsed,
+            params.contextWindow,
+            reasoningTokens
           ),
         }],
       });
