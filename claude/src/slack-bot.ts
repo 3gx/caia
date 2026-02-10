@@ -2384,7 +2384,7 @@ async function showPlanApprovalUI(params: {
     // For DM notification context:
     originalQuery?: string;
   };
-  session: { mode: PermissionMode };
+  session: { mode: PermissionMode; workingDir?: string };
   originalTs?: string;
 }): Promise<void> {
   const {

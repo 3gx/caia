@@ -1070,7 +1070,7 @@ export { getToolEmoji, formatToolName, formatToolInputSummary } from 'caia-slack
 export function formatToolDetails(entry: ActivityEntry): string[] {
   const details: string[] = [];
   const tool = formatToolName(entry.tool || '').toLowerCase();
-  const input = entry.toolInput;
+  const input = typeof entry.toolInput === 'object' ? entry.toolInput : undefined;
 
   // Tools with special UI - show duration only
   if (tool === 'askuserquestion') {
@@ -1619,7 +1619,7 @@ export function formatThreadThinkingMessage(
   charLimit: number,
   options?: ThinkingMessageOptions
 ): string {
-  const content = entry.thinkingContent || entry.thinkingTruncated || '';
+  const content = entry.thinkingContent || (typeof entry.thinkingTruncated === 'string' ? entry.thinkingTruncated : '') || '';
   const charCount = content.length;
   const duration = entry.durationMs ? ` [${(entry.durationMs / 1000).toFixed(1)}s]` : '';
   const charInfo = charCount > 0 ? ` _${charCount.toLocaleString()} chars_` : '';
