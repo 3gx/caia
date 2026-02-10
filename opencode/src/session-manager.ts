@@ -1,4 +1,5 @@
 import { SessionStoreManager } from '../../slack/dist/session/base-session-manager.js';
+import type { ActivityEntry as SharedActivityEntry } from 'caia-slack';
 
 /**
  * SDK Permission Mode type - matches OpenCode semantics.
@@ -118,49 +119,9 @@ export interface ThreadSession {
 
 /**
  * Activity log entry for real-time processing feedback.
+ * Re-exported from the shared caia-slack package.
  */
-export interface ActivityEntry {
-  timestamp: number;
-  type: 'starting' | 'thinking' | 'tool_start' | 'tool_complete' | 'error' | 'generating' | 'aborted' | 'mode_changed' | 'context_cleared' | 'session_changed';
-  tool?: string;
-  durationMs?: number;
-  message?: string;
-  // For thinking blocks
-  thinkingContent?: string;     // Full content (stored for modal/download)
-  thinkingTruncated?: string;   // First 500 chars (for live display)
-  thinkingInProgress?: boolean; // True while thinking is streaming (for rolling window)
-  thinkingPartId?: string;      // Provider reasoning part id for retry matching
-  thinkingAttachmentLink?: string; // Permalink to uploaded thinking attachment (if any)
-  // For generating (text streaming)
-  generatingChunks?: number;    // Number of text chunks received
-  generatingChars?: number;     // Total characters generated
-  generatingInProgress?: boolean; // True while text is streaming
-  generatingContent?: string;   // Full response text (stored for modal/download)
-  generatingTruncated?: string; // First 500 chars (for live display)
-  // Tool input (populated at content_block_stop)
-  toolInput?: Record<string, unknown>;
-  toolUseId?: string;           // For matching with tool_result
-  // Result metrics (populated when user message with tool_result arrives)
-  lineCount?: number;           // Read/Write: lines in result/content
-  matchCount?: number;          // Grep/Glob: number of matches/files
-  linesAdded?: number;          // Edit: lines in new_string
-  linesRemoved?: number;        // Edit: lines in old_string
-  // Execution timing (for accurate duration display)
-  toolCompleteTimestamp?: number;    // When content_block_stop fired
-  toolResultTimestamp?: number;      // When tool_result arrived
-  executionDurationMs?: number;      // Actual execution time
-  // Tool output (populated when tool_result arrives)
-  toolOutput?: string;               // Full output (up to 50KB)
-  toolOutputPreview?: string;        // First 300 chars for display
-  toolOutputTruncated?: boolean;     // True if output was truncated
-  toolIsError?: boolean;             // True if tool returned error
-  toolErrorMessage?: string;         // Error message if failed
-  mode?: string;                     // For mode_changed entries
-  previousSessionId?: string;        // For session_changed entries
-  // Thread message linking (for clickable activity in main status)
-  threadMessageTs?: string;          // Slack ts of thread message for this activity
-  threadMessageLink?: string;        // Permalink URL to thread message
-}
+export type { SharedActivityEntry as ActivityEntry };
 
 /**
  * Maps Slack message timestamps to SDK message IDs for point-in-time thread forking.

@@ -53,7 +53,7 @@ describe('activity-thread', () => {
         ':white_check_mark: *Read* [0.5s]'
       );
 
-      expect(result).toEqual({ ts: 'posted-ts-123' });
+      expect(result).toEqual({ ts: 'posted-ts-123', attachmentFailed: false });
       expect(client.chat.postMessage).toHaveBeenCalledWith({
         channel: 'C123',
         thread_ts: 'parent-ts',
@@ -66,6 +66,13 @@ describe('activity-thread', () => {
       const client = createMockClient();
       const longContent = 'A'.repeat(1000);
 
+      // Shared postActivityToThread requires uploadFn in options
+      const mockUploadFn = vi.fn(async (c: any, channelId: string, markdown: string, slackFormatted: string, threadTs?: string, userId?: string, charLimit?: number) => {
+        const result = await (uploadMarkdownAndPngWithResponse as any)(c, channelId, markdown, slackFormatted, threadTs, userId, charLimit);
+        if (!result?.ts) return null;
+        return { ts: result.ts, attachmentFailed: result.uploadSucceeded === false };
+      });
+
       const result = await postActivityToThread(
         client,
         'C123',
@@ -75,10 +82,11 @@ describe('activity-thread', () => {
           fullMarkdown: longContent,
           charLimit: 500,
           userId: 'U456',
+          uploadFn: mockUploadFn,
         }
       );
 
-      expect(result).toEqual({ ts: 'upload-ts-123' });
+      expect(result).toEqual({ ts: 'upload-ts-123', attachmentFailed: false });
       expect(uploadMarkdownAndPngWithResponse).toHaveBeenCalledWith(
         client,
         'C123',
@@ -274,6 +282,7 @@ describe('activity-thread', () => {
       expect(result).toEqual({
         ts: 'posted-ts-123',
         permalink: 'https://slack.com/archives/C123/p123456',
+        attachmentFailed: false,
       });
       expect(client.chat.postMessage).toHaveBeenCalled();
       const call = client.chat.postMessage.mock.calls[0][0];
@@ -473,6 +482,7 @@ describe('activity-thread', () => {
       expect(result).toEqual({
         ts: 'posted-ts-123',
         permalink: 'https://slack.com/archives/C123/p123456',
+        attachmentFailed: false,
       });
     });
   });

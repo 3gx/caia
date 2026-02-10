@@ -31,6 +31,7 @@ vi.mock('../../../codex/src/session-manager.js', () => ({
   saveThreadSession: vi.fn().mockResolvedValue(undefined),
   getThreadSession: vi.fn().mockReturnValue(null),
   getSession: vi.fn().mockReturnValue(null),
+  getEffectiveWorkingDir: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock('../../../codex/src/activity-thread.js', () => ({

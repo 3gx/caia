@@ -535,10 +535,9 @@ describe('Block Kit Builders', () => {
         contextPercent: 42.5,
         contextTokens: 85000, // 42.5% of 200k
         contextWindow: 200000,
-        // compactPercent and tokensToCompact are now commented out (use assumed values)
         inputTokens: 1250,
         outputTokens: 542,
-        costUsd: 0.05,
+        cost: 0.05,
         durationMs: 5200,
       });
 
@@ -546,8 +545,8 @@ describe('Block Kit Builders', () => {
       expect(line).toContain('[workspace-write]');
       expect(line).toContain('codex-mini [high]');
       expect(line).toContain('thread-123');
-      // New format: "X% left, Y used / Z" instead of compact threshold
-      expect(line).toContain('58% left'); // 100 - 42.5 = 57.5, rounded to 58
+      // New format: "X% left, Yk / Zk" from shared buildUnifiedStatusLine
+      expect(line).toContain('58% left');
       expect(line).toContain('85.0k / 200.0k');
       expect(line).toContain('1.3k/542');
       expect(line).toContain('$0.05');
@@ -557,13 +556,17 @@ describe('Block Kit Builders', () => {
     });
 
     it('uses defaults when model/reasoning not set', () => {
+      // Shared buildUnifiedStatusLine does not inject codex-specific defaults.
+      // Callers must pass explicit sandbox/model/reasoning values.
       const line = buildUnifiedStatusLine({
         mode: 'ask',
+        sandboxMode: 'danger-full-access',
+        model: 'gpt-5.2-codex',
+        reasoningEffort: 'xhigh',
       });
 
       expect(line).toContain('ask');
       expect(line).toContain('[danger-full-access]');
-      // Default model: gpt-5.2-codex with xhigh reasoning
       expect(line).toContain('gpt-5.2-codex');
       expect(line).toContain('[xhigh]');
       // Session shows 'n/a' when not set
@@ -594,7 +597,7 @@ describe('Block Kit Builders', () => {
         contextWindow: 200000,
         inputTokens: 5000,
         outputTokens: 1000,
-        costUsd: 0.10,
+        cost: 0.10,
         durationMs: 10000,
       });
 
@@ -667,7 +670,7 @@ describe('Block Kit Builders', () => {
         contextWindow: 200000,
         inputTokens: 10000,
         outputTokens: 500,
-        costUsd: 0.05,
+        cost: 0.05,
         durationMs: 5000,
       });
 

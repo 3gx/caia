@@ -239,6 +239,7 @@ interface ActiveQuery {
   statusMsgTs: string;           // Combined message: Activity log + Status panel
   mode: PermissionMode;
   model?: string;
+  workingDir?: string;
   processingState: ProcessingState;
   originalTs?: string;           // Original user message timestamp (for emoji tracking)
 }
@@ -772,6 +773,7 @@ async function runCompactSession(
     query: claudeQuery,
     statusMsgTs,
     mode: session.mode,
+    workingDir: session.workingDir,
     processingState,
   });
 
@@ -2437,10 +2439,9 @@ async function showPlanApprovalUI(params: {
             status: 'complete',
             mode: session.mode,
             model: processingState.model,
-            toolsCompleted: processingState.toolsCompleted,
             elapsedMs: processingState.durationMs ?? (Date.now() - processingState.startTime),
             conversationKey,
-            // Full stats (undefined fields are gracefully omitted by buildUnifiedStatusLine):
+            workingDir: session.workingDir,
             inputTokens: processingState.inputTokens,
             outputTokens: processingState.outputTokens,
             contextPercent: processingState.contextPercent,
@@ -2449,7 +2450,6 @@ async function showPlanApprovalUI(params: {
             costUsd: processingState.costUsd,
             rateLimitHits: processingState.rateLimitHits,
             sessionId: processingState.sessionId,
-            // User mention for plan ready notification
             userId,
             mentionChannelId: channelId,
           }),
@@ -3274,10 +3274,10 @@ async function handleMessage(params: {
             inProgress: true,
             status: 'starting',
             mode: session.mode,
-            toolsCompleted: 0,
             elapsedMs: 0,
             conversationKey,
-            spinner: SPINNER_FRAMES[0],  // Show spinner immediately
+            workingDir: session.workingDir,
+            spinner: SPINNER_FRAMES[0],
             sessionId: session.sessionId || undefined,
           }),
           text: 'Claude is continuing...',
@@ -3312,11 +3312,11 @@ async function handleMessage(params: {
             inProgress: true,
             status: 'starting',
             mode: session.mode,
-            toolsCompleted: 0,
             elapsedMs: 0,
             conversationKey,
-            spinner: SPINNER_FRAMES[0],  // Show spinner immediately
-            sessionId: session.sessionId || undefined,  // Initial session ID (may be null for new sessions)
+            workingDir: session.workingDir,
+            spinner: SPINNER_FRAMES[0],
+            sessionId: session.sessionId || undefined,
           }),
           text: 'Claude is starting...',
         })
@@ -3518,6 +3518,7 @@ async function handleMessage(params: {
         query: claudeQuery,
         statusMsgTs,
         mode: session.mode,
+        workingDir: session.workingDir,
         processingState,
         originalTs,  // For emoji tracking on abort
       });
@@ -4095,8 +4096,7 @@ async function handleMessage(params: {
                     status: processingState.status,
                     mode: session.mode,
                     model: processingState.model,
-                    currentTool: processingState.currentTool,
-                    toolsCompleted: processingState.toolsCompleted,
+                    workingDir: session.workingDir,
                     elapsedMs,
                     conversationKey,
                     spinner,
@@ -4577,7 +4577,7 @@ async function handleMessage(params: {
               status: 'complete',
               mode: session.mode,
               model: processingState.model,
-              toolsCompleted: processingState.toolsCompleted,
+              workingDir: session.workingDir,
               elapsedMs: finalDurationMs,
               inputTokens: processingState.inputTokens,
               outputTokens: processingState.outputTokens,
@@ -4898,7 +4898,7 @@ async function handleMessage(params: {
                 inProgress: false,
                 status: 'error',
                 mode: session.mode,
-                toolsCompleted: processingState.toolsCompleted,
+                workingDir: session.workingDir,
                 elapsedMs: Date.now() - processingState.startTime,
                 conversationKey,
                 errorMessage: error.message,
@@ -5026,7 +5026,7 @@ async function handleQueryAbort(conversationKey: string, channelId: string, clie
               status: 'aborted',
               mode: active.mode,
               model: active.model,
-              toolsCompleted: active.processingState.toolsCompleted,
+              workingDir: active.workingDir,
               elapsedMs,
               conversationKey,
               sessionId: active.processingState.sessionId,

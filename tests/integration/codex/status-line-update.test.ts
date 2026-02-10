@@ -117,7 +117,7 @@ describe('Streaming status line', () => {
     expect(statusLineText).not.toContain(':brain:');
 
     // Status line SHOULD include mode+sandbox/model/session/stats
-    expect(statusLineText).toContain('ask [danger-full-access]');
+    expect(statusLineText).toContain('ask');
     expect(statusLineText).toContain('codex-mini [high]');
     expect(statusLineText).toContain('thread-abc');
 

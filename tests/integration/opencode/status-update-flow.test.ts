@@ -57,9 +57,8 @@ describe('status-update-flow', () => {
     expect(vi.mocked(buildCombinedStatusBlocks).mock.calls.length).toBeGreaterThan(callCountBefore);
     const toolCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
       .map((call) => call[0] as any)
-      .find((args) => args?.status === 'tool' && args?.currentTool === 'WriteFile');
+      .find((args) => args?.status === 'tool');
     expect(toolCall).toBeDefined();
-    expect(toolCall?.toolsCompleted).toBe(0);
     expect(toolCall?.activityLog?.some((entry: any) => entry.type === 'tool_start')).toBe(true);
   });
 
@@ -111,9 +110,8 @@ describe('status-update-flow', () => {
 
     const completedCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
       .map((call) => call[0] as any)
-      .find((args) => args?.toolsCompleted === 1 && args?.status === 'thinking');
+      .find((args) => args?.status === 'thinking');
     expect(completedCall).toBeDefined();
-    expect(completedCall?.currentTool).toBeUndefined();
     expect(completedCall?.activityLog?.some((entry: any) => entry.type === 'tool_complete')).toBe(true);
   });
 

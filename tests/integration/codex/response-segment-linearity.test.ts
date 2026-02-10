@@ -106,7 +106,7 @@ describe('response segment posting linearity', () => {
     const activityText = latestUpdate?.blocks?.[0]?.text?.text || '';
 
     // Streaming response line is shown during generation.
-    expect(activityText).toContain(':speech_balloon:');
+    expect(activityText).toContain(':pencil:');
     expect(activityText).toContain('Response');
 
     codex.emit('turn:completed', { threadId: context.threadId, turnId: context.turnId, status: 'completed' });
@@ -116,7 +116,7 @@ describe('response segment posting linearity', () => {
     const finalUpdate = finalUpdateCalls[finalUpdateCalls.length - 1]?.[0];
     const finalActivityText = finalUpdate?.blocks?.[0]?.text?.text || '';
 
-    expect(finalActivityText).toContain(':speech_balloon:');
+    expect(finalActivityText).toContain(':pencil:');
     expect(finalActivityText).toContain('|Response>');
 
     streaming.stopStreaming(key);

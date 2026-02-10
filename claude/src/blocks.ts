@@ -9,6 +9,7 @@ import { MESSAGE_SIZE_DEFAULT } from './commands.js';
 import {
   markdownToSlack,
   formatTokensK,
+  formatTokenCount,
   computeAutoCompactThreshold,
   DEFAULT_EFFECTIVE_MAX_OUTPUT_TOKENS,
   COMPACT_BUFFER,
@@ -22,18 +23,33 @@ import {
   truncatePath,
   truncateText,
   truncateUrl,
+  buildUnifiedStatusLine,
+  buildActivityLogText,
+  buildCombinedStatusBlocks,
+  linkifyActivityLabel,
+  formatToolResultSummary,
+  ACTIVITY_LOG_MAX_CHARS,
   type Block,
   type TodoItem,
-  type BaseActivityEntry,
+  type ActivityEntry,
+  type StatusLineParams,
+  type CombinedStatusParams,
 } from 'caia-slack';
 
 // Re-export shared types, constants, builders, and formatters for backwards compatibility
-export type { Block } from 'caia-slack';
+export type { Block, ActivityEntry, StatusLineParams, CombinedStatusParams } from 'caia-slack';
 export {
   DEFAULT_CONTEXT_WINDOW,
   buildPathSetupBlocks,
   formatThreadStartingMessage,
   formatThreadErrorMessage,
+  buildUnifiedStatusLine,
+  buildActivityLogText,
+  buildCombinedStatusBlocks,
+  linkifyActivityLabel,
+  formatToolResultSummary,
+  ACTIVITY_LOG_MAX_CHARS,
+  formatTokenCount,
 } from 'caia-slack';
 
 export interface StatusBlockParams {
@@ -1013,70 +1029,8 @@ export function buildAbortConfirmationModalView(params: {
 // Real-Time Processing Feedback Blocks
 // ============================================================================
 
-// Activity entry type (mirrors session-manager.ts)
-export interface ActivityEntry {
-  timestamp: number;
-  type: 'starting' | 'thinking' | 'tool_start' | 'tool_complete' | 'error' | 'generating' | 'aborted' | 'mode_changed' | 'context_cleared' | 'session_changed';
-  tool?: string;
-  durationMs?: number;
-  message?: string;
-  thinkingContent?: string;
-  thinkingTruncated?: string;
-  thinkingInProgress?: boolean; // True while thinking is streaming (for rolling window)
-  // For generating (text streaming)
-  generatingChunks?: number;    // Number of text chunks received
-  generatingChars?: number;     // Total characters generated
-  generatingInProgress?: boolean; // True while text is streaming
-  generatingContent?: string;   // Full response text (stored for modal/download)
-  generatingTruncated?: string; // First 500 chars (for live display)
-  // Tool input (populated at content_block_stop)
-  toolInput?: Record<string, unknown>;
-  toolUseId?: string;           // For matching with tool_result
-  // Result metrics (populated when user message with tool_result arrives)
-  lineCount?: number;           // Read/Write: lines in result/content
-  matchCount?: number;          // Grep/Glob: number of matches/files
-  linesAdded?: number;          // Edit: lines in new_string
-  linesRemoved?: number;        // Edit: lines in old_string
-  // Execution timing (for accurate duration display)
-  toolCompleteTimestamp?: number;    // When content_block_stop fired
-  toolResultTimestamp?: number;      // When tool_result arrived
-  executionDurationMs?: number;      // Actual execution time
-  // Tool output (populated when tool_result arrives)
-  toolOutput?: string;               // Full output (up to 50KB)
-  toolOutputPreview?: string;        // First 300 chars for display
-  toolOutputTruncated?: boolean;     // True if output was truncated
-  toolIsError?: boolean;             // True if tool returned error
-  toolErrorMessage?: string;         // Error message if failed
-  mode?: string;                     // For mode_changed entries
-  previousSessionId?: string;        // For session_changed entries
-  // Thread message linking (for clickable activity in main status)
-  threadMessageTs?: string;          // Slack ts of thread message for this activity
-  threadMessageLink?: string;        // Permalink URL to thread message
-}
-
-// Constants for activity log display
-const THINKING_TRUNCATE_LENGTH = 500;
-const MAX_LIVE_ENTRIES = 300;
-const ROLLING_WINDOW_SIZE = 20;
-export const ACTIVITY_LOG_MAX_CHARS = 1000; // Reduced from 2000 for cleaner display
 // Re-export TODO_LIST_MAX_CHARS for backwards compatibility
 export { TODO_LIST_MAX_CHARS } from 'caia-slack';
-
-/**
- * Escape pipe characters in link labels to prevent Slack mrkdwn parsing issues.
- */
-function escapeLinkLabel(label: string): string {
-  return label.replace(/\|/g, '¦');
-}
-
-/**
- * Wrap an activity label with a clickable link to its thread message.
- * If no link is provided, returns the label unchanged.
- */
-export function linkifyActivityLabel(label: string, link?: string): string {
-  if (!link) return label;
-  return `<${link}|${escapeLinkLabel(label)}>`;
-}
 
 // Re-export todo functions for backwards compatibility
 export { isTodoItem, extractLatestTodos, formatTodoListDisplay, type TodoItem } from 'caia-slack';
@@ -1107,22 +1061,7 @@ export interface StatusPanelParams {
 // Re-export tool formatting functions for backwards compatibility
 export { getToolEmoji, formatToolName, formatToolInputSummary } from 'caia-slack';
 
-/**
- * Format result metrics as inline summary for main channel display.
- * Shows line counts, match counts, or edit diff depending on tool type.
- */
-export function formatToolResultSummary(entry: ActivityEntry): string {
-  if (entry.matchCount !== undefined) {
-    return ` → ${entry.matchCount} ${entry.matchCount === 1 ? 'match' : 'matches'}`;
-  }
-  if (entry.lineCount !== undefined) {
-    return ` (${entry.lineCount} lines)`;
-  }
-  if (entry.linesAdded !== undefined || entry.linesRemoved !== undefined) {
-    return ` (+${entry.linesAdded || 0}/-${entry.linesRemoved || 0})`;
-  }
-  return '';
-}
+// formatToolResultSummary re-exported from caia-slack at top of file
 
 /**
  * Format tool details as bullet points for thread display.
@@ -1465,537 +1404,14 @@ export function buildStatusPanelBlocks(params: StatusPanelParams): Block[] {
   return blocks;
 }
 
-/**
- * Parameters for combined status blocks (activity log + status panel).
- */
-export interface CombinedStatusParams extends StatusPanelParams {
-  activityLog: ActivityEntry[];
-  inProgress: boolean;
-  sessionId?: string;  // Current session ID (n/a initially)
-  isNewSession?: boolean;  // Show [new] prefix in TOP line
-  isFinalSegment?: boolean;  // Show Fork button on completion
-  forkInfo?: { threadTs?: string; conversationKey: string; sdkMessageId?: string; sessionId?: string };  // For Fork button
-  hasFailedUpload?: boolean;  // Show retry button when upload failed
-  retryUploadInfo?: {
-    activityLogKey: string;   // Key for activity log lookup - NOT conversationKey
-    channelId: string;
-    threadTs?: string;        // Explicit threadTs for thread/channel parity
-    statusMsgTs: string;
-  };
-  // User mention for completion notifications (skip in DMs)
-  userId?: string;
-  mentionChannelId?: string;  // Channel ID to check for DM (starts with 'D')
-}
+// CombinedStatusParams re-exported from caia-slack at top of file
 
-// SDK mode labels for UNIFIED display (maps to UnifiedMode: 'plan' | 'ask' | 'bypass')
-// Per unified UX plan: default->ask, bypassPermissions->bypass
-const MODE_LABELS: Record<PermissionMode, string> = {
-  plan: 'plan',
-  default: 'ask',
-  bypassPermissions: 'bypass',
-};
+// MODE_LABELS and formatTokenCount now imported from caia-slack
 
-/**
- * Format token count with K suffix for readability.
- */
-function formatTokenCount(count: number): string {
-  if (count >= 1000) {
-    return `${(count / 1000).toFixed(1)}k`;
-  }
-  return count.toString();
-}
+// buildUnifiedStatusLine re-exported from caia-slack at top of file
 
-/**
- * Build unified status line - progressive display as info becomes available.
- * Always shows mode | model | session, stats appended only at completion.
- *
- * @param mode - Permission mode
- * @param model - Model name (e.g., "claude-sonnet-4") or undefined
- * @param sessionId - Session ID or undefined
- * @param isNewSession - Show [new] prefix if true
- * @param contextPercent - Context usage percentage (completion only)
- * @param compactPercent - Percent remaining until auto-compact (completion only)
- * @param inputTokens - Input token count (completion only)
- * @param outputTokens - Output token count (completion only)
- * @param cost - Cost in USD (completion only)
- * @param durationMs - Duration in milliseconds (completion only)
- * @param rateLimitHits - Number of rate limits encountered
- * @returns Formatted string like "_plan | claude-sonnet-4 | abc123 | 43.7% ctx (43.6% 67.5k tok to ⚡) | 1.5k/800 | $0.05 | 5.0s_"
- */
-export function buildUnifiedStatusLine(
-  mode: PermissionMode,
-  model?: string,
-  sessionId?: string,
-  isNewSession?: boolean,
-  contextPercent?: number,
-  compactPercent?: number,
-  tokensToCompact?: number,
-  inputTokens?: number,
-  outputTokens?: number,
-  cost?: number,
-  durationMs?: number,
-  rateLimitHits?: number
-): string {
-  const modeLabel = MODE_LABELS[mode] || mode;
-  const parts: string[] = [modeLabel];
+// buildCombinedStatusBlocks and buildActivityLogText re-exported from caia-slack at top of file
 
-  // Model - always show, n/a if not available
-  parts.push(model || 'n/a');
-
-  // Session ID - always show, n/a if not available
-  let sessionStr = sessionId || 'n/a';
-  if (sessionId && isNewSession) {
-    sessionStr = `[new] ${sessionId}`;
-  }
-  parts.push(sessionStr);
-
-  // Stats - only if available (completion state)
-  // Context % with compact info
-  if (contextPercent !== undefined) {
-    if (compactPercent !== undefined && tokensToCompact !== undefined) {
-      parts.push(`${contextPercent.toFixed(1)}% ctx (${compactPercent.toFixed(1)}% ${formatTokensK(tokensToCompact)} tok to ⚡)`);
-    } else if (compactPercent !== undefined) {
-      parts.push(`${contextPercent.toFixed(1)}% ctx (${compactPercent.toFixed(1)}% to ⚡)`);
-    } else {
-      parts.push(`${contextPercent.toFixed(1)}% ctx`);
-    }
-  }
-
-  // Tokens: input/output format
-  if (inputTokens !== undefined || outputTokens !== undefined) {
-    const inStr = formatTokenCount(inputTokens || 0);
-    const outStr = formatTokenCount(outputTokens || 0);
-    parts.push(`${inStr}/${outStr}`);
-  }
-
-  // Cost
-  if (cost !== undefined) {
-    parts.push(`$${cost.toFixed(2)}`);
-  }
-
-  // Duration
-  if (durationMs !== undefined) {
-    parts.push(`${(durationMs / 1000).toFixed(1)}s`);
-  }
-
-  // Rate limit warning suffix (appended at end when > 0)
-  if (rateLimitHits && rateLimitHits > 0) {
-    parts.push(`:warning: ${rateLimitHits} limits`);
-  }
-
-  // Split into two lines: line 1 = mode | model | session, line 2 = stats
-  const line1Parts = parts.slice(0, 3);  // mode, model, session
-  const line2Parts = parts.slice(3);     // stats (context, tokens, cost, duration, rate limits)
-
-  if (line2Parts.length === 0) {
-    return `_${line1Parts.join(' | ')}_`;
-  }
-  return `_${line1Parts.join(' | ')}_\n_${line2Parts.join(' | ')}_`;
-}
-
-/**
- * Build combined status blocks (activity log + status panel in single message).
- *
- * Unified layout:
- * - Activity log section
- * - Spinner + elapsed (in-progress only)
- * - Unified status line (always above button)
- * - Button: [Abort] during in-progress, [Fork here] on completion
- */
-export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[] {
-  const {
-    activityLog,
-    inProgress,
-    status,
-    mode,
-    model,
-    elapsedMs,
-    inputTokens,
-    outputTokens,
-    contextPercent,
-    compactPercent,
-    tokensToCompact,
-    costUsd,
-    conversationKey,
-    errorMessage,
-    spinner,
-    rateLimitHits,
-    customStatus,
-    sessionId,
-    isNewSession,
-    isFinalSegment,
-    forkInfo,
-    hasFailedUpload,
-    retryUploadInfo,
-    userId,
-    mentionChannelId,
-  } = params;
-
-  // Build user mention for completion notifications (skip in DMs)
-  const userMention = (userId && mentionChannelId && !mentionChannelId.startsWith('D'))
-    ? `<@${userId}> `
-    : '';
-
-  const blocks: Block[] = [];
-
-  // Format elapsed time
-  const elapsedSec = (elapsedMs / 1000).toFixed(1);
-
-  // 0. Todo section - FIRST if todos exist
-  const todos = extractLatestTodos(activityLog);
-  const todoText = formatTodoListDisplay(todos, TODO_LIST_MAX_CHARS);
-  if (todoText) {
-    blocks.push({
-      type: 'section',
-      text: { type: 'mrkdwn', text: todoText },
-      expand: true,
-    } as Block);
-    blocks.push({ type: 'divider' } as Block);
-  }
-
-  // 1. Activity log section
-  const activityText = buildActivityLogText(activityLog, inProgress, ACTIVITY_LOG_MAX_CHARS);
-  blocks.push({
-    type: 'section',
-    text: { type: 'mrkdwn', text: activityText },
-    expand: true,
-  } as Block);
-
-  // Determine if in-progress vs terminal state
-  const isInProgressStatus = ['starting', 'thinking', 'tool', 'generating'].includes(status);
-
-  if (isInProgressStatus) {
-    // 2. Spinner (context) - in-progress only
-    blocks.push({
-      type: 'context',
-      elements: [{
-        type: 'mrkdwn',
-        text: `${spinner || '⠋'} [${elapsedSec}s]`,
-      }],
-    });
-
-    // 3. Unified status line (context) - progressive display, rate limits included
-    blocks.push({
-      type: 'context',
-      elements: [{
-        type: 'mrkdwn',
-        text: buildUnifiedStatusLine(
-          mode,
-          model,
-          sessionId,
-          isNewSession,
-          contextPercent,    // live context% from per-turn data + session.lastUsage fallback
-          compactPercent,    // live % remaining to auto-compact
-          tokensToCompact,   // live tokens remaining to auto-compact
-          undefined,  // no inputTokens during in-progress
-          undefined,  // no outputTokens during in-progress
-          undefined,  // no cost during in-progress
-          undefined,  // no duration during in-progress
-          rateLimitHits
-        ),
-      }],
-    });
-
-    // 4. Actions: [Abort]
-    blocks.push({
-      type: 'actions',
-      block_id: `status_panel_${conversationKey}`,
-      elements: [
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: 'Abort' },
-          style: 'danger',
-          action_id: `abort_query_${conversationKey}`,
-        },
-      ],
-    });
-  } else {
-    // Terminal states: complete, aborted, error
-
-    // Check if we have stats
-    const hasStats = contextPercent !== undefined ||
-                     inputTokens !== undefined ||
-                     outputTokens !== undefined ||
-                     costUsd !== undefined;
-
-    // 2. Completion header with user mention (triggers Slack notification)
-    if (status === 'complete' && userMention) {
-      blocks.push({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `${userMention}:white_check_mark: *Complete*`,
-        },
-      });
-    }
-
-    // 3. Unified status line (context) - ALWAYS above button
-    if (status === 'complete' || status === 'aborted' || (status === 'error' && hasStats)) {
-      blocks.push({
-        type: 'context',
-        elements: [{
-          type: 'mrkdwn',
-          text: buildUnifiedStatusLine(
-            mode,
-            model,
-            sessionId,
-            isNewSession,
-            contextPercent,
-            compactPercent,
-            tokensToCompact,
-            inputTokens,
-            outputTokens,
-            costUsd,
-            elapsedMs,
-            rateLimitHits
-          ),
-        }],
-      });
-    } else if (status === 'error') {
-      // Error without stats - show error message in context
-      blocks.push({
-        type: 'context',
-        elements: [{
-          type: 'mrkdwn',
-          text: `_:x: ${customStatus || errorMessage || 'Unknown error'}_`,
-        }],
-      });
-    }
-
-    // 3. Actions: [Fork here] and/or [Generate Output] on completion
-    const actionElements: any[] = [];
-
-    // Fork button only on final segment (for BOTH thread AND main channel)
-    if (isFinalSegment && forkInfo && status === 'complete') {
-      actionElements.push({
-        type: 'button',
-        text: {
-          type: 'plain_text',
-          text: ':twisted_rightwards_arrows: Fork here',
-          emoji: true,
-        },
-        action_id: `fork_here_${forkInfo.conversationKey}`,
-        value: JSON.stringify({
-          threadTs: forkInfo.threadTs,
-          sdkMessageId: forkInfo.sdkMessageId,
-          sessionId: forkInfo.sessionId,
-        }),
-      });
-    }
-
-    // Generate Output button when upload failed (retry mechanism)
-    if (hasFailedUpload && retryUploadInfo && status === 'complete') {
-      actionElements.push({
-        type: 'button',
-        text: {
-          type: 'plain_text',
-          text: ':page_facing_up: Generate Output',
-          emoji: true,
-        },
-        action_id: `retry_upload_${retryUploadInfo.statusMsgTs}`,
-        value: JSON.stringify(retryUploadInfo),
-      });
-    }
-
-    // Only add actions block if there are buttons to show
-    if (actionElements.length > 0) {
-      blocks.push({
-        type: 'actions',
-        block_id: `status_panel_${conversationKey}`,
-        elements: actionElements,
-      });
-    }
-  }
-
-  return blocks;
-}
-
-
-/**
- * Build activity log text for live display (during processing).
- * Uses rolling window if too many entries.
- * @param maxChars - Maximum characters for output (truncates from start if exceeded)
- */
-export function buildActivityLogText(entries: ActivityEntry[], inProgress: boolean, maxChars: number = Infinity): string {
-  // Apply rolling window if too many entries
-  const displayEntries = entries.length > MAX_LIVE_ENTRIES
-    ? entries.slice(-ROLLING_WINDOW_SIZE)
-    : entries;
-
-  const lines: string[] = [];
-
-  // Show truncation notice if in rolling window mode
-  if (entries.length > MAX_LIVE_ENTRIES) {
-    const hiddenCount = entries.length - ROLLING_WINDOW_SIZE;
-    lines.push(`_... ${hiddenCount} earlier entries (see full log after completion) ..._\n`);
-  }
-
-  // Build set of completed tools to avoid showing both start and complete
-  const completedTools = new Set<string>();
-  for (const entry of displayEntries) {
-    if (entry.type === 'tool_complete' && entry.tool) {
-      completedTools.add(entry.tool);
-    }
-  }
-
-  for (const entry of displayEntries) {
-    const link = entry.threadMessageLink;
-    switch (entry.type) {
-      case 'starting': {
-        const label = linkifyActivityLabel('Analyzing request...', link);
-        lines.push(`:brain: *${label}*`);
-        break;
-      }
-      case 'thinking': {
-        // Show thinking content - rolling window for in-progress, truncated for complete
-        const thinkingText = entry.thinkingTruncated || entry.thinkingContent || '';
-        const charCount = entry.thinkingContent?.length || thinkingText.length;
-        const thinkingDuration = entry.durationMs
-          ? ` [${(entry.durationMs / 1000).toFixed(1)}s]`
-          : '';
-
-        if (entry.thinkingInProgress) {
-          // In-progress: show "Thinking..." with rolling window of latest content
-          const charIndicator = charCount > 0 ? ` _[${charCount} chars]_` : '';
-          const label = linkifyActivityLabel('Thinking...', link);
-          lines.push(`:brain: *${label}*${thinkingDuration}${charIndicator}`);
-          if (thinkingText) {
-            // Rolling window: thinkingTruncated contains last 500 chars with "..." prefix
-            // Show up to 300 chars for live display to keep it readable
-            const displayText = thinkingText.replace(/\n/g, ' ').trim();
-            const preview = displayText.length > 300
-              ? displayText.substring(displayText.length - 300)
-              : displayText;
-            if (preview) {
-              // Add "..." prefix if this is a rolling window (starts with "...")
-              const prefix = thinkingText.startsWith('...') && !preview.startsWith('...') ? '...' : '';
-              lines.push(`> ${prefix}${preview}`);
-            }
-          }
-        } else {
-          // Completed: show final summary with last 500 chars (conclusion)
-          const truncatedIndicator = charCount > THINKING_TRUNCATE_LENGTH
-            ? ` _[${charCount} chars]_`
-            : '';
-          const label = linkifyActivityLabel('Thinking', link);
-          lines.push(`:brain: *${label}*${thinkingDuration}${truncatedIndicator}`);
-          if (thinkingText) {
-            // Show last 500 chars of thinking (thinkingTruncated already contains last 500 with "..." prefix)
-            const displayText = thinkingText.replace(/\n/g, ' ').trim();
-            const preview = displayText.length > THINKING_TRUNCATE_LENGTH
-              ? '...' + displayText.substring(displayText.length - THINKING_TRUNCATE_LENGTH)
-              : displayText;
-            if (preview) {
-              lines.push(`> ${preview}`);
-            }
-          }
-        }
-        break;
-      }
-      case 'tool_start': {
-        // Only show tool_start if tool hasn't completed yet (in progress)
-        if (!completedTools.has(entry.tool || '')) {
-          const startEmoji = getToolEmoji(entry.tool);
-          const startInputSummary = formatToolInputSummary(entry.tool || '', entry.toolInput);
-          const toolLabel = linkifyActivityLabel(formatToolName(entry.tool || 'Unknown'), link);
-          lines.push(`${startEmoji} *${toolLabel}*${startInputSummary} [in progress]`);
-        }
-        break;
-      }
-      case 'tool_complete': {
-        // Show completed tool with checkmark, input summary, result metrics, output hint, and duration
-        const tcInputSummary = formatToolInputSummary(entry.tool || '', entry.toolInput);
-        const resultSummary = formatToolResultSummary(entry);
-        const tcDuration = entry.durationMs ? ` [${(entry.durationMs / 1000).toFixed(1)}s]` : '';
-        const errorFlag = entry.toolIsError ? ' :warning:' : '';
-        // Add compact output hint for main channel (first 50 chars)
-        const outputHint = (!entry.toolIsError && entry.toolOutputPreview)
-          ? ` → \`${entry.toolOutputPreview.replace(/\s+/g, ' ').slice(0, 50)}${entry.toolOutputPreview.length > 50 ? '...' : ''}\``
-          : '';
-        const toolLabel = linkifyActivityLabel(formatToolName(entry.tool || 'Unknown'), link);
-        lines.push(`:white_check_mark: *${toolLabel}*${tcInputSummary}${resultSummary}${outputHint}${tcDuration}${errorFlag}`);
-        break;
-      }
-      case 'error': {
-        const label = linkifyActivityLabel('Error', link);
-        lines.push(`:x: ${label}: ${entry.message}`);
-        break;
-      }
-      case 'generating': {
-        // Show text generation progress with optional content preview
-        const responseText = entry.generatingTruncated || entry.generatingContent || '';
-        const responseCharCount = entry.generatingContent?.length || entry.generatingChars || responseText.length;
-        const genDuration = entry.durationMs ? ` [${(entry.durationMs / 1000).toFixed(1)}s]` : '';
-        const charInfo = responseCharCount > 0 ? ` _[${responseCharCount.toLocaleString()} chars]_` : '';
-
-        if (entry.generatingInProgress) {
-          const label = linkifyActivityLabel('Generating...', link);
-          lines.push(`:pencil: *${label}*${genDuration}${charInfo}`);
-          if (responseText) {
-            // Show preview of response (up to 300 chars)
-            const displayText = responseText.replace(/\n/g, ' ').trim();
-            const preview = displayText.length > 300
-              ? displayText.substring(0, 300) + '...'
-              : displayText;
-            if (preview) {
-              lines.push(`> ${preview}`);
-            }
-          }
-        } else {
-          const label = linkifyActivityLabel('Response', link);
-          lines.push(`:pencil: *${label}*${genDuration}${charInfo}`);
-          if (responseText) {
-            // Show preview of completed response (first 300 chars)
-            const displayText = responseText.replace(/\n/g, ' ').trim();
-            const preview = displayText.length > 300
-              ? displayText.substring(0, 300) + '...'
-              : displayText;
-            if (preview) {
-              lines.push(`> ${preview}`);
-            }
-          }
-        }
-        break;
-      }
-      case 'mode_changed':
-        lines.push(`:gear: Mode changed to *${entry.mode}*`);
-        break;
-      case 'context_cleared':
-        lines.push('────── Context Cleared ──────');
-        break;
-      case 'session_changed':
-        if (entry.previousSessionId) {
-          lines.push(`:bookmark: Previous session: \`${entry.previousSessionId}\``);
-        }
-        break;
-      case 'aborted': {
-        const label = linkifyActivityLabel('Aborted by user', link);
-        lines.push(`:octagonal_sign: *${label}*`);
-        break;
-      }
-    }
-  }
-
-  // Fallback only if no entries at all (shouldn't happen with starting entry)
-  if (lines.length === 0) {
-    lines.push(':brain: Analyzing request...');
-  }
-
-  let result = lines.join('\n');
-
-  // Truncate from start if exceeds maxChars (keep most recent)
-  if (result.length > maxChars) {
-    const excess = result.length - maxChars + 50; // Room for "..." prefix
-    const breakPoint = result.indexOf('\n', excess);
-    if (breakPoint > 0) {
-      result = '...\n' + result.substring(breakPoint + 1);
-    } else {
-      result = '...' + result.substring(result.length - maxChars + 3);
-    }
-  }
-
-  return result;
-}
 
 
 /**

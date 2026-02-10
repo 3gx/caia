@@ -46,11 +46,13 @@ import {
   markAborted as markAbortedEmoji,
 } from './emoji-reactions.js';
 import { isAborted, clearAborted } from './abort-tracker.js';
-import { saveSession, saveThreadSession, getThreadSession, getSession, LastUsage } from './session-manager.js';
+import { saveSession, saveThreadSession, getThreadSession, getSession, getEffectiveWorkingDir, LastUsage } from './session-manager.js';
+import {
+  type ActivityEntry,
+  getToolEmoji,
+} from 'caia-slack';
 import {
   ActivityThreadManager,
-  ActivityEntry,
-  getToolEmoji,
   buildActivityLogText,
   flushActivityBatchToThread,
   updateThinkingEntryInThread,
@@ -2387,6 +2389,9 @@ export class StreamingManager {
 
       const threadTs = context.threadTs || context.originalTs;
 
+      // Resolve working directory for status line display
+      const workingDir = getEffectiveWorkingDir(context.channelId, context.threadTs);
+
       const blocks = buildActivityBlocks({
         activityText: activityText || ':gear: Starting...',
         status: state.status,
@@ -2399,6 +2404,7 @@ export class StreamingManager {
         sandboxMode: context.sandboxMode,
         autoApprove: context.autoApprove,
         sessionId: context.threadId,
+        workingDir,
         contextPercent,
         contextTokens: hasContextTokens ? contextTokensValue : undefined,
         contextWindow,

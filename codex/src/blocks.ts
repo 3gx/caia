@@ -8,8 +8,6 @@ import type { UnifiedMode } from '../../slack/dist/session/types.js';
 import {
   markdownToSlack,
   stripMarkdownCodeFence,
-  formatTokensK,
-  formatTokenCount,
   computeAutoCompactThreshold,
   getToolEmoji,
   formatToolName as sharedFormatToolName,
@@ -23,6 +21,7 @@ import {
   truncateText,
   truncateUrl,
   truncateWithClosedFormatting,
+  buildUnifiedStatusLine,
   type Block,
   type TodoItem,
 } from 'caia-slack';
@@ -35,6 +34,8 @@ export {
   formatThreadStartingMessage,
   formatThreadErrorMessage,
 } from 'caia-slack';
+// buildUnifiedStatusLine is imported above for local use and re-exported here for backward compat
+export { buildUnifiedStatusLine };
 
 // ============================================================================
 // Status Blocks
@@ -1188,92 +1189,8 @@ export function buildErrorBlocks(message: string): Block[] {
 // Re-export additional shared token functions for backwards compatibility
 export { computeAutoCompactThreshold, formatTokensK } from 'caia-slack';
 
-export interface UnifiedStatusLineParams {
-  mode: UnifiedMode;
-  model?: string;
-  reasoningEffort?: ReasoningEffort;
-  sandboxMode?: SandboxMode;
-  autoApprove?: boolean;
-  sessionId?: string;
-  contextPercent?: number;
-  contextTokens?: number;
-  contextWindow?: number;
-  // COMMENTED OUT: compactPercent and tokensToCompact use assumed values (COMPACT_BUFFER=13000,
-  // DEFAULT_EFFECTIVE_MAX_OUTPUT_TOKENS=32000) that Codex does NOT provide via API.
-  // Verified via test-token-fields.ts: Codex only sends model_context_window, not maxOutputTokens.
-  // Keep these fields in case Codex adds this info in the future.
-  compactPercent?: number;
-  tokensToCompact?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  costUsd?: number;
-  durationMs?: number;
-}
-
-/**
- * Build a unified status line showing mode, model, session, and stats.
- * Line 1: mode [sandbox] | model [reason] | session
- * Line 2: ctx | tokens | cost | duration (only when available)
- */
-export function buildUnifiedStatusLine(params: UnifiedStatusLineParams): string {
-  const line1Parts: string[] = [];
-  const line2Parts: string[] = [];
-
-  // Default to gpt-5.2-codex with xhigh reasoning when not explicitly set
-  const modelLabel = params.model || 'gpt-5.2-codex';
-  const reasoningLabel = params.reasoningEffort || 'xhigh';
-  const modelWithReasoning = `${modelLabel} [${reasoningLabel}]`;
-  const sandboxLabel = params.sandboxMode || 'danger-full-access';
-  const autoApproveEnabled = params.autoApprove === true && sandboxLabel !== 'danger-full-access';
-  const modeWithSandbox = `${params.mode} [${sandboxLabel}${autoApproveEnabled ? ', auto-approve' : ''}]`;
-  const sessionLabel = params.sessionId || 'n/a';
-
-  line1Parts.push(modeWithSandbox);
-  line1Parts.push(modelWithReasoning);
-  line1Parts.push(sessionLabel);
-
-  // Show context usage: "X% left, Y used / Z"
-  // Uses only verified data from Codex (contextWindow is sent via model_context_window)
-  if (params.contextPercent !== undefined && params.contextTokens !== undefined && params.contextWindow !== undefined) {
-    const percentLeft = (100 - params.contextPercent).toFixed(0);
-    const usedK = formatTokensK(params.contextTokens);
-    const windowK = formatTokensK(params.contextWindow);
-    line2Parts.push(`${percentLeft}% left, ${usedK} / ${windowK}`);
-  } else if (params.contextPercent !== undefined) {
-    line2Parts.push(`${params.contextPercent.toFixed(1)}% ctx`);
-  }
-
-  // COMMENTED OUT: Auto-compact threshold display uses assumed values that Codex does NOT provide.
-  // Verified via test-token-fields.ts: Codex only sends model_context_window, not maxOutputTokens.
-  // Keep this code in case Codex adds maxOutputTokens in the future.
-  // if (params.compactPercent !== undefined && params.tokensToCompact !== undefined) {
-  //   line2Parts.push(
-  //     `${params.contextPercent?.toFixed(1)}% ctx (${params.compactPercent.toFixed(1)}% ${formatTokensK(
-  //       params.tokensToCompact
-  //     )} tok to :zap:)`
-  //   );
-  // }
-
-  if (params.inputTokens !== undefined || params.outputTokens !== undefined) {
-    const inStr = formatTokenCount(params.inputTokens ?? 0);
-    const outStr = formatTokenCount(params.outputTokens ?? 0);
-    line2Parts.push(`${inStr}/${outStr}`);
-  }
-
-  if (params.costUsd !== undefined) {
-    line2Parts.push(`$${params.costUsd.toFixed(2)}`);
-  }
-
-  if (params.durationMs !== undefined) {
-    line2Parts.push(`${(params.durationMs / 1000).toFixed(1)}s`);
-  }
-
-  const line1 = `_${line1Parts.join(' | ')}_`;
-  if (line2Parts.length === 0) {
-    return line1;
-  }
-  return `${line1}\n_${line2Parts.join(' | ')}_`;
-}
+// UnifiedStatusLineParams kept as alias for backward compatibility with codex callers
+export type UnifiedStatusLineParams = import('caia-slack').StatusLineParams;
 
 // ============================================================================
 // Todo Extraction (simple, conservative)
@@ -1398,6 +1315,8 @@ export interface ActivityBlockParams {
   sandboxMode?: SandboxMode;
   autoApprove?: boolean;
   sessionId?: string;
+  /** Working directory for status line display */
+  workingDir?: string;
   contextPercent?: number;
   contextTokens?: number;
   contextWindow?: number;
@@ -1486,7 +1405,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
     });
   }
 
-  // Unified status line (mode | model | session [+ stats])
+  // Unified status line (mode | model | session [+ workingDir] [+ stats])
   const durationForStats = isRunning ? undefined : elapsedMs;
   blocks.push({
     type: 'context',
@@ -1500,6 +1419,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
           sandboxMode,
           autoApprove,
           sessionId,
+          workingDir: params.workingDir,
           contextPercent,
           contextTokens,
           contextWindow,
@@ -1507,7 +1427,7 @@ export function buildActivityBlocks(params: ActivityBlockParams): Block[] {
           tokensToCompact,
           inputTokens,
           outputTokens,
-          costUsd,
+          cost: costUsd,
           durationMs: durationForStats,
         }),
       },
@@ -1597,7 +1517,7 @@ export function buildAbortConfirmationModalView(params: AbortConfirmationModalPa
 // Thread Message Formatting (Ported from ccslack)
 // ============================================================================
 
-import type { ActivityEntry } from './activity-thread.js';
+import type { ActivityEntry } from 'caia-slack';
 
 // Re-export shared markdown and truncation functions for backwards compatibility
 export { stripMarkdownCodeFence, markdownToSlack, truncateWithClosedFormatting } from 'caia-slack';

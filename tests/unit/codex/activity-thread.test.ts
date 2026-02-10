@@ -307,7 +307,7 @@ describe('buildActivityLogText', () => {
 
     const text = buildActivityLogText(entries);
 
-    expect(text).toContain(':computer:');
+    expect(text).toContain(':white_check_mark:');
     expect(text).toContain('Bash');
     expect(text).toContain('`git status`'); // Command should be displayed in backticks
     expect(text).toContain('0.5s');
@@ -320,8 +320,7 @@ describe('buildActivityLogText', () => {
 
     const text = buildActivityLogText(entries);
 
-    expect(text).toContain(':computer:'); // Tool emoji, not checkmark
-    expect(text).not.toContain(':white_check_mark:');
+    expect(text).toContain(':white_check_mark:'); // Shared renderEntry uses checkmark for tool_complete
     expect(text).toContain('Bash');
     expect(text).toContain('2.5s');
   });
@@ -338,7 +337,7 @@ describe('buildActivityLogText', () => {
     const text = buildActivityLogText(entries);
 
     // Label should be bold and linked: *<url|label>*
-    expect(text).toContain(':brain: *<https://slack.com/archives/C123/p123456|Analyzing request>*...');
+    expect(text).toContain(':brain: *<https://slack.com/archives/C123/p123456|Analyzing request...>*');
     expect(text).not.toContain('<https://slack.com/archives/C123/p123456|:brain:');
   });
 
@@ -356,7 +355,7 @@ describe('buildActivityLogText', () => {
     const text = buildActivityLogText(entries);
 
     // Label should be bold and linked: *<url|label>*
-    expect(text).toContain(':computer: *<https://slack.com/archives/C123/p123456|Bash>*');
+    expect(text).toContain(':white_check_mark: *<https://slack.com/archives/C123/p123456|Bash>*');
   });
 
   it('includes thinking content preview when present', () => {
@@ -376,12 +375,12 @@ describe('buildActivityLogText', () => {
 
   it('formats generating entry with char count', () => {
     const entries: ActivityEntry[] = [
-      { type: 'generating', timestamp: Date.now(), charCount: 500 },
+      { type: 'generating', timestamp: Date.now(), generatingChars: 500 },
     ];
 
     const text = buildActivityLogText(entries);
 
-    expect(text).toContain(':speech_balloon:');
+    expect(text).toContain(':pencil:');
     expect(text).toContain('Response');
     expect(text).toContain('500');
   });
@@ -394,7 +393,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':brain: *Analyzing request*...');
+      expect(text).toContain(':brain: *Analyzing request...*');
     });
 
     it('formats starting entry with bold linked label', () => {
@@ -409,7 +408,7 @@ describe('buildActivityLogText', () => {
       const text = buildActivityLogText(entries);
 
       // Bold wraps the entire link: *<url|label>*
-      expect(text).toContain(':brain: *<https://slack.com/archives/C123/p123|Analyzing request>*...');
+      expect(text).toContain(':brain: *<https://slack.com/archives/C123/p123|Analyzing request...>*');
     });
 
     it('formats thinking entry with bold label', () => {
@@ -419,7 +418,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':brain: *Thinking*...');
+      expect(text).toContain(':brain: *Thinking*');
     });
 
     it('formats thinking entry with bold linked label', () => {
@@ -433,7 +432,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':brain: *<https://slack.com/archives/C123/p123|Thinking>*...');
+      expect(text).toContain(':brain: *<https://slack.com/archives/C123/p123|Thinking>*');
     });
 
     it('formats tool_start entry with bold label', () => {
@@ -471,7 +470,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':memo: *Edit*');
+      expect(text).toContain(':white_check_mark: *Edit*');
       expect(text).toContain('[1.5s]');
     });
 
@@ -488,7 +487,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':mag: *<https://slack.com/archives/C123/p123|Grep>*');
+      expect(text).toContain(':white_check_mark: *<https://slack.com/archives/C123/p123|Grep>*');
       expect(text).toContain('[0.8s]');
     });
 
@@ -499,7 +498,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':speech_balloon: *Response*');
+      expect(text).toContain(':pencil: *Response*');
     });
 
     it('formats generating entry with bold linked label', () => {
@@ -514,7 +513,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':speech_balloon: *<https://slack.com/archives/C123/p123|Response>*');
+      expect(text).toContain(':pencil: *<https://slack.com/archives/C123/p123|Response>*');
     });
 
     it('formats error entry with bold label', () => {
@@ -524,7 +523,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':x: *Error*');
+      expect(text).toContain(':x: Error:');
       expect(text).toContain('Something went wrong');
     });
 
@@ -540,7 +539,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':x: *<https://slack.com/archives/C123/p123|Error>*');
+      expect(text).toContain(':x: <https://slack.com/archives/C123/p123|Error>:');
     });
 
     it('formats aborted entry with bold label', () => {
@@ -550,7 +549,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':octagonal_sign: *Aborted* by user');
+      expect(text).toContain(':octagonal_sign: *Aborted by user*');
     });
 
     it('formats aborted entry with bold linked label', () => {
@@ -564,7 +563,7 @@ describe('buildActivityLogText', () => {
 
       const text = buildActivityLogText(entries);
 
-      expect(text).toContain(':octagonal_sign: *<https://slack.com/archives/C123/p123|Aborted>* by user');
+      expect(text).toContain(':octagonal_sign: *<https://slack.com/archives/C123/p123|Aborted by user>*');
     });
   });
 });

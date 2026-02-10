@@ -8,3 +8,4 @@ export * from './dm-notifications.js';
 export * from './session/index.js';
 export * from './formatting/index.js';
 export * from './blocks/index.js';
+export * from './activity-thread.js';

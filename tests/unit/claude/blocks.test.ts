@@ -1825,9 +1825,9 @@ describe('blocks', () => {
     it('should show simplified format: completed tools with checkmark, in-progress with emoji', () => {
       const entries: ActivityEntry[] = [
         { timestamp: Date.now(), type: 'starting' },
-        { timestamp: Date.now(), type: 'tool_start', tool: 'Read' },
-        { timestamp: Date.now(), type: 'tool_complete', tool: 'Read', durationMs: 200 },
-        { timestamp: Date.now(), type: 'tool_start', tool: 'Edit' },
+        { timestamp: Date.now(), type: 'tool_start', tool: 'Read', toolUseId: 'tu1' },
+        { timestamp: Date.now(), type: 'tool_complete', tool: 'Read', toolUseId: 'tu1', durationMs: 200 },
+        { timestamp: Date.now(), type: 'tool_start', tool: 'Edit', toolUseId: 'tu2' },
       ];
       const text = buildActivityLogText(entries, true);
       // Starting entry
@@ -1841,8 +1841,8 @@ describe('blocks', () => {
 
     it('should not show tool_start for completed tools', () => {
       const entries: ActivityEntry[] = [
-        { timestamp: Date.now(), type: 'tool_start', tool: 'Bash' },
-        { timestamp: Date.now(), type: 'tool_complete', tool: 'Bash', durationMs: 500 },
+        { timestamp: Date.now(), type: 'tool_start', tool: 'Bash', toolUseId: 'tu1' },
+        { timestamp: Date.now(), type: 'tool_complete', tool: 'Bash', toolUseId: 'tu1', durationMs: 500 },
       ];
       const text = buildActivityLogText(entries, true);
       // Should only show completed entry, not tool_start
@@ -2189,8 +2189,8 @@ describe('blocks', () => {
       expect(text).toContain('[2,000 chars]');
     });
 
-    it('should apply rolling window when entries exceed MAX_LIVE_ENTRIES', () => {
-      // Create 310 entries (> 300 MAX_LIVE_ENTRIES)
+    it('should apply tail window when entries exceed MAX_DISPLAY_ENTRIES', () => {
+      // Create 310 entries (> 20 MAX_DISPLAY_ENTRIES)
       const entries: ActivityEntry[] = [];
       for (let i = 0; i < 310; i++) {
         entries.push({ timestamp: Date.now(), type: 'tool_start', tool: `Tool${i}` });
@@ -2199,8 +2199,7 @@ describe('blocks', () => {
       const text = buildActivityLogText(entries, true);
       // Should show truncation notice
       expect(text).toContain('earlier entries');
-      expect(text).toContain('see full log');
-      // Should only show last ROLLING_WINDOW_SIZE (20) entries
+      // Should only show last MAX_DISPLAY_ENTRIES (20) entries
       expect(text).toContain('Tool309');
       expect(text).toContain('Tool290');
       expect(text).not.toContain('Tool0');
@@ -2556,9 +2555,9 @@ describe('blocks', () => {
       const activityLog: ActivityEntry[] = [];
 
       // Simulate multiple tool starts and completions
-      activityLog.push({ timestamp: 1000, type: 'tool_start', tool: 'Read' });
-      activityLog.push({ timestamp: 2000, type: 'tool_complete', tool: 'Read', durationMs: 700 });
-      activityLog.push({ timestamp: 3000, type: 'tool_start', tool: 'Edit' });
+      activityLog.push({ timestamp: 1000, type: 'tool_start', tool: 'Read', toolUseId: 'tu1' });
+      activityLog.push({ timestamp: 2000, type: 'tool_complete', tool: 'Read', toolUseId: 'tu1', durationMs: 700 });
+      activityLog.push({ timestamp: 3000, type: 'tool_start', tool: 'Edit', toolUseId: 'tu2' });
 
       const text = buildActivityLogText(activityLog, true);
 
@@ -2805,20 +2804,20 @@ describe('blocks', () => {
       expect(text.startsWith('...')).toBe(false);
     });
 
-    it('should truncate from start when exceeds maxChars', () => {
+    it('should use tail-window to fit within maxChars', () => {
       const entries: ActivityEntry[] = [];
       // Create enough entries to exceed 200 chars
       for (let i = 0; i < 20; i++) {
         entries.push({ timestamp: Date.now(), type: 'tool_complete', tool: `Tool${i}`, durationMs: 100 });
       }
       const text = buildActivityLogText(entries, true, 200);
-      // Should start with truncation indicator
-      expect(text.startsWith('...')).toBe(true);
+      // Should show "earlier entries" truncation notice
+      expect(text).toContain('earlier entries');
       // Should show most recent entries
       expect(text).toContain('Tool19');
     });
 
-    it('should truncate at newline boundary', () => {
+    it('should reduce window when entries exceed maxChars', () => {
       const entries: ActivityEntry[] = [
         { timestamp: Date.now(), type: 'starting' },
         { timestamp: Date.now(), type: 'tool_complete', tool: 'FirstTool', durationMs: 100 },
@@ -2827,20 +2826,23 @@ describe('blocks', () => {
         { timestamp: Date.now(), type: 'tool_complete', tool: 'FourthTool', durationMs: 100 },
       ];
       const text = buildActivityLogText(entries, true, 100);
-      // Should have "..." followed by newline when truncating at line boundary
-      expect(text.startsWith('...')).toBe(true);
+      // Should show "earlier entries" truncation notice or be within limit
+      expect(text.length).toBeLessThanOrEqual(100);
+      // Should show most recent entry
+      expect(text).toContain('FourthTool');
     });
 
     it('should default to unlimited when maxChars not provided', () => {
       const entries: ActivityEntry[] = [];
-      for (let i = 0; i < 50; i++) {
+      // Create entries within MAX_DISPLAY_ENTRIES (20) so all are shown
+      for (let i = 0; i < 15; i++) {
         entries.push({ timestamp: Date.now(), type: 'tool_complete', tool: `Tool${i}`, durationMs: 100 });
       }
       const text = buildActivityLogText(entries, true);
       // Should contain all entries without truncation
       expect(text).toContain('Tool0');
-      expect(text).toContain('Tool49');
-      expect(text.startsWith('...')).toBe(false);
+      expect(text).toContain('Tool14');
+      expect(text).not.toContain('earlier entries');
     });
 
     it('should respect ACTIVITY_LOG_MAX_CHARS constant', () => {
@@ -2853,7 +2855,6 @@ describe('blocks', () => {
     const baseParams = {
       status: 'starting' as const,
       mode: 'bypassPermissions' as const,
-      toolsCompleted: 0,
       elapsedMs: 0,
       conversationKey: 'C123_thread456',
       spinner: '◐',
@@ -3297,7 +3298,6 @@ describe('blocks', () => {
         status: 'complete' as const,
         mode: 'bypassPermissions' as const,
         conversationKey: 'C123_thread456',
-        toolsCompleted: 0,
         elapsedMs: 1000,
       };
 
@@ -3453,52 +3453,52 @@ describe('blocks', () => {
 
   describe('buildUnifiedStatusLine', () => {
     it('should format mode | model | sessionId', () => {
-      const line = buildUnifiedStatusLine('plan', 'claude-sonnet-4', 'abc123');
+      const line = buildUnifiedStatusLine({ mode: 'plan', model: 'claude-sonnet-4', sessionId: 'abc123' });
       expect(line).toBe('_plan | claude-sonnet-4 | abc123_');
     });
 
     it('should show n/a for missing values', () => {
-      const line = buildUnifiedStatusLine('plan');
+      const line = buildUnifiedStatusLine({ mode: 'plan' });
       expect(line).toBe('_plan | n/a | n/a_');
     });
 
     it('should show [new] prefix for new sessions', () => {
-      const line = buildUnifiedStatusLine('bypassPermissions', 'claude-opus-4', 'new-session', true);
+      const line = buildUnifiedStatusLine({ mode: 'bypassPermissions', model: 'claude-opus-4', sessionId: 'new-session', isNewSession: true });
       expect(line).toBe('_bypass | claude-opus-4 | [new] new-session_');
     });
 
     it('should not show [new] when isNewSession is false', () => {
-      const line = buildUnifiedStatusLine('default', 'claude-sonnet-4', 'existing', false);
+      const line = buildUnifiedStatusLine({ mode: 'default', model: 'claude-sonnet-4', sessionId: 'existing', isNewSession: false });
       expect(line).toBe('_ask | claude-sonnet-4 | existing_');
     });
 
     it('should format percentages with one decimal place', () => {
-      const line = buildUnifiedStatusLine(
-        'plan',
-        'claude-sonnet-4',
-        'session123',
-        false,
-        3,    // contextPercent - should become 3.0%
-        30,   // compactPercent - should become 30.0%
-      );
+      const line = buildUnifiedStatusLine({
+        mode: 'plan',
+        model: 'claude-sonnet-4',
+        sessionId: 'session123',
+        isNewSession: false,
+        contextPercent: 3,
+        compactPercent: 30,
+      });
       expect(line).toContain('3.0% ctx');
       expect(line).toContain('30.0% to ⚡');
     });
 
     it('should format all stats when available', () => {
-      const line = buildUnifiedStatusLine(
-        'plan',
-        'claude-sonnet-4',
-        'session123',
-        false,  // isNewSession
-        55,     // contextPercent
-        22,     // compactPercent
-        34100,  // tokensToCompact (34.1k)
-        1200,   // inputTokens
-        850,    // outputTokens
-        0.12,   // cost
-        15000,  // durationMs
-      );
+      const line = buildUnifiedStatusLine({
+        mode: 'plan',
+        model: 'claude-sonnet-4',
+        sessionId: 'session123',
+        isNewSession: false,
+        contextPercent: 55,
+        compactPercent: 22,
+        tokensToCompact: 34100,
+        inputTokens: 1200,
+        outputTokens: 850,
+        cost: 0.12,
+        durationMs: 15000,
+      });
       expect(line).toContain('plan');
       expect(line).toContain('claude-sonnet-4');
       expect(line).toContain('session123');
@@ -3509,32 +3509,34 @@ describe('blocks', () => {
     });
 
     it('should show just mode/model/session when no stats', () => {
-      const line = buildUnifiedStatusLine('bypassPermissions', 'claude-opus-4', 'sess-abc');
+      const line = buildUnifiedStatusLine({ mode: 'bypassPermissions', model: 'claude-opus-4', sessionId: 'sess-abc' });
       expect(line).toBe('_bypass | claude-opus-4 | sess-abc_');
     });
 
     it('should include rate limit warning as suffix', () => {
-      const line = buildUnifiedStatusLine(
-        'plan', 'claude-sonnet-4', 'session', false, 45, 30, 46500, 1000, 500, 0.05, 5000, 3
-      );
+      const line = buildUnifiedStatusLine({
+        mode: 'plan', model: 'claude-sonnet-4', sessionId: 'session', isNewSession: false,
+        contextPercent: 45, compactPercent: 30, tokensToCompact: 46500,
+        inputTokens: 1000, outputTokens: 500, cost: 0.05, durationMs: 5000, rateLimitHits: 3,
+      });
       expect(line).toContain(':warning: 3 limits');
     });
 
     it('should show rate limits in-progress (no stats, just limits)', () => {
-      const line = buildUnifiedStatusLine(
-        'plan', 'claude-sonnet-4', 'session', false,
-        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-        2
-      );
+      const line = buildUnifiedStatusLine({
+        mode: 'plan', model: 'claude-sonnet-4', sessionId: 'session', isNewSession: false,
+        rateLimitHits: 2,
+      });
       // Rate limits go on second line since they're part of stats
       expect(line).toBe('_plan | claude-sonnet-4 | session_\n_:warning: 2 limits_');
     });
 
     it('should show completion stats with rate limits', () => {
-      const line = buildUnifiedStatusLine(
-        'plan', 'claude-sonnet-4', 'session', false,
-        45, 30, 46500, 1500, 800, 0.05, 5000, 3
-      );
+      const line = buildUnifiedStatusLine({
+        mode: 'plan', model: 'claude-sonnet-4', sessionId: 'session', isNewSession: false,
+        contextPercent: 45, compactPercent: 30, tokensToCompact: 46500,
+        inputTokens: 1500, outputTokens: 800, cost: 0.05, durationMs: 5000, rateLimitHits: 3,
+      });
       expect(line).toContain('45.0% ctx (30.0% 46.5k tok to ⚡)');
       expect(line).toContain('1.5k/800');
       expect(line).toContain('$0.05');
@@ -3544,15 +3546,15 @@ describe('blocks', () => {
 
     it('should display compactPercent as-is for positive, zero, or negative values', () => {
       // Positive compactPercent
-      const linePos = buildUnifiedStatusLine('plan', 'claude-sonnet-4', 'session', false, 45, 30);
+      const linePos = buildUnifiedStatusLine({ mode: 'plan', model: 'claude-sonnet-4', sessionId: 'session', isNewSession: false, contextPercent: 45, compactPercent: 30 });
       expect(linePos).toContain('45.0% ctx (30.0% to ⚡)');
 
       // Zero compactPercent
-      const lineZero = buildUnifiedStatusLine('plan', 'claude-sonnet-4', 'session', false, 80, 0);
+      const lineZero = buildUnifiedStatusLine({ mode: 'plan', model: 'claude-sonnet-4', sessionId: 'session', isNewSession: false, contextPercent: 80, compactPercent: 0 });
       expect(lineZero).toContain('80.0% ctx (0.0% to ⚡)');
 
       // Negative compactPercent
-      const lineNeg = buildUnifiedStatusLine('plan', 'claude-sonnet-4', 'session', false, 80, -5);
+      const lineNeg = buildUnifiedStatusLine({ mode: 'plan', model: 'claude-sonnet-4', sessionId: 'session', isNewSession: false, contextPercent: 80, compactPercent: -5 });
       expect(lineNeg).toContain('80.0% ctx (-5.0% to ⚡)');
     });
   });

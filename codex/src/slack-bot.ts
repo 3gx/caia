@@ -66,7 +66,8 @@ import { markAborted } from './abort-tracker.js';
 import { evaluateFileProcessing } from '../../slack/dist/file-guard.js';
 import { processSlackFiles, SlackFile, writeTempFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
-import { uploadFilesToThread, uploadMarkdownAndPngWithResponse, getMessagePermalink, type ActivityEntry } from './activity-thread.js';
+import type { ActivityEntry } from 'caia-slack';
+import { uploadFilesToThread, uploadMarkdownAndPngWithResponse, getMessagePermalink } from './activity-thread.js';
 import { THINKING_MESSAGE_SIZE } from './commands.js';
 
 // ============================================================================
@@ -1433,6 +1434,7 @@ async function handleUserMessage(
       sandboxMode: effectiveSandbox,
       autoApprove: effectiveAutoApprove,
       sessionId: threadId,
+      workingDir,
       spinner: '\u25D0',
     }),
     text: 'Starting...',

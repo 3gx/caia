@@ -212,13 +212,13 @@ describe('Activity Thread Consistency', () => {
 
       const entries: ActivityEntry[] = [
         { type: 'starting', timestamp: 1 },
-        { type: 'generating', timestamp: 2, charCount: 500 },
+        { type: 'generating', timestamp: 2, generatingChars: 500 },
       ];
 
       const activityText = buildActivityLogText(entries);
 
       // Must show generating entry with char count
-      expect(activityText).toContain(':speech_balloon:');
+      expect(activityText).toContain(':pencil:');
       expect(activityText).toContain('Response');
       expect(activityText).toContain('[500 chars]');
     });
@@ -235,13 +235,13 @@ describe('Activity Thread Consistency', () => {
 
       const entries: ActivityEntry[] = [
         { type: 'starting', timestamp: 1 },
-        { type: 'generating', timestamp: 2, charCount: 54 },
+        { type: 'generating', timestamp: 2, generatingChars: 54 },
       ];
 
       // Step 1: buildActivityLogText returns the activity log (no Response preview)
       const activityText = buildActivityLogText(entries);
 
-      expect(activityText).toContain(':speech_balloon:');
+      expect(activityText).toContain(':pencil:');
       expect(activityText).toContain('Response');
 
       // Step 2: Response preview must be appended manually (as done in streaming.ts)

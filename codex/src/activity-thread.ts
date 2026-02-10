@@ -10,6 +10,14 @@ import { withSlackRetry } from '../../slack/dist/retry.js';
 import { markdownToPng } from '../../slack/dist/markdown-png.js';
 import { MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
 import {
+  type ActivityEntry,
+  buildActivityLogText as sharedBuildActivityLogText,
+  getToolEmoji,
+  normalizeToolName,
+  formatToolInputSummary,
+  ACTIVITY_LOG_MAX_CHARS,
+} from 'caia-slack';
+import {
   stripMarkdownCodeFence,
   markdownToSlack,
   truncateWithClosedFormatting,
@@ -20,10 +28,12 @@ import {
   formatThreadResponseMessage,
   formatThreadErrorMessage,
   buildActivityEntryBlocks,
-  formatToolInputSummary,
   formatToolResultSummary,
-  normalizeToolName,
 } from './blocks.js';
+
+// Re-export shared ActivityEntry for backward compatibility
+export type { ActivityEntry } from 'caia-slack';
+export { getToolEmoji } from 'caia-slack';
 
 /**
  * Escape Slack mrkdwn special characters to prevent formatting issues.
@@ -76,45 +86,7 @@ export async function getMessagePermalink(
   return `https://slack.com/archives/${channel}/p${messageTs.replace('.', '')}`;
 }
 
-/**
- * Activity entry types for tracking tool/thinking progress.
- */
-export interface ActivityEntry {
-  type: 'starting' | 'thinking' | 'tool_start' | 'tool_complete' | 'generating' | 'error' | 'aborted';
-  timestamp: number;
-  tool?: string;
-  toolInput?: string | Record<string, unknown>; // String for display, Record for TodoWrite etc.
-  toolUseId?: string; // For race condition tracking in batch updates
-  durationMs?: number;
-  message?: string;
-  charCount?: number;
-  thinkingContent?: string;
-  thinkingTruncated?: boolean;
-  thinkingAttachmentLink?: string;
-  threadMessageTs?: string;
-  threadMessageLink?: string;
-
-  // Result metrics (computed from input for Edit/Write, from output for Bash)
-  lineCount?: number;           // Read/Write/Bash: lines in result/content
-  matchCount?: number;          // Grep/Glob: number of matches/files (if available)
-  linesAdded?: number;          // Edit: lines in new_string
-  linesRemoved?: number;        // Edit: lines in old_string
-
-  // Tool output (only available for Bash commands via command:output events)
-  toolOutput?: string;               // Full output (up to 50KB)
-  toolOutputPreview?: string;        // First 300 chars for display
-  toolOutputTruncated?: boolean;     // True if output was truncated
-  toolIsError?: boolean;             // True if tool returned error (exit code != 0)
-  toolErrorMessage?: string;         // Error message if failed
-
-  // In-progress tracking for thinking
-  thinkingInProgress?: boolean;      // True while thinking is streaming
-
-  /** Unique ID for thinking segment (like toolUseId for tools) */
-  thinkingSegmentId?: string;
-  /** Unique ID for response segment (for interleaved response posting) */
-  responseSegmentId?: string;
-}
+// ActivityEntry is imported from caia-slack (shared across all providers)
 
 /**
  * Batch of activity entries for a conversation.
@@ -134,28 +106,7 @@ export interface ActivityBatch {
 // Spinner frames for animated status
 export const SPINNER_FRAMES = ['\u25D0', '\u25D3', '\u25D1', '\u25D2'];
 
-// Tool emoji mapping
-const TOOL_EMOJI: Record<string, string> = {
-  Read: ':mag:',
-  Glob: ':mag:',
-  Grep: ':mag:',
-  Edit: ':memo:',
-  Write: ':memo:',
-  FileChange: ':memo:',
-  Bash: ':computer:',
-  Shell: ':computer:',
-  WebFetch: ':globe_with_meridians:',
-  WebSearch: ':globe_with_meridians:',
-  Task: ':robot_face:',
-};
-
-/**
- * Get emoji for a tool name.
- */
-export function getToolEmoji(tool: string): string {
-  const normalized = normalizeToolName(tool);
-  return TOOL_EMOJI[normalized] || ':gear:';
-}
+// getToolEmoji imported from caia-slack (shared across all providers)
 
 /**
  * Activity thread manager handles posting activity to Slack threads.
@@ -406,9 +357,9 @@ export class ActivityThreadManager {
 
 /**
  * Build activity log text from entries with rolling window.
- * Shows most recent entries, reducing count if text exceeds maxChars.
+ * Delegates to shared buildActivityLogText from caia-slack.
  * @param entries - Activity entries to format
- * @param maxEntries - Maximum number of entries to show (default: 20)
+ * @param maxEntries - Maximum number of entries to show (ignored, shared uses 20)
  * @param maxChars - Maximum characters for output (default: 1000)
  */
 export function buildActivityLogText(
@@ -416,50 +367,7 @@ export function buildActivityLogText(
   maxEntries = 20,
   maxChars = 1000
 ): string {
-  const manager = new ActivityThreadManager();
-
-  // Build set of completed tool IDs to skip their tool_start entries
-  const completedIds = new Set<string>();
-  for (const entry of entries) {
-    if (entry.type === 'tool_complete' && entry.toolUseId) {
-      completedIds.add(entry.toolUseId);
-    }
-  }
-
-  // Filter out tool_start entries that have a matching tool_complete
-  const filteredEntries = entries.filter((entry) => {
-    if (entry.type === 'tool_start' && entry.toolUseId && completedIds.has(entry.toolUseId)) {
-      return false; // Skip - we have the completed version
-    }
-    return true;
-  });
-
-  // Start with maxEntries, reduce until text fits within maxChars
-  // This ensures we always show the MOST RECENT entries (end of array)
-  let entriesToShow = Math.min(filteredEntries.length, maxEntries);
-
-  while (entriesToShow > 0) {
-    const displayEntries = filteredEntries.slice(-entriesToShow);
-    const hiddenCount = filteredEntries.length - displayEntries.length;
-
-    let text = '';
-    if (hiddenCount > 0) {
-      text += `_... ${hiddenCount} earlier entries ..._\n`;
-    }
-
-    text += displayEntries.map((e) => (manager as any).formatEntry(e)).join('\n');
-
-    // If fits within maxChars, return it
-    if (text.length <= maxChars) {
-      return text;
-    }
-
-    // Reduce entries and try again
-    entriesToShow--;
-  }
-
-  // Edge case: even 0 entries somehow exceeds (shouldn't happen)
-  return '_... activity too long ..._';
+  return sharedBuildActivityLogText(entries, true, maxChars);
 }
 
 // ============================================================================
