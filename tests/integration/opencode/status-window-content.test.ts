@@ -113,11 +113,12 @@ describe('status-window-content', () => {
     const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
     expect(updateCalls.length).toBeGreaterThan(0);
 
-    // Check the most recent update's blocks for thinking (:brain:) and response (:pencil:)
+    // Check the most recent update's blocks for thinking (:brain:), response (:pencil:), and tools (:white_check_mark:)
     const lastUpdate = updateCalls[updateCalls.length - 1];
     const blocksJson = JSON.stringify(lastUpdate[0]?.blocks || []);
     expect(blocksJson).toContain(':brain:');
     expect(blocksJson).toContain(':pencil:');
+    expect(blocksJson).toContain(':white_check_mark:'); // Tools visible, not dropped
   });
 
   it('Scenario 1 ordering: text before tools preserves thinking and response', async () => {
@@ -202,6 +203,7 @@ describe('status-window-content', () => {
     const blocksJson = JSON.stringify(lastUpdate[0]?.blocks || []);
     expect(blocksJson).toContain(':brain:');
     expect(blocksJson).toContain(':pencil:');
+    expect(blocksJson).toContain(':white_check_mark:'); // Tools visible, not dropped
   });
 
   it('final status update failure + transient retry succeeds', async () => {
