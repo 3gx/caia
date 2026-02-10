@@ -47,6 +47,8 @@ export interface CommandResult {
   showPlan?: boolean;
   planFilePath?: string;
   deferredQuery?: string;  // Query to execute after model/mode selection
+  resumeSession?: boolean;  // Signals that /resume needs async SDK validation
+  resumeSessionId?: string; // The session ID to resume
 }
 
 export const MODE_SHORTCUTS: Record<string, PermissionMode> = {
@@ -197,6 +199,8 @@ export function parseCommand(text: string, session: Session, threadTs?: string):
       return handleWatch(session, threadTs);
     case 'ff':
       return handleFastForward(session, threadTs);
+    case 'resume':
+      return handleResume(argString, session);
     case 'continue':
       return handleContinue(session);
     case 'update-rate':
@@ -673,6 +677,37 @@ function handleFastForward(session: Session, threadTs?: string): CommandResult {
   }
 
   return { handled: true, fastForward: true };
+}
+
+/**
+ * /resume <session-id> - Resume an existing OpenCode session.
+ * Validation of the session against the SDK is async, so we return a flag
+ * that tells the slack-bot handler to perform async validation.
+ */
+function handleResume(sessionIdArg: string, session: Session): CommandResult {
+  const sessionId = sessionIdArg.trim();
+  if (!sessionId) {
+    return {
+      handled: true,
+      response: 'Usage: `/resume <session-id>`\n\nGet the session ID from `/status`.',
+      isError: true,
+    };
+  }
+
+  // Same session — no-op
+  if (session.sessionId === sessionId) {
+    return {
+      handled: true,
+      response: `Already on session \`${sessionId}\`.`,
+    };
+  }
+
+  // Signal the slack-bot handler to perform async SDK validation
+  return {
+    handled: true,
+    resumeSession: true,
+    resumeSessionId: sessionId,
+  };
 }
 
 function handleContinue(session: Session): CommandResult {

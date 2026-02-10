@@ -1307,6 +1307,11 @@ async function handleUserMessage(
       text: commandResult.text,
     });
 
+    // Push activity entry (e.g. session_changed from /resume) to activity log
+    if (commandResult.activityEntry) {
+      runtime.streaming.addActivityEntry(conversationKey, commandResult.activityEntry);
+    }
+
     // Live update: adjust update rate for active streaming
     if (parsedCommand?.command === 'update-rate') {
       const session = getThreadSession(channelId, postingThreadTs) ?? getSession(channelId);

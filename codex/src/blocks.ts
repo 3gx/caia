@@ -1131,41 +1131,8 @@ export function buildTextBlocks(text: string): Block[] {
 // Resume Confirmation Blocks
 // ============================================================================
 
-export interface ResumeConfirmationParams {
-  resumedThreadId: string;
-  workingDir: string;
-  previousThreadId?: string;
-  isNewChannel: boolean;
-  previousPath?: string;
-}
-
-/**
- * Build blocks for a resume confirmation message.
- * Mirrors ccslack style with explicit path lock/change messaging.
- */
-export function buildResumeConfirmationBlocks(params: ResumeConfirmationParams): Block[] {
-  const { resumedThreadId, workingDir, previousThreadId, isNewChannel, previousPath } = params;
-  const lines: string[] = [];
-
-  if (previousThreadId) {
-    lines.push(`:bookmark: Previous session: \`${previousThreadId}\``);
-    lines.push(`_Use_ \`/resume ${previousThreadId}\` _to return_`);
-    lines.push('');
-  }
-
-  lines.push(`Resuming session \`${resumedThreadId}\` in \`${workingDir}\``);
-
-  if (isNewChannel) {
-    lines.push(`Path locked to \`${workingDir}\``);
-  } else if (previousPath && previousPath !== workingDir) {
-    lines.push(`Path changed from \`${previousPath}\` to \`${workingDir}\``);
-  }
-
-  lines.push('');
-  lines.push('Your next message will continue this session.');
-
-  return buildTextBlocks(lines.join('\n'));
-}
+// Resume confirmation blocks are now shared via caia-slack.
+// See slack/src/formatting/activity-log.ts for the shared buildResumeConfirmationBlocks.
 
 /**
  * Build blocks for an error message.

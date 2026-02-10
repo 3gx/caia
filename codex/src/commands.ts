@@ -18,6 +18,7 @@
 import type { WebClient } from '@slack/web-api';
 import type { CodexClient, ReasoningEffort, SandboxMode } from './codex-client.js';
 import type { UnifiedMode } from '../../slack/dist/session/types.js';
+import type { ActivityEntry } from 'caia-slack';
 import {
   getSession,
   saveSession,
@@ -44,10 +45,10 @@ import {
   buildReasoningStatusBlocks,
   buildTextBlocks,
   buildErrorBlocks,
-  buildResumeConfirmationBlocks,
   Block,
   ModelInfo,
 } from './blocks.js';
+import { buildResumeConfirmationBlocks } from 'caia-slack';
 import {
   FALLBACK_MODELS as MODEL_FALLBACKS,
   LEGACY_DEFAULT_MODEL,
@@ -92,6 +93,7 @@ export interface CommandResult {
   modelOptions?: ModelInfo[]; // Models shown in picker (for follow-up display resolution)
   showModeSelection?: boolean; // Flag to trigger mode picker with emoji tracking
   showSandboxSelection?: boolean; // Flag to trigger sandbox picker with emoji tracking
+  activityEntry?: ActivityEntry; // Activity entry to push to the activity log (e.g. session_changed)
 }
 
 /**
@@ -417,22 +419,33 @@ export async function handleResumeCommand(
       });
     }
 
-    const previousThreadId =
+    const previousSessionId =
       oldThreadThreadId && oldThreadThreadId !== resumeThreadId
         ? oldThreadThreadId
         : oldChannelThreadId && oldChannelThreadId !== resumeThreadId
           ? oldChannelThreadId
           : undefined;
 
+    // previousPath is the old working dir (only meaningful when path was already configured)
+    const previousWorkingDir = previousPath ?? undefined;
+
     return {
       blocks: buildResumeConfirmationBlocks({
-        resumedThreadId: resumeThreadId,
+        resumedSessionId: resumeThreadId,
         workingDir,
-        previousThreadId,
+        previousSessionId,
+        previousWorkingDir,
         isNewChannel: isNewContext,
-        previousPath: pathChanged ? previousPath : undefined,
       }),
       text: `Resuming session ${resumeThreadId} in ${workingDir}. Your next message will continue this session.`,
+      activityEntry: {
+        timestamp: Date.now(),
+        type: 'session_changed',
+        previousSessionId,
+        previousWorkingDir,
+        newWorkingDir: workingDir,
+        message: resumeThreadId,
+      },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

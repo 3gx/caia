@@ -55,6 +55,8 @@ export interface CommandResult {
   planFilePath?: string;
   // For /mode command - triggers mode selection UI (show picker)
   showModeSelection?: boolean;
+  // For /resume command - old working directory for activity entry
+  resumeOldWorkingDir?: string;
 }
 
 // Mode shortcut mapping for quick /mode <arg> switching
@@ -687,8 +689,10 @@ function handleResume(sessionId: string, session: Session | null): CommandResult
   // Build response message - show old session if being replaced
   let response = '';
   const oldSessionId = session?.sessionId;
+  const oldWorkingDir = session?.configuredPath ?? undefined;
   if (oldSessionId && oldSessionId !== sessionId) {
-    response += `:bookmark: Previous session: \`${oldSessionId}\`\n_Use_ \`/resume ${oldSessionId}\` _to return_\n\n`;
+    const oldCwdSuffix = oldWorkingDir ? ` in \`${oldWorkingDir}\`` : '';
+    response += `:bookmark: Previous session: \`${oldSessionId}\`${oldCwdSuffix}\n_Use_ \`/resume ${oldSessionId}\` _to return_\n\n`;
   }
 
   response += `Resuming session \`${sessionId}\` in \`${workingDir}\`\n`;
@@ -725,6 +729,7 @@ function handleResume(sessionId: string, session: Session | null): CommandResult
     handled: true,
     response,
     sessionUpdate,
+    resumeOldWorkingDir: oldWorkingDir,
   };
 }
 

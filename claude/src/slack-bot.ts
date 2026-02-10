@@ -255,6 +255,10 @@ interface PendingPlanApproval {
 }
 export const pendingPlanApprovals = new Map<string, PendingPlanApproval>();
 
+// Pending activity entries to inject into the next query's activity log
+// Used by /resume to persist session_changed entries between command and next query
+const pendingActivityEntries = new Map<string, ActivityEntry[]>();
+
 // Mutexes for serializing updates (prevents abort race conditions)
 const updateMutexes = new Map<string, Mutex>();
 
@@ -2912,6 +2916,24 @@ async function handleMessage(params: {
       }
     }
 
+    // /resume: create session_changed activity entry for next query
+    if (commandResult.sessionUpdate?.sessionId && commandResult.sessionUpdate.sessionId !== session.sessionId) {
+      const newSessionId = commandResult.sessionUpdate.sessionId;
+      const newWorkingDir = commandResult.sessionUpdate.workingDir ?? commandResult.sessionUpdate.configuredPath ?? undefined;
+      const entry: ActivityEntry = {
+        timestamp: Date.now(),
+        type: 'session_changed',
+        previousSessionId: session.sessionId ?? undefined,
+        previousWorkingDir: commandResult.resumeOldWorkingDir,
+        newWorkingDir,
+        message: newSessionId,
+      };
+      const existing = pendingActivityEntries.get(conversationKey) || [];
+      existing.push(entry);
+      pendingActivityEntries.set(conversationKey, existing);
+      console.log(`[Activity] Queued session_changed entry for next query in ${conversationKey}`);
+    }
+
     // Update terminal watcher rate if active
     if (commandResult.sessionUpdate?.updateRateSeconds !== undefined && isWatching(channelId, threadTs)) {
       updateWatchRate(channelId, threadTs, commandResult.sessionUpdate.updateRateSeconds);
@@ -3198,7 +3220,9 @@ async function handleMessage(params: {
     lastUpdateTime: 0,
     updateRateSeconds: session.updateRateSeconds ?? UPDATE_RATE_DEFAULT,
     // Continue from existing log (for plan approval continuation), or fresh start
+    // Inject any pending activity entries from /resume commands before the starting entry
     activityLog: existingActivityLog || [
+      ...(pendingActivityEntries.get(conversationKey) || []),
       // Add starting entry so it persists in the log (not a fallback that disappears)
       { timestamp: startTime, type: 'starting' },
     ],
@@ -3245,6 +3269,15 @@ async function handleMessage(params: {
         processingState.activityBatch.push(entry);
       }
     }
+  }
+
+  // Sync pending activity entries (from /resume) to activityBatch and clean up
+  const pendingEntries = pendingActivityEntries.get(conversationKey);
+  if (pendingEntries) {
+    for (const entry of pendingEntries) {
+      processingState.activityBatch.push(entry);
+    }
+    pendingActivityEntries.delete(conversationKey);
   }
 
   // Add mode_changed entry if inline mode was used

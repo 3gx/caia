@@ -647,6 +647,13 @@ export class StreamingManager {
   }
 
   /**
+   * Add an activity entry from outside the streaming flow (e.g. /resume command).
+   */
+  addActivityEntry(conversationKey: string, entry: ActivityEntry): void {
+    this.activityManager.addEntry(conversationKey, entry);
+  }
+
+  /**
    * Check if a conversation is actively streaming.
    */
   isStreaming(conversationKey: string): boolean {

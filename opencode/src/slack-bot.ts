@@ -58,7 +58,7 @@ import { processSlackFilesWithGuard } from '../../slack/dist/file-guard.js';
 import { writeTempFile, type SlackFile } from '../../slack/dist/file-handler.js';
 import { buildMessageContent } from './content-builder.js';
 import { withSlackRetry, sleep } from '../../slack/dist/retry.js';
-import { startWatching, isWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
+import { startWatching, isWatching, stopWatching, updateWatchRate, stopAllWatchers, onSessionCleared } from './terminal-watcher.js';
 import { syncMessagesFromSession } from './message-sync.js';
 import { getAvailableModels, getModelInfo, encodeModelId, decodeModelId, isModelAvailable, getCachedContextWindow } from './model-cache.js';
 import {
@@ -172,6 +172,27 @@ const updateMutexes = new Map<string, Mutex>();
 const pendingModelSelections = new Map<string, PendingSelection>();
 const pendingModeSelections = new Map<string, PendingSelection>();
 const pendingPermissions = new Map<string, PendingPermission>();
+
+/**
+ * Pending activity entries to prepend to the next query's activity log.
+ * Keyed by conversation key (channelId or channelId:threadTs).
+ * Used by /resume to show session_changed in the activity window.
+ */
+const pendingActivityEntries = new Map<string, ActivityEntry[]>();
+
+function onSessionResumed(channelId: string, threadTs?: string, entry?: ActivityEntry): void {
+  // Stop terminal watcher if active (session changed)
+  if (isWatching(channelId, threadTs)) {
+    stopWatching(channelId, threadTs);
+  }
+  // Store activity entry for next query
+  if (entry) {
+    const key = makeConversationKey(channelId, threadTs);
+    const existing = pendingActivityEntries.get(key) ?? [];
+    existing.push(entry);
+    pendingActivityEntries.set(key, existing);
+  }
+}
 const processedIncomingMessageTs = new Set<string>();
 
 let app: App | null = null;
@@ -1749,6 +1770,114 @@ async function runClearSession(
   );
 }
 
+/**
+ * Handle /resume <session-id> — validate session via SDK and switch to it.
+ */
+async function handleResumeSession(
+  client: WebClient,
+  channelId: string,
+  postingThreadTs: string | undefined,
+  sessionThreadTs: string | undefined,
+  session: Session | ThreadSession,
+  userId: string,
+  resumeSessionId: string,
+): Promise<void> {
+  const instance = await serverPool.getOrCreate(channelId);
+
+  // Validate session exists via OpenCode SDK
+  let sessionInfo: { id?: string; title?: string } | null = null;
+  try {
+    const result = await instance.client.getClient().session.get({
+      path: { id: resumeSessionId },
+    });
+    sessionInfo = result.data ?? null;
+  } catch {
+    sessionInfo = null;
+  }
+
+  if (!sessionInfo?.id) {
+    await withSlackRetry(() =>
+      client.chat.postMessage({
+        channel: channelId,
+        thread_ts: postingThreadTs,
+        text: `Session \`${resumeSessionId}\` not found. It may have been deleted or created on a different server.`,
+      })
+    );
+    return;
+  }
+
+  const oldSessionId = session.sessionId;
+  const oldWorkingDir = session.workingDir;
+
+  // Determine new working directory — keep current since OpenCode sessions are server-side
+  const newWorkingDir = session.workingDir;
+
+  // Build previous session history
+  const previousIds = (session.previousSessionIds ?? []).slice();
+  if (oldSessionId && oldSessionId !== resumeSessionId) {
+    previousIds.push(oldSessionId);
+  }
+
+  const isNewChannel = !session.pathConfigured;
+
+  // Build session update
+  const sessionUpdate: Partial<Session> = {
+    sessionId: resumeSessionId,
+    sessionTitle: sessionInfo.title ?? undefined,
+    previousSessionIds: previousIds,
+    pathConfigured: true,
+    configuredPath: newWorkingDir,
+  };
+
+  if (isNewChannel) {
+    sessionUpdate.configuredBy = userId;
+    sessionUpdate.configuredAt = Date.now();
+  }
+
+  // Save session
+  if (sessionThreadTs) {
+    await saveThreadSession(channelId, sessionThreadTs, sessionUpdate as Partial<ThreadSession>);
+  } else {
+    await saveSession(channelId, sessionUpdate);
+  }
+
+  // Build response
+  let response = '';
+  if (oldSessionId && oldSessionId !== resumeSessionId) {
+    response += `:bookmark: Previous session: \`${oldSessionId}\`\n_Use_ \`/resume ${oldSessionId}\` _to return_\n\n`;
+  }
+  response += `Resuming session \`${resumeSessionId}\``;
+  if (sessionInfo.title) {
+    response += ` (${sessionInfo.title})`;
+  }
+  response += ` in \`${newWorkingDir}\`\n`;
+
+  if (isNewChannel) {
+    response += `Path locked to \`${newWorkingDir}\`\n`;
+  }
+
+  response += '\nYour next message will continue this session.';
+
+  // Push session_changed activity entry (visible when next query starts)
+  const sessionChangedEntry: ActivityEntry = {
+    timestamp: Date.now(),
+    type: 'session_changed',
+    previousSessionId: oldSessionId ?? undefined,
+    previousWorkingDir: oldWorkingDir,
+    newWorkingDir,
+    message: resumeSessionId,
+  };
+  onSessionResumed(channelId, sessionThreadTs, sessionChangedEntry);
+
+  await withSlackRetry(() =>
+    client.chat.postMessage({
+      channel: channelId,
+      thread_ts: postingThreadTs,
+      text: response,
+    })
+  );
+}
+
 async function runCompactSession(
   client: WebClient,
   channelId: string,
@@ -1858,6 +1987,19 @@ async function handleUserMessage(params: {
 
   // Slash commands
   const commandResult = parseCommand(userText.trim(), session as Session, sessionThreadTs);
+
+  // Prevent /resume while a query is active to avoid state corruption
+  if (commandResult.resumeSession && session.sessionId && conversationTracker.isBusy(session.sessionId)) {
+    await withSlackRetry(() =>
+      client.chat.postMessage({
+        channel: channelId,
+        thread_ts: postingThreadTs,
+        text: 'Cannot resume while a request is running. Please wait or abort.',
+      })
+    );
+    return;
+  }
+
   if (commandResult.handled) {
     if (commandResult.sessionUpdate) {
       if (commandResult.sessionUpdate.pathConfigured) {
@@ -1980,6 +2122,14 @@ async function handleUserMessage(params: {
 
     if (commandResult.fastForward) {
       await handleFastForwardSync(client, channelId, postingThreadTs, session as Session, userId);
+      return;
+    }
+
+    if (commandResult.resumeSession && commandResult.resumeSessionId) {
+      await handleResumeSession(
+        client, channelId, postingThreadTs, sessionThreadTs,
+        session, userId, commandResult.resumeSessionId
+      );
       return;
     }
 
@@ -2190,13 +2340,18 @@ async function handleUserMessage(params: {
 
   const parts = buildMessageContent(userText, processedFiles.files, processedFiles.warnings);
 
+  // Drain any pending activity entries (from /resume, /clear, etc.)
+  const pendingEntries = pendingActivityEntries.get(conversationKey) ?? [];
+  pendingActivityEntries.delete(conversationKey);
+
   // Post initial status message
   const initialActivity: ActivityEntry = {
     timestamp: Date.now(),
     type: 'starting',
   };
+  const initialLog: ActivityEntry[] = [...pendingEntries, initialActivity];
   const statusBlocks = buildCombinedStatusBlocks({
-    activityLog: [initialActivity],
+    activityLog: initialLog,
     inProgress: true,
     status: 'starting',
     mode: session.mode,
@@ -2249,7 +2404,7 @@ async function handleUserMessage(params: {
     startTime: Date.now(),
     spinnerIndex: 0,
     status: 'starting',
-    activityLog: [initialActivity],
+    activityLog: initialLog,
     toolsCompleted: 0,
     userId,
     originalTs,

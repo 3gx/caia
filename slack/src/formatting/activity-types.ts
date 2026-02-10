@@ -90,6 +90,10 @@ export interface ActivityEntry {
   // --- State change entries ---
   mode?: string;
   previousSessionId?: string;
+  /** Working directory of the old session being replaced (resume) */
+  previousWorkingDir?: string;
+  /** Working directory of the new/resumed session (resume) */
+  newWorkingDir?: string;
 
   // --- Thread message linking (for clickable activity in main status) ---
   threadMessageTs?: string;

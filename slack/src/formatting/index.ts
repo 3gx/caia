@@ -30,8 +30,10 @@ export {
   buildActivityLogText,
   linkifyActivityLabel,
   formatToolResultSummary,
+  buildResumeConfirmationBlocks,
   MAX_DISPLAY_ENTRIES,
 } from './activity-log.js';
+export type { ResumeConfirmationParams } from './activity-log.js';
 
 // Combined status blocks (shared across all providers)
 export {

@@ -1577,12 +1577,18 @@ export function formatThreadActivityBatch(entries: ActivityEntry[]): string {
       case 'context_cleared':
         lines.push('────── Context Cleared ──────');
         break;
-      case 'session_changed':
+      case 'session_changed': {
         if (entry.previousSessionId) {
-          lines.push(`:bookmark: *Previous session:* \`${entry.previousSessionId}\``);
-          lines.push('• _Use_ `/resume` _to return to this session_');
+          const prevCwd = entry.previousWorkingDir ? ` in \`${entry.previousWorkingDir}\`` : '';
+          lines.push(`:bookmark: *Previous:* \`${entry.previousSessionId}\`${prevCwd}`);
+          lines.push(`_Use_ \`/resume ${entry.previousSessionId}\` _to return_`);
+        }
+        if (entry.message) {
+          const newCwd = entry.newWorkingDir ? ` in \`${entry.newWorkingDir}\`` : '';
+          lines.push(`:arrow_forward: *Resumed:* \`${entry.message}\`${newCwd}`);
         }
         break;
+      }
       case 'aborted':
         lines.push(':octagonal_sign: *Aborted by user*');
         break;

@@ -6,7 +6,9 @@
  * old entries scroll off the top.
  */
 import type { ActivityEntry } from './activity-types.js';
+import type { Block } from '../blocks/types.js';
 import { getToolEmoji, formatToolName, formatToolInputSummary } from './tools.js';
+import { buildTextBlocks } from '../blocks/builders.js';
 import {
   THINKING_TRUNCATE_LENGTH,
   ACTIVITY_LOG_MAX_CHARS,
@@ -164,11 +166,18 @@ export function renderEntry(entry: ActivityEntry, lines: string[]): void {
     case 'context_cleared':
       lines.push('\u2500\u2500\u2500\u2500\u2500\u2500 Context Cleared \u2500\u2500\u2500\u2500\u2500\u2500');
       break;
-    case 'session_changed':
+    case 'session_changed': {
       if (entry.previousSessionId) {
-        lines.push(`:bookmark: Previous session: \`${entry.previousSessionId}\``);
+        const prevCwd = entry.previousWorkingDir ? ` in \`${entry.previousWorkingDir}\`` : '';
+        lines.push(`:bookmark: Previous: \`${entry.previousSessionId}\`${prevCwd}`);
+        lines.push(`_Use_ \`/resume ${entry.previousSessionId}\` _to return_`);
+      }
+      if (entry.message) {
+        const newCwd = entry.newWorkingDir ? ` in \`${entry.newWorkingDir}\`` : '';
+        lines.push(`:arrow_forward: Resumed: \`${entry.message}\`${newCwd}`);
       }
       break;
+    }
     case 'aborted': {
       const label = linkifyActivityLabel('Aborted by user', link);
       lines.push(`:octagonal_sign: *${label}*`);
@@ -218,4 +227,45 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
     n--;
   }
   return '_... activity too long ..._';
+}
+
+// ---------------------------------------------------------------------------
+// Resume confirmation blocks — shared across providers
+// ---------------------------------------------------------------------------
+
+export interface ResumeConfirmationParams {
+  resumedSessionId: string;
+  workingDir: string;
+  previousSessionId?: string;
+  previousWorkingDir?: string;
+  isNewChannel: boolean;
+}
+
+/**
+ * Build blocks for a resume confirmation message.
+ * Shared implementation so all providers (claude, opencode, codex) render identically.
+ */
+export function buildResumeConfirmationBlocks(params: ResumeConfirmationParams): Block[] {
+  const { resumedSessionId, workingDir, previousSessionId, previousWorkingDir, isNewChannel } = params;
+  const lines: string[] = [];
+
+  if (previousSessionId) {
+    const prevCwd = previousWorkingDir ? ` in \`${previousWorkingDir}\`` : '';
+    lines.push(`:bookmark: Previous session: \`${previousSessionId}\`${prevCwd}`);
+    lines.push(`_Use_ \`/resume ${previousSessionId}\` _to return_`);
+    lines.push('');
+  }
+
+  lines.push(`Resuming session \`${resumedSessionId}\` in \`${workingDir}\``);
+
+  if (isNewChannel) {
+    lines.push(`Path locked to \`${workingDir}\``);
+  } else if (previousWorkingDir && previousWorkingDir !== workingDir) {
+    lines.push(`Path changed from \`${previousWorkingDir}\` to \`${workingDir}\``);
+  }
+
+  lines.push('');
+  lines.push('Your next message will continue this session.');
+
+  return buildTextBlocks(lines.join('\n'));
 }

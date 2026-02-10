@@ -2380,7 +2380,7 @@ describe('blocks', () => {
       ];
       const text = buildActivityLogText(entries, true);
       expect(text).toContain(':bookmark:');
-      expect(text).toContain('Previous session:');
+      expect(text).toContain('Previous:');
       expect(text).toContain('`550e8400-e29b-41d4-a716-446655440000`');
     });
 
@@ -2394,7 +2394,7 @@ describe('blocks', () => {
       const text = buildActivityLogText(entries, true);
       const lines = text.split('\n').filter(l => l.trim());
       // Find indices
-      const sessionChangedIndex = lines.findIndex(l => l.includes('Previous session'));
+      const sessionChangedIndex = lines.findIndex(l => l.includes('Previous:'));
       const contextClearedIndex = lines.findIndex(l => l.includes('Context Cleared'));
       const modeChangedIndex = lines.findIndex(l => l.includes('Mode changed'));
       expect(sessionChangedIndex).toBeGreaterThan(-1);
@@ -2411,7 +2411,7 @@ describe('blocks', () => {
       ];
       const text = buildActivityLogText(entries, true);
       expect(text).not.toContain(':bookmark:');
-      expect(text).not.toContain('Previous session');
+      expect(text).not.toContain('Previous:');
     });
 
     // Clickable activity links tests
@@ -3925,7 +3925,7 @@ describe('blocks', () => {
       ];
       const text = formatThreadActivityBatch(entries);
       expect(text).toContain(':bookmark:');
-      expect(text).toContain('*Previous session:*');
+      expect(text).toContain('*Previous:*');
       expect(text).toContain('`550e8400-e29b-41d4-a716-446655440000`');
       expect(text).toContain('/resume');
     });
@@ -3939,7 +3939,7 @@ describe('blocks', () => {
       const text = formatThreadActivityBatch(entries);
       const lines = text.split('\n').filter(l => l.trim());
       // Find indices
-      const sessionChangedIndex = lines.findIndex(l => l.includes('Previous session'));
+      const sessionChangedIndex = lines.findIndex(l => l.includes('Previous:'));
       const contextClearedIndex = lines.findIndex(l => l.includes('Context Cleared'));
       const modeChangedIndex = lines.findIndex(l => l.includes('Mode changed'));
       expect(sessionChangedIndex).toBeGreaterThan(-1);
@@ -3955,7 +3955,7 @@ describe('blocks', () => {
       ];
       const text = formatThreadActivityBatch(entries);
       expect(text).not.toContain(':bookmark:');
-      expect(text).not.toContain('Previous session');
+      expect(text).not.toContain('Previous:');
     });
   });
 
