@@ -1198,6 +1198,7 @@ export interface StatusPanelParams {
   totalTokensUsed?: number;   // For "used / total" display
   contextWindow?: number;      // For "used / total" display
   reasoningTokens?: number;   // For [reasoning] indicator when > 0
+  workingDir?: string;         // Locked working directory path
 }
 
 // Re-export tool formatting functions for backwards compatibility
@@ -1634,7 +1635,8 @@ export function buildUnifiedStatusLine(
   sessionTitle?: string,
   totalTokensUsed?: number,
   contextWindow?: number,
-  reasoningTokens?: number
+  reasoningTokens?: number,
+  workingDir?: string
 ): string {
   const modeLabel = MODE_LABELS[mode] || mode;
   const parts: string[] = [modeLabel];
@@ -1654,10 +1656,9 @@ export function buildUnifiedStatusLine(
   }
   parts.push(sessionStr);
 
-  // Session title (truncated to 25 chars)
+  // Session title (full, no truncation)
   if (sessionTitle) {
-    const truncatedTitle = sessionTitle.length > 25 ? sessionTitle.slice(0, 22) + '...' : sessionTitle;
-    parts.push(truncatedTitle);
+    parts.push(sessionTitle);
   }
 
   // Stats - only if available (completion state)
@@ -1698,15 +1699,25 @@ export function buildUnifiedStatusLine(
     parts.push(`:warning: ${rateLimitHits} limits`);
   }
 
-  // Split into two lines: line 1 = mode | model | session [| title], line 2 = stats
+  // Split into three lines:
+  // Line 1: mode | model | session [| title]
+  // Line 2: working directory (if available)
+  // Line 3: stats (context, tokens, cost, duration, rate limits)
   const line1End = sessionTitle ? 4 : 3;  // Include title in line 1 when present
   const line1Parts = parts.slice(0, line1End);
-  const line2Parts = parts.slice(line1End);
+  const statsParts = parts.slice(line1End);
 
-  if (line2Parts.length === 0) {
-    return `_${line1Parts.join(' | ')}_`;
+  const lines: string[] = [`_${line1Parts.join(' | ')}_`];
+
+  if (workingDir) {
+    lines.push(`_${workingDir}_`);
   }
-  return `_${line1Parts.join(' | ')}_\n_${line2Parts.join(' | ')}_`;
+
+  if (statsParts.length > 0) {
+    lines.push(`_${statsParts.join(' | ')}_`);
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -1748,6 +1759,7 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
     sessionTitle,
     totalTokensUsed,
     reasoningTokens,
+    workingDir,
   } = params;
 
   // Build user mention for completion notifications (skip in DMs)
@@ -1814,7 +1826,8 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
           sessionTitle,
           totalTokensUsed,
           params.contextWindow,
-          reasoningTokens
+          reasoningTokens,
+          workingDir
         ),
       }],
     });
@@ -1874,7 +1887,8 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
             sessionTitle,
             totalTokensUsed,
             params.contextWindow,
-            reasoningTokens
+            reasoningTokens,
+            workingDir
           ),
         }],
       });

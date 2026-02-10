@@ -1596,6 +1596,7 @@ async function updateStatusMessage(state: ProcessingState, session: Session | Th
       totalTokensUsed,
       contextWindow: usage?.contextWindow,
       reasoningTokens: usage?.reasoningTokens,
+      workingDir: session.workingDir,
     });
 
     await withSlackRetry(() =>
@@ -2216,6 +2217,8 @@ async function handleUserMessage(params: {
       sdkMessageId: undefined,
       sessionId: session.sessionId!,
     },
+    sessionTitle,
+    workingDir: session.workingDir,
   });
 
   const statusMsg = await withSlackRetry(() =>

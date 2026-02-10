@@ -415,4 +415,85 @@ describe('status-block-content', () => {
     expect(blocksJson).toContain('% used');
     expect(blocksJson).toContain('/');
   });
+
+  it('status line shows working directory', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '8.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    // The initial status message should contain the working directory from session (/tmp)
+    const statusCall = client.chat.postMessage.mock.calls.find((call: any) => call[0]?.text === 'Processing...');
+    expect(statusCall).toBeDefined();
+    const blocksJson = JSON.stringify(statusCall[0].blocks);
+    expect(blocksJson).toContain('/tmp');
+  });
+
+  it('status line shows full session title without truncation', async () => {
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> hello', channel: 'C1', ts: '9.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    const longTitle = 'opencode improvements session with extra long name';
+
+    // Emit session.updated with a long title
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'session.updated',
+        properties: {
+          info: { id: 'sess_mock', title: longTitle },
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'assistant-msg-long-title',
+            role: 'assistant',
+            sessionID: 'sess_mock',
+            modelID: 'm',
+            providerID: 'p',
+            tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0.01,
+          },
+          parts: [{
+            type: 'text',
+            id: 't_long_title',
+            messageID: 'assistant-msg-long-title',
+            text: 'Response',
+          }],
+        },
+      },
+    });
+
+    eventSubscribers[0]?.({
+      payload: { type: 'session.idle', properties: { sessionID: 'sess_mock' } },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCalls = lastAppClient?.chat.update.mock.calls ?? [];
+    const completionCall = updateCalls.find((call: any) =>
+      call[0]?.text === 'Complete' || JSON.stringify(call[0]?.blocks || []).includes('Complete')
+    );
+    expect(completionCall).toBeDefined();
+    const blocksJson = JSON.stringify(completionCall[0].blocks);
+    // Full title should appear without truncation
+    expect(blocksJson).toContain(longTitle);
+    // The title portion should not be cut short (no "name..." pattern)
+    expect(blocksJson).not.toContain('name...');
+  });
 });

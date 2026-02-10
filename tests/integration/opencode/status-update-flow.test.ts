@@ -303,6 +303,27 @@ describe('status-update-flow', () => {
     expect(titleCall?.contextWindow).toBe(200000);  // DEFAULT_CONTEXT_WINDOW fallback
   });
 
+  it('passes workingDir to status blocks', async () => {
+    vi.useFakeTimers();
+    const handler = registeredHandlers['event_app_mention'];
+    const client = createMockWebClient();
+
+    await handler({
+      event: { user: 'U1', text: '<@BOT123> wdir test', channel: 'C1', ts: '1.0' },
+      client,
+      context: { botUserId: 'BOT123' },
+    });
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // Session mock has workingDir: '/tmp' — verify it's passed through
+    const wdirCall = vi.mocked(buildCombinedStatusBlocks).mock.calls
+      .map((call) => call[0] as any)
+      .find((args) => args?.workingDir === '/tmp');
+    expect(wdirCall).toBeDefined();
+  });
+
   it('respects updateRateSeconds for status update interval', async () => {
     vi.useFakeTimers();
 
