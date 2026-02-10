@@ -50,8 +50,8 @@ import {
   extractTailWithFormatting,
   type StreamingSession,
 } from './streaming.js';
-import { parseCommand, extractInlineMode, extractMentionMode, extractFirstMentionId, UPDATE_RATE_DEFAULT, MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
-import { toUserMessage } from './errors.js';
+import { parseCommand, extractInlineMode, extractMentionMode, extractMentionModel, extractFirstMentionId, UPDATE_RATE_DEFAULT, MESSAGE_SIZE_DEFAULT, THINKING_MESSAGE_SIZE } from './commands.js';
+import { toUserMessage, isRecoverable } from './errors.js';
 import { markProcessingStart, markApprovalWait, markApprovalDone, markError, markAborted, removeProcessingEmoji } from './emoji-reactions.js';
 import { sendDmNotification, clearDmDebounce } from './dm-notifications.js';
 import { processSlackFilesWithGuard } from '../../slack/dist/file-guard.js';
@@ -1481,7 +1481,19 @@ async function handleSessionIdle(state: ProcessingState): Promise<void> {
     try {
       await updateStatusMessage(state, session, app!.client as WebClient);
     } catch (err) {
-      console.error('[opencode] Failed to update status message on idle:', err);
+      // Only retry on transient errors (rate limits, network). Permanent errors
+      // (channel_not_found, not_in_channel, invalid_auth) are not retryable.
+      if (isRecoverable(err)) {
+        console.error('[opencode] Final status update failed (transient), retrying after delay:', err);
+        try {
+          await sleep(2000);
+          await updateStatusMessage(state, session, app!.client as WebClient);
+        } catch (retryErr) {
+          console.error('[opencode] Final status update retry also failed:', retryErr);
+        }
+      } else {
+        console.error('[opencode] Final status update failed (permanent, not retrying):', err);
+      }
     }
 
     if (state.originalTs) {
@@ -3104,7 +3116,13 @@ function registerMessageHandlers(appInstance: App): void {
     }
 
     const botId = context?.botUserId ?? extractFirstMentionId(evt.text);
-    const mentionModeResult = botId ? extractMentionMode(evt.text, botId) : { remainingText: evt.text.replace(/<@[A-Z0-9]+>/g, '').replace(/\s+/g, ' ').trim() };
+    if (!botId) {
+      // No bot mention found, shouldn't happen in app_mention event but handle gracefully
+      return;
+    }
+
+    // Extract /mode command (must immediately follow bot mention)
+    const mentionModeResult = extractMentionMode(evt.text, botId);
 
     if (mentionModeResult.error) {
       await (client as WebClient).chat.postMessage({
@@ -3115,6 +3133,44 @@ function registerMessageHandlers(appInstance: App): void {
       return;
     }
 
+    // Extract /model command (must immediately follow bot mention)
+    const mentionModelResult = extractMentionModel(evt.text, botId);
+
+    // If /model command found, show model selection and defer the query
+    if (mentionModelResult.hasModelCommand) {
+      const instance = await serverPool.getOrCreate(evt.channel);
+      const models = await getAvailableModels(instance.client.getClient());
+      const channelSession = getSession(evt.channel);
+      const channelRecentModels = channelSession?.recentModels;
+      const sessionThreadTs = evt.thread_ts;
+
+      const blocks = channelSession?.model && !(await isModelAvailable(instance.client.getClient(), channelSession.model))
+        ? buildModelDeprecatedBlocks(channelSession.model, models)
+        : buildModelSelectionBlocks(models, channelSession?.model, channelRecentModels);
+
+      const response = await withSlackRetry(() =>
+        (client as WebClient).chat.postMessage({
+          channel: evt.channel,
+          thread_ts: evt.thread_ts ?? evt.ts,
+          text: 'Select model',
+          blocks,
+        })
+      ) as { ts?: string };
+
+      if (response.ts) {
+        pendingModelSelections.set(response.ts, {
+          originalTs: evt.ts,
+          channelId: evt.channel,
+          threadTs: evt.thread_ts ?? evt.ts,
+          sessionThreadTs,
+          deferredQuery: mentionModelResult.deferredQuery,
+        });
+        await markApprovalWait(client as WebClient, evt.channel, evt.ts);
+      }
+      return;
+    }
+
+    // Otherwise, process the message normally with extracted mode (if any)
     await handleUserMessage({
       channelId: evt.channel,
       threadTs: evt.thread_ts,

@@ -1904,23 +1904,61 @@ export function buildCombinedStatusBlocks(params: CombinedStatusParams): Block[]
 }
 
 
+/** Rebuild text from tagged line groups, inserting a dropped-tool summary when groups were removed. */
+function rebuildFromGroups(groups: Array<{ type: string; lines: string[] }>, droppedCount: number): string {
+  const parts: string[] = [];
+  let summaryInserted = false;
+  for (const g of groups) {
+    if (g.lines.length === 0) {
+      // Dropped group — insert summary once at the position of the first dropped group
+      if (!summaryInserted && droppedCount > 0) {
+        parts.push(`_... ${droppedCount} tool call${droppedCount === 1 ? '' : 's'} ..._`);
+        summaryInserted = true;
+      }
+      continue;
+    }
+    parts.push(...g.lines);
+  }
+  return parts.join('\n');
+}
+
 /**
  * Build activity log text for live display (during processing).
  * Uses rolling window if too many entries.
  * @param maxChars - Maximum characters for output (truncates from start if exceeded)
  */
 export function buildActivityLogText(entries: ActivityEntry[], inProgress: boolean, maxChars: number = Infinity): string {
-  // Apply rolling window if too many entries
-  const displayEntries = entries.length > MAX_LIVE_ENTRIES
-    ? entries.slice(-ROLLING_WINDOW_SIZE)
-    : entries;
+  // Apply type-aware rolling window if too many entries.
+  // Always preserve thinking/generating entries even if they fall outside the tail window.
+  let displayEntries = entries;
+  if (entries.length > MAX_LIVE_ENTRIES) {
+    const tail = entries.slice(-ROLLING_WINDOW_SIZE);
+    const tailSet = new Set(tail);
+    const protectedTypes = new Set<ActivityEntry['type']>(['thinking', 'generating']);
+    const earlyProtected = entries.slice(0, -ROLLING_WINDOW_SIZE)
+      .filter(e => protectedTypes.has(e.type) && !tailSet.has(e));
+    displayEntries = [...earlyProtected, ...tail];
+  }
 
-  const lines: string[] = [];
+  // Tagged line groups: each group tracks its entry type and rendered lines.
+  // Built during the rendering loop so the type mapping is always correct
+  // (handles hidden tool_start entries that produce no lines).
+  const groups: Array<{ type: ActivityEntry['type'] | 'notice'; lines: string[] }> = [];
+
+  // Helper to push lines into the current group
+  function pushLine(type: ActivityEntry['type'] | 'notice', line: string) {
+    groups.push({ type, lines: [line] });
+  }
+  function pushContinuation(line: string) {
+    if (groups.length > 0) {
+      groups[groups.length - 1].lines.push(line);
+    }
+  }
 
   // Show truncation notice if in rolling window mode
   if (entries.length > MAX_LIVE_ENTRIES) {
-    const hiddenCount = entries.length - ROLLING_WINDOW_SIZE;
-    lines.push(`_... ${hiddenCount} earlier entries (see full log after completion) ..._\n`);
+    const hiddenCount = entries.length - displayEntries.length;
+    pushLine('notice', `_... ${hiddenCount} earlier entries (see full log after completion) ..._\n`);
   }
 
   // Build set of completed tools to avoid showing both start and complete
@@ -1936,7 +1974,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
     switch (entry.type) {
       case 'starting': {
         const label = linkifyActivityLabel('Analyzing request...', link);
-        lines.push(`:brain: *${label}*`);
+        pushLine('starting', `:brain: *${label}*`);
         break;
       }
       case 'thinking': {
@@ -1951,7 +1989,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
           // In-progress: show "Thinking..." with rolling window of latest content
           const charIndicator = charCount > 0 ? ` _[${charCount} chars]_` : '';
           const label = linkifyActivityLabel('Thinking...', link);
-          lines.push(`:brain: *${label}*${thinkingDuration}${charIndicator}`);
+          pushLine('thinking', `:brain: *${label}*${thinkingDuration}${charIndicator}`);
           if (thinkingText) {
             // Rolling window: thinkingTruncated contains last 500 chars with "..." prefix
             // Show up to 300 chars for live display to keep it readable
@@ -1962,7 +2000,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
             if (preview) {
               // Add "..." prefix if this is a rolling window (starts with "...")
               const prefix = thinkingText.startsWith('...') && !preview.startsWith('...') ? '...' : '';
-              lines.push(`> ${prefix}${preview}`);
+              pushContinuation(`> ${prefix}${preview}`);
             }
           }
         } else {
@@ -1971,7 +2009,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
             ? ` _[${charCount} chars]_`
             : '';
           const label = linkifyActivityLabel('Thinking', link);
-          lines.push(`:brain: *${label}*${thinkingDuration}${truncatedIndicator}`);
+          pushLine('thinking', `:brain: *${label}*${thinkingDuration}${truncatedIndicator}`);
           if (thinkingText) {
             // Show last 500 chars of thinking (thinkingTruncated already contains last 500 with "..." prefix)
             const displayText = thinkingText.replace(/\n/g, ' ').trim();
@@ -1979,7 +2017,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
               ? '...' + displayText.substring(displayText.length - THINKING_TRUNCATE_LENGTH)
               : displayText;
             if (preview) {
-              lines.push(`> ${preview}`);
+              pushContinuation(`> ${preview}`);
             }
           }
         }
@@ -1991,7 +2029,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
           const startEmoji = getToolEmoji(entry.tool);
           const startInputSummary = formatToolInputSummary(entry.tool || '', entry.toolInput);
           const toolLabel = linkifyActivityLabel(formatToolName(entry.tool || 'Unknown'), link);
-          lines.push(`${startEmoji} *${toolLabel}*${startInputSummary} [in progress]`);
+          pushLine('tool_start', `${startEmoji} *${toolLabel}*${startInputSummary} [in progress]`);
         }
         break;
       }
@@ -2006,12 +2044,12 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
           ? ` → \`${entry.toolOutputPreview.replace(/\s+/g, ' ').slice(0, 50)}${entry.toolOutputPreview.length > 50 ? '...' : ''}\``
           : '';
         const toolLabel = linkifyActivityLabel(formatToolName(entry.tool || 'Unknown'), link);
-        lines.push(`:white_check_mark: *${toolLabel}*${tcInputSummary}${resultSummary}${outputHint}${tcDuration}${errorFlag}`);
+        pushLine('tool_complete', `:white_check_mark: *${toolLabel}*${tcInputSummary}${resultSummary}${outputHint}${tcDuration}${errorFlag}`);
         break;
       }
       case 'error': {
         const label = linkifyActivityLabel('Error', link);
-        lines.push(`:x: ${label}: ${entry.message}`);
+        pushLine('error', `:x: ${label}: ${entry.message}`);
         break;
       }
       case 'generating': {
@@ -2023,7 +2061,7 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
 
         if (entry.generatingInProgress) {
           const label = linkifyActivityLabel('Generating...', link);
-          lines.push(`:pencil: *${label}*${genDuration}${charInfo}`);
+          pushLine('generating', `:pencil: *${label}*${genDuration}${charInfo}`);
           if (responseText) {
             // Show preview of response (up to 300 chars)
             const displayText = responseText.replace(/\n/g, ' ').trim();
@@ -2031,12 +2069,12 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
               ? displayText.substring(0, 300) + '...'
               : displayText;
             if (preview) {
-              lines.push(`> ${preview}`);
+              pushContinuation(`> ${preview}`);
             }
           }
         } else {
           const label = linkifyActivityLabel('Response', link);
-          lines.push(`:pencil: *${label}*${genDuration}${charInfo}`);
+          pushLine('generating', `:pencil: *${label}*${genDuration}${charInfo}`);
           if (responseText) {
             // Show preview of completed response (first 300 chars)
             const displayText = responseText.replace(/\n/g, ' ').trim();
@@ -2044,46 +2082,72 @@ export function buildActivityLogText(entries: ActivityEntry[], inProgress: boole
               ? displayText.substring(0, 300) + '...'
               : displayText;
             if (preview) {
-              lines.push(`> ${preview}`);
+              pushContinuation(`> ${preview}`);
             }
           }
         }
         break;
       }
       case 'mode_changed':
-        lines.push(`:gear: Mode changed to *${entry.mode}*`);
+        pushLine('mode_changed', `:gear: Mode changed to *${entry.mode}*`);
         break;
       case 'context_cleared':
-        lines.push('────── Context Cleared ──────');
+        pushLine('context_cleared', '────── Context Cleared ──────');
         break;
       case 'session_changed':
         if (entry.previousSessionId) {
-          lines.push(`:bookmark: Previous session: \`${entry.previousSessionId}\``);
+          pushLine('session_changed', `:bookmark: Previous session: \`${entry.previousSessionId}\``);
         }
         break;
       case 'aborted': {
         const label = linkifyActivityLabel('Aborted by user', link);
-        lines.push(`:octagonal_sign: *${label}*`);
+        pushLine('aborted', `:octagonal_sign: *${label}*`);
         break;
       }
     }
   }
 
   // Fallback only if no entries at all (shouldn't happen with starting entry)
-  if (lines.length === 0) {
-    lines.push(':brain: Analyzing request...');
+  if (groups.length === 0) {
+    pushLine('starting', ':brain: Analyzing request...');
   }
 
-  let result = lines.join('\n');
+  let result = rebuildFromGroups(groups, 0);
 
-  // Truncate from start if exceeds maxChars (keep most recent)
+  // Smart truncation: drop tool entries oldest-first instead of blindly cutting from the start.
+  // This preserves thinking/generating entries that would otherwise be lost.
   if (result.length > maxChars) {
-    const excess = result.length - maxChars + 50; // Room for "..." prefix
-    const breakPoint = result.indexOf('\n', excess);
-    if (breakPoint > 0) {
-      result = '...\n' + result.substring(breakPoint + 1);
-    } else {
-      result = '...' + result.substring(result.length - maxChars + 3);
+    const droppableTypes = new Set<ActivityEntry['type']>(['tool_start', 'tool_complete']);
+
+    // Drop oldest droppable groups until under budget
+    let droppedCount = 0;
+    for (let i = 0; i < groups.length && result.length > maxChars; i++) {
+      if (droppableTypes.has(groups[i].type as ActivityEntry['type'])) {
+        droppedCount++;
+        groups[i].lines = []; // mark as dropped
+        result = rebuildFromGroups(groups, droppedCount);
+      }
+    }
+
+    // If still over budget, strip blockquote preview lines from remaining groups
+    if (result.length > maxChars) {
+      for (const g of groups) {
+        if (g.lines.length > 1) {
+          g.lines = g.lines.filter(l => !l.startsWith('>'));
+        }
+      }
+      result = rebuildFromGroups(groups, droppedCount);
+    }
+
+    // Last resort: blind start-truncation
+    if (result.length > maxChars) {
+      const excess = result.length - maxChars + 50;
+      const breakPoint = result.indexOf('\n', excess);
+      if (breakPoint > 0) {
+        result = '...\n' + result.substring(breakPoint + 1);
+      } else {
+        result = '...' + result.substring(result.length - maxChars + 3);
+      }
     }
   }
 

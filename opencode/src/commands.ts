@@ -68,6 +68,12 @@ export interface MentionModeResult {
   error?: string;
 }
 
+export interface MentionModelResult {
+  hasModelCommand: boolean;
+  deferredQuery?: string;
+  remainingText: string;
+}
+
 export function extractFirstMentionId(text: string): string | undefined {
   const match = text.match(/<@([A-Z0-9]+)>/i);
   return match?.[1];
@@ -75,36 +81,58 @@ export function extractFirstMentionId(text: string): string | undefined {
 
 export function extractMentionMode(text: string, botUserId: string): MentionModeResult {
   const normalized = text.replace(/\s+/g, ' ').trim();
-  const pattern = new RegExp(`<@${botUserId}>\\s*/mode\\s+(\\S+)`, 'gi');
+  // Pattern: bot mention immediately followed by /mode (only whitespace allowed between)
+  const pattern = new RegExp(`<@${botUserId}>\\s*/mode\\s+(\\S+)(?:\\s+(.*))?$`, 'i');
 
-  const matches: Array<{ fullMatch: string; modeArg: string }> = [];
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(normalized)) !== null) {
-    matches.push({ fullMatch: match[0], modeArg: match[1].toLowerCase() });
-  }
+  const match = normalized.match(pattern);
 
-  if (matches.length === 0) {
+  if (!match) {
+    // No immediate /mode command found - remove all bot mentions and return remaining text
     const remainingText = normalized.replace(/<@[A-Z0-9]+>/g, '').replace(/\s+/g, ' ').trim();
     return { remainingText };
   }
 
-  const lastMatch = matches[matches.length - 1];
-  const mode = MODE_SHORTCUTS[lastMatch.modeArg];
+  const modeArg = match[1].toLowerCase();
+  const mode = MODE_SHORTCUTS[modeArg];
+
   if (!mode) {
-    const remainingText = normalized.replace(/<@[A-Z0-9]+>/g, '').replace(/\s+/g, ' ').trim();
+    // Extract remaining text after the invalid mode command
+    const afterMode = match[2] || '';
+    const remainingText = afterMode.trim();
     return {
       remainingText,
-      error: `Unknown mode \`${lastMatch.modeArg}\`. Valid modes: plan, ask, bypass`,
+      error: `Unknown mode \`${modeArg}\`. Valid modes: plan, ask, bypass`,
     };
   }
 
-  let remainingText = normalized;
-  for (const m of matches) {
-    remainingText = remainingText.replace(m.fullMatch, ' ');
-  }
-  remainingText = remainingText.replace(/<@[A-Z0-9]+>/g, '').replace(/\s+/g, ' ').trim();
+  // Extract remaining text after the mode command
+  const afterMode = match[2] || '';
+  const remainingText = afterMode.trim();
 
   return { mode, remainingText };
+}
+
+export function extractMentionModel(text: string, botUserId: string): MentionModelResult {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  // Pattern: bot mention immediately followed by /model (only whitespace allowed between)
+  const pattern = new RegExp(`<@${botUserId}>\\s*/model(?:\\s+(.*))?$`, 'i');
+
+  const match = normalized.match(pattern);
+
+  if (!match) {
+    // No immediate /model command found
+    const remainingText = normalized.replace(/<@[A-Z0-9]+>/g, '').replace(/\s+/g, ' ').trim();
+    return { hasModelCommand: false, remainingText };
+  }
+
+  // Extract the query after /model
+  const deferredQuery = match[1] ? match[1].trim() : '';
+
+  return {
+    hasModelCommand: true,
+    deferredQuery: deferredQuery || undefined,
+    remainingText: deferredQuery,
+  };
 }
 
 export function extractInlineMode(text: string): InlineModeResult {

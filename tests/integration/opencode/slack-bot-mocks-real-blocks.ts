@@ -148,6 +148,7 @@ vi.mock('../../../opencode/src/streaming.js', () => ({
 
 vi.mock('../../../opencode/src/errors.js', () => ({
   toUserMessage: vi.fn().mockReturnValue('Error'),
+  isRecoverable: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock('../../../opencode/src/emoji-reactions.js', () => ({
@@ -185,6 +186,7 @@ vi.mock('../../../opencode/src/content-builder.js', () => ({
 
 vi.mock('../../../slack/dist/retry.js', () => ({
   withSlackRetry: (fn: any) => fn(),
+  sleep: () => Promise.resolve(),
 }));
 
 vi.mock('../../../opencode/src/terminal-watcher.js', () => ({

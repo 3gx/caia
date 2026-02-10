@@ -258,6 +258,7 @@ vi.mock('../../../opencode/src/streaming.js', () => ({
 
 vi.mock('../../../opencode/src/errors.js', () => ({
   toUserMessage: vi.fn().mockReturnValue('Error'),
+  isRecoverable: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock('../../../opencode/src/emoji-reactions.js', () => ({
