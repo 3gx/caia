@@ -151,7 +151,7 @@ describe.skipIf(SKIP_LIVE)('SDK Live Verification', { timeout: 30000, concurrent
       }
     });
 
-    it('result message has modelUsage with contextWindow', { timeout: 60000 }, async () => {
+    it('CANARY: result message has modelUsage with contextWindow', { timeout: 60000 }, async () => {
       const q = query({
         prompt: 'respond with just the word "hello"',
         options: { maxTurns: 1 },
@@ -166,16 +166,18 @@ describe.skipIf(SKIP_LIVE)('SDK Live Verification', { timeout: 30000, concurrent
       }
 
       expect(resultMsg).not.toBeNull();
-      // modelUsage may be present
-      if (resultMsg.modelUsage) {
-        const modelKeys = Object.keys(resultMsg.modelUsage);
-        if (modelKeys.length > 0) {
-          const modelData = resultMsg.modelUsage[modelKeys[0]];
-          if (modelData.contextWindow !== undefined) {
-            expect(typeof modelData.contextWindow).toBe('number');
-          }
-        }
-      }
+
+      // HARD ASSERT: modelUsage must be present with contextWindow.
+      // If the SDK stops returning this, we silently fall back to a hardcoded
+      // DEFAULT_CONTEXT_WINDOW (200k) which may be wrong for the actual model,
+      // causing incorrect context % and compact timing.
+      expect(resultMsg.modelUsage).toBeDefined();
+      const modelKeys = Object.keys(resultMsg.modelUsage);
+      expect(modelKeys.length).toBeGreaterThan(0);
+      const modelData = resultMsg.modelUsage[modelKeys[0]];
+      expect(modelData.contextWindow).toBeDefined();
+      expect(typeof modelData.contextWindow).toBe('number');
+      expect(modelData.contextWindow).toBeGreaterThan(0);
     });
 
     it('assistant message has message.id field', async () => {

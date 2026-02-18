@@ -33,6 +33,7 @@ interface TokenEvent {
   outputTokens: number;
   totalTokens: number;
   cachedInputTokens?: number;
+  contextWindow?: number;
 }
 
 describe.skipIf(SKIP_LIVE)('Codex Token Events', { timeout: 60000 }, () => {
@@ -73,7 +74,7 @@ describe.skipIf(SKIP_LIVE)('Codex Token Events', { timeout: 60000 }, () => {
 
           // Capture token events specifically
           if (msg.method === 'codex/event/token_count') {
-            const p = msg.params as { msg?: { info?: { total_token_usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number; cached_input_tokens?: number } } } };
+            const p = msg.params as { msg?: { info?: { total_token_usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number; cached_input_tokens?: number }; model_context_window?: number | null } } };
             const usage = p.msg?.info?.total_token_usage;
             if (usage) {
               tokenEvents.push({
@@ -82,10 +83,11 @@ describe.skipIf(SKIP_LIVE)('Codex Token Events', { timeout: 60000 }, () => {
                 outputTokens: usage.output_tokens ?? 0,
                 totalTokens: usage.total_tokens ?? 0,
                 cachedInputTokens: usage.cached_input_tokens,
+                contextWindow: p.msg?.info?.model_context_window ?? undefined,
               });
             }
           } else if (msg.method === 'thread/tokenUsage/updated') {
-            const p = msg.params as { tokenUsage?: { total?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number } } };
+            const p = msg.params as { tokenUsage?: { total?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number }; modelContextWindow?: number } };
             const usage = p.tokenUsage?.total;
             if (usage) {
               tokenEvents.push({
@@ -94,6 +96,7 @@ describe.skipIf(SKIP_LIVE)('Codex Token Events', { timeout: 60000 }, () => {
                 outputTokens: usage.outputTokens ?? 0,
                 totalTokens: usage.totalTokens ?? 0,
                 cachedInputTokens: usage.cachedInputTokens,
+                contextWindow: p.tokenUsage?.modelContextWindow,
               });
             }
           }
@@ -296,6 +299,60 @@ describe.skipIf(SKIP_LIVE)('Codex Token Events', { timeout: 60000 }, () => {
       }
     }
 
+    console.log('==========================================\n');
+  });
+
+  it('CANARY: token events include model_context_window', async () => {
+    // HARD ASSERT: Codex token events must include model_context_window.
+    // codex-client.ts falls back to a hardcoded 258400 if missing — which may
+    // be wrong if the default model changes, causing incorrect context % and
+    // compact timing.
+    tokenEvents.length = 0;
+    notifications.length = 0;
+
+    // Start a thread
+    const threadResult = await rpc<{ thread: { id: string } }>('thread/start', {
+      workingDirectory: process.cwd(),
+    });
+    const threadId = threadResult.thread.id;
+    expect(threadId).toBeDefined();
+
+    // Send a simple query
+    await rpc('turn/start', {
+      threadId,
+      input: [{ type: 'text', text: 'Say "hello"' }],
+    });
+
+    // Wait for turn to complete
+    const startTime = Date.now();
+    const timeout = 45000;
+    let turnComplete = false;
+
+    while (!turnComplete && Date.now() - startTime < timeout) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      turnComplete = notifications.some(
+        (n) => n.method === 'codex/event/task_complete' || n.method === 'turn/completed'
+      );
+    }
+
+    expect(turnComplete).toBe(true);
+    expect(tokenEvents.length).toBeGreaterThan(0);
+
+    // At least one token event must include contextWindow
+    const eventsWithContextWindow = tokenEvents.filter(
+      (e) => e.contextWindow !== undefined && e.contextWindow !== null
+    );
+
+    console.log('\n=== Context Window Verification ===');
+    console.log(`Token events: ${tokenEvents.length}, with contextWindow: ${eventsWithContextWindow.length}`);
+    if (eventsWithContextWindow.length > 0) {
+      console.log(`contextWindow value: ${eventsWithContextWindow[0].contextWindow}`);
+    }
+
+    expect(eventsWithContextWindow.length).toBeGreaterThan(0);
+    expect(typeof eventsWithContextWindow[0].contextWindow).toBe('number');
+    expect(eventsWithContextWindow[0].contextWindow!).toBeGreaterThan(0);
+    console.log('✓ VERIFIED: model_context_window present in token events');
     console.log('==========================================\n');
   });
 });

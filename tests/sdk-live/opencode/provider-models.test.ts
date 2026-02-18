@@ -50,6 +50,38 @@ describe.skipIf(SKIP_LIVE)('Provider & Models', { timeout: 30000 }, () => {
     });
   });
 
+  it('CANARY: at least one model has limit.context (context window)', async () => {
+    // HARD ASSERT: The OpenCode config API must return context window sizes.
+    // model-cache.ts reads model.limit?.context and falls back to a hardcoded
+    // DEFAULT_CONTEXT_WINDOW (200k) if missing — which may be wrong for the
+    // actual model, causing incorrect context % and compact timing.
+    const result = await client.config.providers();
+    const providers = result.data?.providers;
+    expect(providers!.length).toBeGreaterThan(0);
+
+    let foundContextWindow = false;
+    const modelsChecked: string[] = [];
+
+    for (const provider of providers!) {
+      const modelEntries = Object.values(provider.models || {});
+      for (const model of modelEntries) {
+        const modelId = model.id || model.name || 'unknown';
+        modelsChecked.push(`${provider.id}/${modelId}`);
+        if (model.limit?.context !== undefined && model.limit.context !== null) {
+          expect(typeof model.limit.context).toBe('number');
+          expect(model.limit.context).toBeGreaterThan(0);
+          foundContextWindow = true;
+        }
+      }
+    }
+
+    // At least one model must report its context window
+    expect(foundContextWindow).toBe(true);
+    if (!foundContextWindow) {
+      console.error(`No model reported limit.context. Models checked: ${modelsChecked.join(', ')}`);
+    }
+  });
+
   it.skip('CANARY: session created with specific model', async () => {
     // Get available models first
     const providersResult = await client.config.providers();
